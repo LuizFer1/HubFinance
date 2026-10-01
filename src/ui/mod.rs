@@ -3,14 +3,16 @@
 mod app;
 mod fonts;
 mod icons;
+mod theme;
 mod view;
 
 use time::UtcOffset;
 
+use crate::config::UiPrefs;
 use crate::hub::HubHandle;
 
-pub fn run(handle: HubHandle, offset: UtcOffset) -> iced::Result {
-    iced::application(app::boot(handle, offset), app::update, app::view)
+pub fn run(handle: HubHandle, offset: UtcOffset, prefs: UiPrefs) -> iced::Result {
+    iced::application(app::boot(handle, offset, prefs), app::update, app::view)
         .title("HubFinance")
         .subscription(app::subscription)
         // Fechar desliga o hub com ordem: o `CloseRequested` manda `Shutdown` e a janela so
@@ -23,6 +25,6 @@ pub fn run(handle: HubHandle, offset: UtcOffset) -> iced::Result {
         .font(fonts::PHOSPHOR_BYTES)
         .default_font(fonts::INTER)
         .antialiasing(true)
-        .theme(iced::Theme::Dark)
+        .theme(|app: &app::App| app.iced_theme.clone())
         .run()
 }

@@ -35,6 +35,7 @@ fn main() -> iced::Result {
             std::process::exit(2);
         }
     };
+    let prefs = config::UiPrefs::load(&config.data_dir);
     let (handle, _nucleo) = hub::start(config);
-    ui::run(handle, offset)
+    ui::run(handle, offset, prefs)
 }

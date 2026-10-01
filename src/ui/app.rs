@@ -8,6 +8,8 @@ use iced::{Element, Subscription, Task, window};
 use time::UtcOffset;
 use tokio::sync::watch;
 
+use super::theme::Tokens;
+use crate::config::UiPrefs;
 use crate::hub::snapshot::{Snapshot, Status};
 use crate::hub::{Command, HubHandle};
 
@@ -19,6 +21,10 @@ pub struct App {
     pub(super) closing: bool,
     /// Fuso local lido uma vez no `main`, antes de existirem outras threads.
     pub(super) offset: UtcOffset,
+    pub(super) tokens: &'static Tokens,
+    /// `Theme::custom` gera a paleta estendida a cada chamada; guardado para nao refazer isso
+    /// a cada quadro.
+    pub(super) iced_theme: iced::Theme,
 }
 
 #[derive(Debug, Clone)]
@@ -33,10 +39,17 @@ pub enum Message {
     ForceExit,
 }
 
-pub fn boot(handle: HubHandle, offset: UtcOffset) -> impl Fn() -> (App, Task<Message>) {
+pub fn boot(
+    handle: HubHandle,
+    offset: UtcOffset,
+    prefs: UiPrefs,
+) -> impl Fn() -> (App, Task<Message>) {
     move || {
         let rx = handle.snapshot.clone();
+        let tokens = Tokens::for_mode(prefs.theme);
         let app = App {
+            tokens,
+            iced_theme: tokens.iced_theme(),
             snapshot: rx.borrow().clone(),
             handle: handle.clone(),
             qr: None,

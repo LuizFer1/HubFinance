@@ -32,7 +32,10 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .spacing(28)
     .padding(20)
     .width(Length::Fill);
-    scrollable(content).height(Length::Fill).into()
+    // Provisorio ate a casca (tarefa 6): so o fundo e o texto ja seguem o tema.
+    container(scrollable(content).height(Length::Fill))
+        .style(super::theme::fill(app.tokens.bg, 0.0))
+        .into()
 }
 
 fn title(label: &str) -> Element<'_, Message> {

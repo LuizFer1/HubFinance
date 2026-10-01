@@ -1,10 +1,21 @@
 //! Rotas da API HTTPS.
 
+use std::time::Duration;
+
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::routing::{get, post};
+use tower_http::cors::CorsLayer;
+use tower_http::timeout::TimeoutLayer;
 
 use super::state::AppState;
 use super::{info, pair, sync};
+use crate::config::ALLOWED_ORIGINS;
+
+/// Limite de corpo da spec; acima disso o `Json` falha com 413 e vira `payload_too_large`.
+pub const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Rotas `/v1/*`, sem CORS nem limites: quem sobe o servidor aplica as camadas.
 pub fn api_router(state: AppState) -> Router {
@@ -15,6 +26,33 @@ pub fn api_router(state: AppState) -> Router {
         .route("/v1/push", post(sync::push))
         .route("/v1/pull", get(sync::pull))
         .with_state(state)
+}
+
+/// O PWA chama o hub de uma origem publica (GitHub Pages) para um IP privado: sem a resposta
+/// de Private Network Access o Chrome bloqueia o `fetch` antes de ele sair.
+pub fn cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(ALLOWED_ORIGINS.map(HeaderValue::from_static))
+        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        .allow_private_network(true)
+        .max_age(Duration::from_secs(600))
+}
+
+pub fn body_limit() -> DefaultBodyLimit {
+    DefaultBodyLimit::max(MAX_BODY_BYTES)
+}
+
+/// API com todas as camadas. CORS por fora de tudo: as respostas de erro (401, 409, 413)
+/// tambem precisam de `Allow-Origin`, senao o PWA nao consegue ler o codigo do erro.
+pub fn full_api(state: AppState) -> Router {
+    api_router(state)
+        .layer(body_limit())
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ))
+        .layer(cors_layer())
 }
 
 #[cfg(test)]
@@ -62,7 +100,7 @@ pub(crate) mod tests {
     pub fn test_app() -> TestApp {
         let (state, events) = test_state();
         TestApp {
-            router: api_router(state.clone()),
+            router: full_api(state.clone()),
             state,
             events,
         }
@@ -516,5 +554,83 @@ pub(crate) mod tests {
         assert_eq!(second["rows"][0]["seq"], 3);
         assert_eq!(second["hasMore"], false);
         assert_eq!(second["cursor"], 3);
+    }
+
+    // --- camadas ---
+
+    async fn preflight(app: &TestApp, origin: &str) -> axum::http::HeaderMap {
+        let req = Request::builder()
+            .method("OPTIONS")
+            .uri("/v1/push")
+            .header(header::ORIGIN, origin)
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+            .header(
+                header::ACCESS_CONTROL_REQUEST_HEADERS,
+                "authorization, content-type",
+            )
+            .header("access-control-request-private-network", "true")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.router.clone().oneshot(req).await.unwrap();
+        assert!(res.status().is_success(), "{}", res.status());
+        res.headers().clone()
+    }
+
+    #[tokio::test]
+    async fn preflight_do_pwa_libera_rede_privada() {
+        let app = test_app();
+        let headers = preflight(&app, "https://luizfer1.github.io").await;
+        assert_eq!(
+            headers[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            "https://luizfer1.github.io"
+        );
+        assert_eq!(headers["access-control-allow-private-network"], "true");
+        let methods = headers[header::ACCESS_CONTROL_ALLOW_METHODS]
+            .to_str()
+            .unwrap();
+        assert!(methods.contains("POST"), "{methods}");
+        let allowed = headers[header::ACCESS_CONTROL_ALLOW_HEADERS]
+            .to_str()
+            .unwrap()
+            .to_lowercase();
+        assert!(allowed.contains("authorization"), "{allowed}");
+        assert_eq!(headers[header::ACCESS_CONTROL_MAX_AGE], "600");
+    }
+
+    #[tokio::test]
+    async fn origem_desconhecida_nao_recebe_allow_origin() {
+        let app = test_app();
+        let headers = preflight(&app, "https://evil.example").await;
+        assert!(headers.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+    }
+
+    #[tokio::test]
+    async fn erro_tambem_leva_allow_origin() {
+        let app = test_app();
+        let req = Request::builder()
+            .uri("/v1/me")
+            .header(header::ORIGIN, "http://localhost:5173")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.router.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            res.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            "http://localhost:5173"
+        );
+    }
+
+    #[tokio::test]
+    async fn corpo_acima_de_8_mib_e_413() {
+        let app = test_app();
+        let key = app.pair(DEVICE_A, "A").await;
+        let big = format!(
+            r#"{{"epoch":"{}","rows":[],"pad":"{}"}}"#,
+            app.state.store.epoch(),
+            "x".repeat(9 * 1024 * 1024)
+        );
+        let (status, resp) = app.raw("POST", "/v1/push", Some(big), Some(&key)).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(resp["error"], "payload_too_large");
     }
 }

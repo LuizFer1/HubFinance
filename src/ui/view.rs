@@ -3,7 +3,6 @@
 use std::net::Ipv4Addr;
 use std::time::{Duration, SystemTime};
 
-use iced::font::Weight;
 use iced::widget::{Column, button, column, container, qr_code, row, scrollable, text};
 use iced::{Alignment, Color, Element, Font, Length};
 use time::format_description::well_known::Rfc3339;
@@ -11,6 +10,7 @@ use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
 
 use super::app::{App, Message};
+use super::fonts;
 use crate::hub::snapshot::{ActivityKind, DeviceView, Snapshot, Status};
 
 const ERROR: Color = Color::from_rgb(0.95, 0.4, 0.4);
@@ -18,10 +18,7 @@ const WARNING: Color = Color::from_rgb(0.95, 0.75, 0.3);
 const MUTED: Color = Color::from_rgb(0.65, 0.65, 0.7);
 const OK: Color = Color::from_rgb(0.45, 0.85, 0.55);
 
-const BOLD: Font = Font {
-    weight: Weight::Bold,
-    ..Font::DEFAULT
-};
+const BOLD: Font = fonts::INTER_SEMIBOLD;
 
 pub fn view(app: &App) -> Element<'_, Message> {
     let snap = &app.snapshot;
@@ -39,7 +36,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 }
 
 fn title(label: &str) -> Element<'_, Message> {
-    text(label).size(20).font(BOLD).into()
+    text(label).size(20).font(fonts::INTER_MEDIUM).into()
 }
 
 fn small<'a>(content: impl Into<String>) -> iced::widget::Text<'a> {

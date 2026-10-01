@@ -4,9 +4,6 @@
 //! lidos de `src/regular/style.css` do mesmo pacote (`.ph.ph-house-line:before{content:"\e2c4"}`);
 //! trocar a versao da fonte sem conferir a tabela desenharia glifos errados sem erro nenhum.
 
-// Parte das constantes so ganha uso nas telas do plano 2b (Dashboard e Lancamentos).
-#![allow(dead_code)]
-
 use iced::widget::text;
 use iced::{Color, Element};
 
@@ -41,9 +38,7 @@ pub const DEVICE_MOBILE: &str = "\u{E1E0}";
 pub const USER_MINUS: &str = "\u{E4CE}";
 pub const CHECK_CIRCLE: &str = "\u{E184}";
 pub const WARNING_CIRCLE: &str = "\u{E4E2}";
-pub const KEY: &str = "\u{E2D6}";
 pub const CERTIFICATE: &str = "\u{E766}";
-pub const ARROWS_CLOCKWISE: &str = "\u{E094}";
 pub const CIRCLE_DASHED: &str = "\u{E602}";
 
 // Alvos das chaves do app (`icon-set.ts`).
@@ -83,7 +78,8 @@ pub const WIFI_HIGH: &str = "\u{E4EA}";
 pub const LIGHTNING: &str = "\u{E2DE}";
 
 /// Todas as constantes, para o teste garantir que nenhuma ficou vazia.
-pub const ALL: [&str; 66] = [
+#[cfg(test)]
+pub const ALL: [&str; 64] = [
     HOUSE_LINE,
     CHART_PIE_SLICE,
     LIST_BULLETS,
@@ -112,9 +108,7 @@ pub const ALL: [&str; 66] = [
     USER_MINUS,
     CHECK_CIRCLE,
     WARNING_CIRCLE,
-    KEY,
     CERTIFICATE,
-    ARROWS_CLOCKWISE,
     CIRCLE_DASHED,
     BABY,
     MONEY,
@@ -153,6 +147,7 @@ pub const ALL: [&str; 66] = [
 ];
 
 /// As 36 chaves de `HomeFinance_Mobile/src/features/icons/icon-set.ts`.
+#[cfg(test)]
 pub const APP_ICON_KEYS: [&str; 36] = [
     "baby",
     "banknote",

@@ -40,7 +40,9 @@ const fn hex(v: u32) -> Rgb {
     Rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
 }
 
-/// Os 12 tokens fechados do app (`domain/model/tokens.ts`), na ordem do seletor.
+/// Os 12 tokens fechados do app (`domain/model/tokens.ts`), na ordem do seletor. So o teste
+/// usa: confere que a tabela cobre todos.
+#[cfg(test)]
 pub const TOKENS: [&str; 12] = [
     "slate", "rose", "red", "orange", "amber", "lime", "emerald", "teal", "sky", "indigo",
     "violet", "fuchsia",

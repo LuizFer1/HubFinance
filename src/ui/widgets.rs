@@ -3,9 +3,6 @@
 //!
 //! Tudo recebe `&'static Tokens`: o estilo e decidido aqui, a tela so monta.
 
-// Parte dos blocos (tile, rotulos de card) so ganha uso nas telas do plano 2b.
-#![allow(dead_code)]
-
 use iced::widget::{Space, button, container, image, row, text};
 use iced::{Alignment, Border, Color, Element, Length, Padding, Theme};
 

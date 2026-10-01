@@ -4,9 +4,6 @@
 //! gera rampas proprias que nao batem com as do handoff, e usa-las seria aproximar. O `Theme`
 //! do iced so existe para o fundo da janela e para o que nao tem estilo explicito.
 
-// Parte dos estilos so ganha uso nas telas do plano 2b (Dashboard e Lancamentos).
-#![allow(dead_code)]
-
 use iced::widget::{button, container, scrollable};
 use iced::{Background, Border, Color, Shadow, Theme, Vector};
 
@@ -161,7 +158,12 @@ impl Tokens {
 
     /// Cor do token pre-misturada sobre a superficie (`color-mix` do prototipo).
     pub fn token_tint(&self, token: &str, amount: f32) -> Color {
-        mix(self.surface, self.token(token), amount)
+        let [r, g, b, _] = self.surface.into_rgba8();
+        self.rgb(colors::mix(
+            Rgb(r, g, b),
+            colors::token_color(token, self.mode),
+            amount,
+        ))
     }
 
     /// Anel de 1 px do `shadow-md`, para o que e desenhado em canvas (tooltip das barras).
@@ -437,16 +439,6 @@ pub fn danger_filled(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> b
         background: bg(alpha(t.expense, if hovered(status) { 0.24 } else { 0.14 })),
         text_color: t.expense_fg,
         border: outline(alpha(t.expense, 0.55), 8.0),
-        ..button::Style::default()
-    }
-}
-
-/// Linha de lista: transparente, hover texto a 4 %, raio 8.
-pub fn row_hover(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| button::Style {
-        background: hovered(status).then(|| Background::Color(t.text_alpha(0.04))),
-        text_color: t.text,
-        border: rounded(8.0),
         ..button::Style::default()
     }
 }

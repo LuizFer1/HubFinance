@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Carga de exemplo para o dashboard: pareia um "celular" com perfil e empurra pessoas,
-# categorias, formas de pagamento, uma recorrencia e ~40 lancamentos em sete meses, com os
+# categorias, formas de pagamento, uma recorrencia e ~35 lancamentos em sete meses, com os
 # casos de borda que as telas precisam mostrar.
 #
 # Uso: ./scripts/seed-dashboard.sh <ip> <token>
@@ -18,8 +18,10 @@
 #   - paymentMethods: Pix, Credito, Dinheiro;
 #   - recurrences: Aluguel (monthly), usada pelos lancamentos de aluguel;
 #   - transactions: 6 por mes em sete meses (do corrente para tras; no mes corrente so ate
-#     hoje), mais uma com a categoria apagada, uma sem categoria, uma APAGADA e uma FORA DO
-#     CONTRATO ("amountMinor": "muito").
+#     hoje), exceto o 5o mes para tras, que so tem o salario (mes so de receita), e o 4o, que
+#     fica vazio (buraco no meio das seis barras e o vazio "Nada em <mes>" em Lancamentos);
+#     mais uma com a categoria apagada, uma sem categoria, uma APAGADA e uma FORA DO CONTRATO
+#     ("amountMinor": "muito").
 
 set -euo pipefail
 
@@ -155,7 +157,11 @@ for k in 0 1 2 3 4 5 6; do
     printf '%s-%02d' "$MONTH" "$d"
   }
   v=$((k * 731 % 9000))
+  # Mes vazio no meio das barras.
+  [[ $k == 4 ]] && continue
   tx "01HZZZZZZZZZZZZZZZZZZZZT${k}1" 0 income "Salário" 650000 "$(day 5)" "$C_PAY" "$PM_PIX" "$LUIZ" null
+  # Mes so de receita.
+  [[ $k == 5 ]] && continue
   tx "01HZZZZZZZZZZZZZZZZZZZZT${k}2" 0 expense "Aluguel" 180000 "$(day 10)" "$C_HOME" "$PM_PIX" "$LUIZ" "$REC_RENT"
   tx "01HZZZZZZZZZZZZZZZZZZZZT${k}3" 0 expense "Mercado" $((48000 + v * 3)) "$(day 8)" "$C_FOOD" "$PM_CARD" "$ANA" null
   tx "01HZZZZZZZZZZZZZZZZZZZZT${k}4" 0 expense "Combustível" $((21000 + v)) "$(day 15)" "$C_CAR" "$PM_CARD" "$LUIZ" null

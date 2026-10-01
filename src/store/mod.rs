@@ -5,6 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::Connection;
 
+pub mod devices;
 pub mod rows;
 pub mod schema;
 

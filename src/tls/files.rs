@@ -91,7 +91,8 @@ pub fn write_server(paths: &TlsPaths, cert: &ServerCert) -> Result<(), TlsError>
     write_secret(&paths.server_key, &cert.key_pem)?;
     // Por ultimo: se a escrita parar antes, o `server.json` antigo (ou ausente) faz a proxima
     // execucao reemitir, em vez de acreditar num certificado que nao foi gravado.
-    write_atomic(&paths.server_meta, &serde_json::to_string_pretty(&meta)?)
+    write_atomic(&paths.server_meta, &serde_json::to_string_pretty(&meta)?)?;
+    Ok(())
 }
 
 /// Apaga o que existir; arquivo ausente nao e erro.
@@ -106,8 +107,9 @@ pub fn remove_all(paths: &TlsPaths) -> Result<(), TlsError> {
     Ok(())
 }
 
-/// `.tmp` + `rename`: uma queda de energia no meio nao deixa PEM pela metade.
-fn write_atomic(path: &Path, contents: &str) -> Result<(), TlsError> {
+/// `.tmp` + `rename`: uma queda de energia no meio nao deixa arquivo pela metade (PEM aqui,
+/// `ui.json` em `config`). O `rename` troca o arquivo inteiro de uma vez, inclusive no Windows.
+pub(crate) fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);

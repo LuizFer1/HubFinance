@@ -79,16 +79,31 @@ impl UiPrefs {
             .unwrap_or_default()
     }
 
+    /// Atomico: o tema e gravado a cada troca, e uma queda no meio de `fs::write` deixaria um
+    /// `ui.json` truncado (que o `load` trata como padrao, perdendo a escolha).
     pub fn save(&self, data_dir: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(data_dir)?;
-        let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
-        std::fs::write(data_dir.join(UI_PREFS_FILE), json)
+        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        crate::tls::files::write_atomic(&data_dir.join(UI_PREFS_FILE), &json)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gravar_e_atomico_e_nao_deixa_temporario() {
+        let dir = tempfile::tempdir().unwrap();
+        let light = UiPrefs {
+            theme: ThemeMode::Light,
+        };
+        light.save(dir.path()).unwrap();
+        UiPrefs::default().save(dir.path()).unwrap();
+        light.save(dir.path()).unwrap();
+        assert_eq!(UiPrefs::load(dir.path()), light);
+        assert!(!dir.path().join("ui.json.tmp").exists());
+    }
 
     #[test]
     fn sem_arquivo_vale_o_padrao_escuro() {

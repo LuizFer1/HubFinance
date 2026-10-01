@@ -7,6 +7,7 @@ pub mod aggregate;
 pub mod colors;
 pub mod contract;
 pub mod dataset;
+pub mod list;
 pub mod money;
 pub mod people;
 pub mod periods;

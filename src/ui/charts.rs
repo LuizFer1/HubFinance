@@ -5,9 +5,6 @@
 //! ou tema mudam; o hover das barras e estado do proprio `Program` e e desenhado num segundo
 //! `Frame`, sem cache, para passar o mouse nao refazer o grafico inteiro.
 
-// Usado pela tela Dashboard na tarefa seguinte do plano 2b; sai quando ela entrar.
-#![allow(dead_code)]
-
 use std::f32::consts::{FRAC_PI_2, TAU};
 
 use iced::alignment::Vertical;
@@ -360,9 +357,7 @@ impl canvas::Program<Message> for BarsProgram<'_> {
     }
 }
 
-/// Fundo a 5 % na coluna e o tooltip acima das barras. O tooltip do prototipo sai por cima do
-/// grafico; o canvas recorta no proprio limite, entao aqui ele fica dentro, encostado no topo
-/// da barra mais alta (ou no topo do canvas).
+/// Fundo a 5 % na coluna e o tooltip.
 #[allow(clippy::too_many_arguments)]
 fn draw_bar_hover(
     frame: &mut Frame,
@@ -418,9 +413,14 @@ fn draw_bar_hover(
     let box_h = 4.0 * line_h + 3.0 * gap + 16.0;
     let tallest = bar_height(bar.income_minor.max(bar.expense_minor), top, plot.height);
     let bar_top = plot.y + plot.height - tallest;
-    let y = (bar_top - 6.0 - box_h).max(0.0);
-    let cx = col_x + col_w / 2.0;
-    let x = (cx - box_w / 2.0).clamp(0.0, (size.width - box_w).max(0.0));
+    let (x, y) = tooltip_origin(
+        Size::new(box_w, box_h),
+        col_x,
+        col_w,
+        bar_top,
+        plot.y,
+        size.width,
+    );
     let rect = Path::rounded_rectangle(Point::new(x, y), Size::new(box_w, box_h), 8.0.into());
     // Fundo `bg` como o prototipo (`var(--color-bg)`), contorno de 1 px do `shadow-md`; o
     // canvas nao tem sombra.
@@ -439,6 +439,32 @@ fn draw_bar_hover(
             ..label(content, Point::new(x + 10.0, ly), 12.0, color)
         });
     }
+}
+
+/// Onde fica o tooltip (canto superior esquerdo). O do prototipo sai por cima do grafico; o
+/// canvas recorta no proprio limite, entao: acima das barras da coluna quando cabe; senao ao
+/// lado da coluna (a direita, ou a esquerda perto da borda), no topo da area util, para nao
+/// cobrir as barras do mes que se esta lendo.
+pub fn tooltip_origin(
+    tip: Size,
+    col_x: f32,
+    col_w: f32,
+    bar_top: f32,
+    plot_top: f32,
+    width: f32,
+) -> (f32, f32) {
+    let above = bar_top - 6.0 - tip.height;
+    if above >= 0.0 {
+        let x = (col_x + col_w / 2.0 - tip.width / 2.0).clamp(0.0, (width - tip.width).max(0.0));
+        return (x, above);
+    }
+    let right = col_x + col_w + 4.0;
+    let x = if right + tip.width <= width {
+        right
+    } else {
+        (col_x - 4.0 - tip.width).max(0.0)
+    };
+    (x, plot_top)
 }
 
 // ---- esqueleto vazio ----
@@ -625,6 +651,26 @@ mod tests {
             program
                 .update(&mut state, &left, bounds, mouse::Cursor::Unavailable)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn tooltip_acima_ou_ao_lado() {
+        let tip = Size::new(120.0, 85.0);
+        // Barra baixa: cabe em cima, centrado na coluna.
+        assert_eq!(
+            tooltip_origin(tip, 152.0, 100.0, 150.0, 6.0, 652.0),
+            (142.0, 59.0)
+        );
+        // Barra alta: vai para a direita da coluna, no topo.
+        assert_eq!(
+            tooltip_origin(tip, 152.0, 100.0, 40.0, 6.0, 652.0),
+            (256.0, 6.0)
+        );
+        // Ultima coluna: nao cabe a direita, vai para a esquerda.
+        assert_eq!(
+            tooltip_origin(tip, 552.0, 100.0, 40.0, 6.0, 652.0),
+            (428.0, 6.0)
         );
     }
 

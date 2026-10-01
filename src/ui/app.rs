@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use iced::widget::{image, qr_code};
+use iced::widget::{canvas, image, qr_code};
 use iced::{Element, Size, Subscription, Task, window};
 use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
@@ -117,6 +117,14 @@ pub struct App {
     /// um quadro nunca percorre o dataset.
     pub(super) dashboard: DashboardView,
     pub(super) transactions: TransactionsView,
+    /// Categoria sob o mouse na legenda da rosca.
+    pub(super) hover_category: Option<String>,
+    /// Geometria dos graficos; limpa quando dados, mes, hover da legenda ou tema mudam.
+    pub(super) donut_cache: canvas::Cache,
+    pub(super) bars_cache: canvas::Cache,
+    pub(super) empty_cache: canvas::Cache,
+    /// `user_id` -> foto, para as linhas e os chips de autor (`avatars` e por aparelho).
+    pub(super) user_avatars: HashMap<String, Avatar>,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +136,11 @@ pub enum Message {
     Tick,
     PrevMonth,
     NextMonth,
+    /// Mouse entrou numa linha da legenda da rosca.
+    HoverCategory(String),
+    /// Mouse saiu: so limpa se ainda for a mesma (a saida pode chegar depois da entrada na
+    /// vizinha).
+    UnhoverCategory(String),
     CloseRequested,
     ForceExit,
     WindowId(Option<window::Id>),
@@ -191,6 +204,11 @@ impl App {
             filters: Filters::default(),
             dashboard: DashboardView::default(),
             transactions: TransactionsView::default(),
+            hover_category: None,
+            donut_cache: canvas::Cache::new(),
+            bars_cache: canvas::Cache::new(),
+            empty_cache: canvas::Cache::new(),
+            user_avatars: HashMap::new(),
         };
         app.refresh_people();
         app.set_today(local_today(offset));
@@ -233,7 +251,37 @@ impl App {
             .iter()
             .filter(|d| !d.revoked && d.last_push_at.is_some())
             .count();
+        self.refresh_user_avatars();
+        self.clear_charts();
         tracing::trace!("telas recalculadas para {month}");
+    }
+
+    /// Fotos dos perfis vivos, decodificadas so quando o data URI muda.
+    fn refresh_user_avatars(&mut self) {
+        let mut avatars = HashMap::new();
+        for user in self.snapshot.dashboard.alive_users() {
+            let Some(uri) = &user.avatar else {
+                continue;
+            };
+            let avatar = match self.user_avatars.remove(&user.id) {
+                Some(old) if &old.uri == uri => old,
+                _ => match avatar_bytes(uri) {
+                    Some(bytes) => Avatar {
+                        uri: uri.clone(),
+                        handle: image::Handle::from_bytes(bytes),
+                    },
+                    None => continue,
+                },
+            };
+            avatars.insert(user.id.clone(), avatar);
+        }
+        self.user_avatars = avatars;
+    }
+
+    fn clear_charts(&self) {
+        self.donut_cache.clear();
+        self.bars_cache.clear();
+        self.empty_cache.clear();
     }
 
     /// Pessoas e fotos a partir do snapshot atual. A foto so e decodificada de novo quando o
@@ -372,6 +420,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::PrevMonth => {
             if app.month_idx > 0 {
                 app.month_idx -= 1;
+                app.hover_category = None;
                 app.rebuild();
             }
             Task::none()
@@ -379,7 +428,20 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::NextMonth => {
             if app.month_idx + 1 < app.months.len() {
                 app.month_idx += 1;
+                app.hover_category = None;
                 app.rebuild();
+            }
+            Task::none()
+        }
+        Message::HoverCategory(key) => {
+            app.hover_category = Some(key);
+            app.donut_cache.clear();
+            Task::none()
+        }
+        Message::UnhoverCategory(key) => {
+            if app.hover_category.as_ref() == Some(&key) {
+                app.hover_category = None;
+                app.donut_cache.clear();
             }
             Task::none()
         }
@@ -447,6 +509,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.theme = mode;
             app.tokens = Tokens::for_mode(mode);
             app.iced_theme = app.tokens.iced_theme();
+            // As cores dos graficos estao gravadas na geometria em cache.
+            app.clear_charts();
             Task::perform(
                 save_prefs(UiPrefs { theme: mode }, app.prefs_dir.clone()),
                 |_| Message::Noop,
@@ -1015,6 +1079,48 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
         assert!(!app.dashboard.is_empty);
         assert_eq!(app.dashboard.recent.len(), 6);
+    }
+
+    #[test]
+    fn hover_da_legenda_tolera_saida_atrasada_e_some_ao_trocar_de_mes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::HoverCategory("C1".into()));
+        let _ = update(&mut app, Message::HoverCategory("C2".into()));
+        let _ = update(&mut app, Message::UnhoverCategory("C1".into()));
+        assert_eq!(app.hover_category.as_deref(), Some("C2"));
+        let _ = update(&mut app, Message::UnhoverCategory("C2".into()));
+        assert_eq!(app.hover_category, None);
+        let _ = update(&mut app, Message::HoverCategory("C2".into()));
+        let _ = update(&mut app, Message::PrevMonth);
+        assert_eq!(app.hover_category, None);
+    }
+
+    #[test]
+    fn fotos_dos_perfis_por_user_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        assert!(app.user_avatars.is_empty());
+        let mut ds = (*app.snapshot.dashboard).clone();
+        ds.apply([crate::dashboard::dataset::RawRow {
+            table: "users".into(),
+            id: "U1".into(),
+            deleted_at: None,
+            seq: 1000,
+            data: serde_json::json!({
+                "name": "Ana",
+                "color": "fuchsia",
+                "avatar": "data:image/png;base64,iVBORw0KGgo="
+            })
+            .to_string(),
+        }]);
+        let snap = Snapshot {
+            dashboard: std::sync::Arc::new(ds),
+            ..app.snapshot.clone()
+        };
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert!(app.user_avatars.contains_key("U1"));
+        assert!(!app.user_avatars.contains_key("U2"));
     }
 
     #[test]

@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 
 use iced::widget::{Space, button, container, image, row, text};
-use iced::{Alignment, Border, Color, Element, Length, Theme};
+use iced::{Alignment, Border, Color, Element, Length, Padding, Theme};
 
 use super::fonts;
 use super::icons;
@@ -218,6 +218,36 @@ pub fn hdivider<'a, M: 'a>(t: &'static Tokens) -> Element<'a, M> {
         .height(1)
         .style(theme::fill(t.divider(), 0.0))
         .into()
+}
+
+/// Valor grande dos cards: prefixo ("R$", "+R$", "−R$") e centavos em 16 Regular, inteiro em
+/// 32 Medium. O iced nao alinha por linha de base; com altura de linha 1,0 a base da Inter fica
+/// a 0,136 em do fundo da caixa, entao os pedacos de 16 sobem 2 px para casar com o de 32.
+pub fn money_big<'a, M: 'a>(
+    prefix: &str,
+    whole: &str,
+    cents: &str,
+    main: Color,
+    small: Color,
+) -> Element<'a, M> {
+    let piece = |content: String| {
+        container(text(content).size(16).line_height(1.0).color(small)).padding(Padding {
+            bottom: 2.0,
+            ..Padding::ZERO
+        })
+    };
+    row![
+        piece(prefix.to_string()),
+        text(whole.to_string())
+            .size(32)
+            .font(fonts::INTER_MEDIUM)
+            .line_height(1.0)
+            .color(main),
+        piece(format!(",{cents}")),
+    ]
+    .spacing(4)
+    .align_y(Alignment::End)
+    .into()
 }
 
 /// Tag "Parcial · até 24 set": pilula de 24 px em `accent_900` com `clock` e texto 11 Medium

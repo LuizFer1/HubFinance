@@ -7,14 +7,20 @@ use std::time::{Duration, Instant};
 
 use iced::widget::{image, qr_code};
 use iced::{Element, Size, Subscription, Task, window};
-use time::UtcOffset;
+use time::macros::format_description;
+use time::{OffsetDateTime, UtcOffset};
 use tokio::sync::watch;
 
 use super::connection_view;
 use super::theme::Tokens;
 use crate::config::{ThemeMode, UiPrefs};
 use crate::dashboard::dataset::avatar_bytes;
+use crate::dashboard::list::Filters;
 use crate::dashboard::people::{DeviceInfo, Person, people};
+use crate::dashboard::periods::month_window;
+use crate::dashboard::view::{
+    DashboardView, TransactionsView, build_dashboard, build_transactions,
+};
 use crate::hub::snapshot::{Snapshot, Status};
 use crate::hub::{Command, HubHandle};
 
@@ -98,6 +104,19 @@ pub struct App {
     /// Dialogo "Remover ...?" aberto para este `device_id`.
     pub(super) confirm_remove: Option<String>,
     pub(super) pending_removal: Option<PendingRemoval>,
+    /// "Hoje" (`YYYY-MM-DD`) no fuso local: a unica leitura de relogio que decide algo na tela
+    /// (mes corrente, tag "Parcial"). Nasce no boot e e reconferida a cada tique.
+    pub(super) today: String,
+    /// Os 12 meses navegaveis (`month_window(today)`), o mais antigo primeiro.
+    pub(super) months: Vec<String>,
+    /// Indice em `months`; 11 = mes corrente.
+    pub(super) month_idx: usize,
+    /// Filtros da tela Lancamentos; sobrevivem a troca de mes.
+    pub(super) filters: Filters,
+    /// Modelos de tela, recalculados so quando dados, mes, filtros ou "hoje" mudam: desenhar
+    /// um quadro nunca percorre o dataset.
+    pub(super) dashboard: DashboardView,
+    pub(super) transactions: TransactionsView,
 }
 
 #[derive(Debug, Clone)]
@@ -105,8 +124,10 @@ pub enum Message {
     /// Em `Box`: o snapshot e grande e as outras mensagens nao precisam carregar o tamanho dele.
     Snapshot(Box<Snapshot>),
     IssueToken,
-    /// Redesenha a contagem regressiva e os "ha 3 min".
+    /// Redesenha a contagem regressiva e os "ha 3 min"; confere a virada do dia.
     Tick,
+    PrevMonth,
+    NextMonth,
     CloseRequested,
     ForceExit,
     WindowId(Option<window::Id>),
@@ -164,9 +185,55 @@ impl App {
             hover_row: None,
             confirm_remove: None,
             pending_removal: None,
+            today: String::new(),
+            months: Vec::new(),
+            month_idx: 0,
+            filters: Filters::default(),
+            dashboard: DashboardView::default(),
+            transactions: TransactionsView::default(),
         };
         app.refresh_people();
+        app.set_today(local_today(offset));
         app
+    }
+
+    /// Mes escolhido no seletor.
+    pub(super) fn month(&self) -> &str {
+        self.months.get(self.month_idx).map_or("", String::as_str)
+    }
+
+    /// Troca "hoje". A janela de 12 meses anda junto; o mes escolhido continua o mesmo se
+    /// ainda estiver nela (quem olhava agosto continua em agosto), senao vai para o corrente.
+    pub(super) fn set_today(&mut self, today: String) {
+        if today == self.today {
+            return;
+        }
+        let previous = self.month().to_string();
+        self.months = month_window(&today);
+        let last = self.months.len().saturating_sub(1);
+        self.month_idx = self
+            .months
+            .iter()
+            .position(|m| *m == previous)
+            .unwrap_or(last);
+        self.today = today;
+        self.rebuild();
+    }
+
+    /// Recalcula as duas telas a partir do snapshot atual.
+    pub(super) fn rebuild(&mut self) {
+        let dataset = &self.snapshot.dashboard;
+        let month = self.month().to_string();
+        self.dashboard = build_dashboard(dataset, &self.today, &month);
+        self.transactions = build_transactions(dataset, &self.today, &month, &self.filters);
+        // "N lançamentos sincronizados de K aparelhos": so aparelhos ativos que ja enviaram.
+        self.transactions.synced_devices = self
+            .snapshot
+            .devices
+            .iter()
+            .filter(|d| !d.revoked && d.last_push_at.is_some())
+            .count();
+        tracing::trace!("telas recalculadas para {month}");
     }
 
     /// Pessoas e fotos a partir do snapshot atual. A foto so e decodificada de novo quando o
@@ -279,6 +346,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.snapshot = *s;
             if people_changed {
                 app.refresh_people();
+                app.rebuild();
             }
             if stopped && app.closing {
                 iced::exit()
@@ -297,6 +365,21 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 .is_some_and(|p| Instant::now() >= p.deadline)
             {
                 app.commit_pending();
+            }
+            app.set_today(local_today(app.offset));
+            Task::none()
+        }
+        Message::PrevMonth => {
+            if app.month_idx > 0 {
+                app.month_idx -= 1;
+                app.rebuild();
+            }
+            Task::none()
+        }
+        Message::NextMonth => {
+            if app.month_idx + 1 < app.months.len() {
+                app.month_idx += 1;
+                app.rebuild();
             }
             Task::none()
         }
@@ -448,6 +531,15 @@ pub(super) fn removal_toast(person: &Person) -> String {
         person.display_name,
         if feminine { "removida" } else { "removido" }
     )
+}
+
+/// "Hoje" no fuso local, `YYYY-MM-DD`. Relogio so para exibicao e recorte, nunca para merge.
+fn local_today(offset: UtcOffset) -> String {
+    OffsetDateTime::now_utc()
+        .to_offset(offset)
+        .date()
+        .format(format_description!("[year]-[month]-[day]"))
+        .unwrap_or_default()
 }
 
 /// Grava o `ui.json` fora da thread da UI (disco lento nao trava a janela). Falha so vira
@@ -822,6 +914,107 @@ pub(super) mod tests {
             removal_toast(&person("Pixel da Ana", false)),
             "Pixel da Ana foi removido do hub"
         );
+    }
+
+    /// App com o dataset de exemplo e "hoje" fixo em 24 de setembro de 2026.
+    pub(crate) fn app_with_fixtures(
+        dir: &std::path::Path,
+    ) -> (
+        App,
+        mpsc::UnboundedReceiver<Command>,
+        watch::Sender<Snapshot>,
+    ) {
+        use crate::hub::snapshot::DeviceView;
+        let device = |id: &str, push: Option<&str>, revoked: bool| DeviceView {
+            device_id: id.into(),
+            name: format!("Aparelho {id}"),
+            paired_at: "2026-09-01T10:00:00Z".into(),
+            last_seen_at: None,
+            last_push_at: push.map(Into::into),
+            last_pull_at: None,
+            revoked,
+            user_id: None,
+        };
+        let snap = Snapshot {
+            devices: vec![
+                device("D1", Some("2026-09-24T10:00:00Z"), false),
+                device("D2", None, false),
+                device("D3", Some("2026-09-01T10:00:00Z"), true),
+            ],
+            dashboard: std::sync::Arc::new(crate::dashboard::fixtures()),
+            ..Snapshot::default()
+        };
+        let (mut app, rx, tx) = app_with(snap, dir.to_path_buf());
+        app.set_today("2026-09-24".into());
+        (app, rx, tx)
+    }
+
+    #[test]
+    fn nasce_no_mes_corrente_com_as_telas_calculadas() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, _rx, _tx) = app_with_fixtures(dir.path());
+        assert_eq!(app.months.len(), 12);
+        assert_eq!(app.month_idx, 11);
+        assert_eq!(app.month(), "2026-09");
+        assert_eq!(app.dashboard.month, "2026-09");
+        assert!(app.dashboard.is_current);
+        assert_eq!(app.dashboard.partial_until.as_deref(), Some("24 set"));
+        assert_eq!(app.transactions.list.count, 7);
+        // So D1: D2 nunca enviou, D3 foi revogado.
+        assert_eq!(app.transactions.synced_devices, 1);
+    }
+
+    #[test]
+    fn seletor_de_mes_satura_nos_limites() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::NextMonth);
+        assert_eq!(app.month_idx, 11, "nao passa do corrente");
+        let _ = update(&mut app, Message::PrevMonth);
+        assert_eq!(app.month(), "2026-08");
+        assert_eq!(app.dashboard.month, "2026-08");
+        assert!(!app.dashboard.is_current);
+        assert_eq!(app.dashboard.partial_until, None);
+        assert_eq!(app.transactions.month, "2026-08");
+        for _ in 0..20 {
+            let _ = update(&mut app, Message::PrevMonth);
+        }
+        assert_eq!(app.month_idx, 0);
+        assert_eq!(app.month(), "2025-10");
+        let _ = update(&mut app, Message::NextMonth);
+        assert_eq!(app.month(), "2025-11");
+    }
+
+    #[test]
+    fn virada_do_dia_anda_a_janela_e_mantem_o_mes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::PrevMonth);
+        app.set_today("2026-10-01".into());
+        assert_eq!(app.months.last().map(String::as_str), Some("2026-10"));
+        assert_eq!(app.month(), "2026-08");
+        assert_eq!(app.month_idx, 9);
+        // O mes escolhido saiu da janela: volta ao corrente.
+        app.set_today("2027-12-01".into());
+        assert_eq!(app.month_idx, 11);
+        assert_eq!(app.month(), "2027-12");
+        assert_eq!(app.dashboard.month, "2027-12");
+        assert!(app.dashboard.is_current);
+    }
+
+    #[test]
+    fn snapshot_com_dataset_novo_recalcula_as_telas() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        app.set_today("2026-09-24".into());
+        assert!(app.dashboard.is_empty);
+        let snap = Snapshot {
+            dashboard: std::sync::Arc::new(crate::dashboard::fixtures()),
+            ..Snapshot::default()
+        };
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert!(!app.dashboard.is_empty);
+        assert_eq!(app.dashboard.recent.len(), 6);
     }
 
     #[test]

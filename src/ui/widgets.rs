@@ -6,7 +6,7 @@
 // Parte dos blocos (tile, rotulos de card) so ganha uso nas telas do plano 2b.
 #![allow(dead_code)]
 
-use iced::widget::{Space, container, image, row, text};
+use iced::widget::{Space, button, container, image, row, text};
 use iced::{Alignment, Border, Color, Element, Length, Theme};
 
 use super::fonts;
@@ -218,6 +218,74 @@ pub fn hdivider<'a, M: 'a>(t: &'static Tokens) -> Element<'a, M> {
         .height(1)
         .style(theme::fill(t.divider(), 0.0))
         .into()
+}
+
+/// Tag "Parcial · até 24 set": pilula de 24 px em `accent_900` com `clock` e texto 11 Medium
+/// em `accent_300`. Avisa que o mes corrente ainda pode crescer.
+pub fn partial_tag<'a, M: 'a>(t: &'static Tokens, until: &str) -> Element<'a, M> {
+    container(
+        row![
+            icons::icon(icons::CLOCK, 11.0, t.accent_300),
+            text(format!("Parcial · até {until}"))
+                .size(11)
+                .font(fonts::INTER_MEDIUM)
+                .line_height(1.0)
+                .color(t.accent_300),
+        ]
+        .spacing(5)
+        .align_y(Alignment::Center),
+    )
+    .height(24)
+    .padding([0, 9])
+    .align_y(Alignment::Center)
+    .style(theme::fill(t.accent_900, 999.0))
+    .into()
+}
+
+/// Largura do rotulo do seletor de mes. O prototipo pede `min-width: 116`; o iced nao tem
+/// largura minima, entao e fixa (o mes mais longo, "Fevereiro 2026", cabe com folga).
+const MONTH_LABEL_WIDTH: f32 = 116.0;
+
+/// Seletor de mes: 36 px, superficie, borda no divisor, raio 8; setas de 34 px e o mes em 13
+/// Medium no meio. Seta sem mensagem (limite da janela) fica a 30 % e nao reage.
+pub fn month_picker<'a, M: Clone + 'a>(
+    t: &'static Tokens,
+    label: &str,
+    prev: Option<M>,
+    next: Option<M>,
+) -> Element<'a, M> {
+    let arrow = |glyph: &'static str, message: Option<M>| {
+        let color = if message.is_some() {
+            t.text
+        } else {
+            t.text_alpha(0.30)
+        };
+        button(container(icons::icon(glyph, 14.0, color)).center(Length::Fill))
+            .width(34)
+            .height(Length::Fill)
+            .padding(0)
+            .style(theme::plain(color))
+            .on_press_maybe(message)
+    };
+    container(
+        row![
+            arrow(icons::CARET_LEFT, prev),
+            container(
+                text(label.to_string())
+                    .size(13)
+                    .font(fonts::INTER_MEDIUM)
+                    .color(t.text)
+            )
+            .width(MONTH_LABEL_WIDTH)
+            .center_x(MONTH_LABEL_WIDTH),
+            arrow(icons::CARET_RIGHT, next),
+        ]
+        .height(Length::Fill)
+        .align_y(Alignment::Center),
+    )
+    .height(36)
+    .style(theme::card_inset(t))
+    .into()
 }
 
 /// Primeira letra em maiuscula, para o avatar sem foto. `chars().next()` e nao grafema: nome

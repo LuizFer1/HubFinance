@@ -12,6 +12,7 @@ use super::app::{App, Message, Screen};
 use super::theme::{self, Tokens};
 use super::{connection_view, dashboard_view, fonts, icons, time, transactions_view, widgets};
 use crate::config::ThemeMode;
+use crate::dashboard::money::group_thousands;
 use crate::hub::snapshot::Status;
 
 const TITLEBAR_HEIGHT: f32 = 36.0;
@@ -420,7 +421,7 @@ fn nav_item<'a>(
     .spacing(10)
     .align_y(Alignment::Center);
     if let Some(n) = count {
-        line = line.push(text(n.to_string()).size(11).color(t.text_alpha(0.50)));
+        line = line.push(text(thousands(n)).size(11).color(t.text_alpha(0.50)));
     }
     button(container(line).height(36).align_y(Alignment::Center))
         .padding([0, 10])
@@ -635,12 +636,33 @@ pub(super) fn content_width(app: &App) -> f32 {
 fn header(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let (title, subtitle) = titles(app);
-    // Plano 2b: tag "Parcial" e seletor de mes a direita, em Dashboard e Lancamentos.
-    container(widgets::page_title(t, title, &subtitle))
+    let mut line = row![container(widgets::page_title(t, title, &subtitle)).width(Length::Fill)]
+        .spacing(24)
+        .align_y(Alignment::End);
+    if app.screen != Screen::Connection {
+        line = line.push(month_controls(app));
+    }
+    container(line)
         .padding(Padding {
             bottom: 8.0,
             ..Padding::ZERO
         })
+        .into()
+}
+
+/// Tag "Parcial · até 24 set" (so no mes corrente e com dados) e o seletor de mes. As setas
+/// ficam sem acao nos limites da janela de 12 meses.
+fn month_controls(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let v = &app.dashboard;
+    let mut controls = row![].spacing(10).align_y(Alignment::Center);
+    if let Some(until) = v.partial_until.as_deref().filter(|_| !v.is_empty) {
+        controls = controls.push(widgets::partial_tag(t, until));
+    }
+    let prev = (app.month_idx > 0).then_some(Message::PrevMonth);
+    let next = (app.month_idx + 1 < app.months.len()).then_some(Message::NextMonth);
+    controls
+        .push(widgets::month_picker(t, &v.month_label, prev, next))
         .into()
 }
 
@@ -660,16 +682,10 @@ pub(super) fn titles(app: &App) -> (&'static str, String) {
             if empty {
                 "Nada sincronizado ainda".into()
             } else {
-                let devices = app
-                    .snapshot
-                    .devices
-                    .iter()
-                    .filter(|d| !d.revoked && d.last_push_at.is_some())
-                    .count();
                 format!(
                     "{} sincronizados de {}",
                     plural(transactions_count(app), "lançamento", "lançamentos"),
-                    plural(devices, "aparelho", "aparelhos"),
+                    plural(app.transactions.synced_devices, "aparelho", "aparelhos"),
                 )
             },
         ),
@@ -686,15 +702,7 @@ pub(super) fn plural(n: usize, one: &str, many: &str) -> String {
 }
 
 pub(super) fn thousands(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push('.');
-        }
-        out.push(c);
-    }
-    out
+    group_thousands(n as u64)
 }
 
 /// Hub que nao subiu: no lugar de qualquer tela, o motivo e onde ficam os dados.
@@ -805,6 +813,16 @@ mod tests {
             device("B", None, None, true),
         ];
         assert_eq!(active_devices(&app), 1);
+    }
+
+    #[test]
+    fn subtitulo_dos_lancamentos_conta_aparelhos_que_enviaram() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        app.screen = Screen::Transactions;
+        assert_eq!(titles(&app).1, "13 lançamentos sincronizados de 1 aparelho");
+        app.screen = Screen::Dashboard;
+        assert_eq!(titles(&app).1, "Somente leitura · dados do último sync");
     }
 
     #[test]

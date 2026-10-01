@@ -32,9 +32,13 @@ pub enum TlsError {
     Time(String),
 }
 
-/// Primeira execucao (ou `tls/` incompleto): gera CA e servidor do zero, apagando antes o que
+/// Primeira execucao (ou CA perdida): gera CA e servidor do zero, apagando antes o que
 /// sobrou — uma CA sem chave nao serve para nada. Depois: carrega e reemite so o do servidor
 /// quando preciso, mantendo a CA que o celular ja instalou.
+///
+/// So `ca.crt`/`ca.key` ausentes ou ilegiveis justificam uma CA nova: ela obriga a reinstalar
+/// o certificado em todo celular. Faltar `server.*` (apagado a mao, gravacao interrompida) so
+/// reemite o do servidor.
 pub fn load_or_create(
     dir: &Path,
     ips: &[Ipv4Addr],
@@ -42,8 +46,7 @@ pub fn load_or_create(
 ) -> Result<TlsMaterial, TlsError> {
     std::fs::create_dir_all(dir)?;
     let paths = TlsPaths::in_dir(dir);
-    if paths.all_present()
-        && let Ok(ca) = files::read_ca(&paths)
+    if let Ok(ca) = files::read_ca(&paths)
         && ca::issuer(&ca).is_ok()
     {
         let server = match files::read_server(&paths) {
@@ -108,6 +111,35 @@ mod tests {
         assert_eq!(reissued.server.ips, more);
         assert_eq!(reissued.ca, first.ca);
         assert_eq!(std::fs::read(dir.path().join("ca.crt")).unwrap(), ca_bytes);
+    }
+
+    #[test]
+    fn faltar_arquivo_do_servidor_reemite_so_o_servidor() {
+        let now = OffsetDateTime::now_utc();
+        for missing in ["server.crt", "server.key", "server.json"] {
+            let dir = tempfile::tempdir().unwrap();
+            let first = load_or_create(dir.path(), &ips(), now).unwrap();
+            let ca_bytes = std::fs::read(dir.path().join("ca.crt")).unwrap();
+            std::fs::remove_file(dir.path().join(missing)).unwrap();
+            let second = load_or_create(dir.path(), &ips(), now).unwrap();
+            assert_eq!(
+                second.ca, first.ca,
+                "{missing}: a CA instalada no celular fica"
+            );
+            assert_eq!(std::fs::read(dir.path().join("ca.crt")).unwrap(), ca_bytes);
+            assert_ne!(second.server.cert_pem, first.server.cert_pem, "{missing}");
+            assert!(TlsPaths::in_dir(dir.path()).all_present());
+        }
+    }
+
+    #[test]
+    fn ca_ilegivel_regenera_tudo() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+        let first = load_or_create(dir.path(), &ips(), now).unwrap();
+        std::fs::write(dir.path().join("ca.key"), "lixo").unwrap();
+        let second = load_or_create(dir.path(), &ips(), now).unwrap();
+        assert_ne!(second.ca, first.ca);
     }
 
     #[test]

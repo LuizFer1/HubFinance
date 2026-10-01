@@ -39,6 +39,7 @@ impl TlsPaths {
         }
     }
 
+    #[cfg(test)]
     pub fn all_present(&self) -> bool {
         self.all().iter().all(|p| p.is_file())
     }

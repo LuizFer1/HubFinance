@@ -2,3 +2,4 @@
 
 pub mod hlc;
 pub mod ids;
+pub mod row;

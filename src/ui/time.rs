@@ -4,6 +4,8 @@ use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
 
+use crate::dashboard::periods::relative_secs;
+
 pub fn parse(rfc3339: &str) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(rfc3339, &Rfc3339).ok()
 }
@@ -14,16 +16,9 @@ pub fn format_time(t: OffsetDateTime, offset: UtcOffset) -> String {
         .unwrap_or_default()
 }
 
-/// "há 3 min" em relacao a `now`.
+/// "há 3 min" em relacao a `now` (as faixas sao as de `periods::relative_secs`).
 pub fn relative_to(t: OffsetDateTime, now: OffsetDateTime) -> String {
-    let secs = (now - t).whole_seconds().max(0);
-    match secs {
-        0..60 => "agora há pouco".to_string(),
-        60..3600 => format!("há {} min", secs / 60),
-        3600..86_400 => format!("há {} h", secs / 3600),
-        86_400..172_800 => "há 1 dia".to_string(),
-        _ => format!("há {} dias", secs / 86_400),
-    }
+    relative_secs((now - t).whole_seconds())
 }
 
 /// `relative_to` com o relogio atual; data ilegivel ou ausente vira "nunca".

@@ -5,11 +5,12 @@
 
 use std::time::SystemTime;
 
+use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
-use time::{OffsetDateTime, UtcOffset};
 
 use super::colors;
 use super::dataset::Dataset;
+use super::periods;
 
 /// Copia pura de `hub::snapshot::DeviceView`: este modulo nao conhece o hub. O
 /// `From<&DeviceView>` vive no hub.
@@ -104,38 +105,11 @@ pub fn presence(last_seen_at: Option<&str>, now: SystemTime) -> Presence {
     };
     let now = OffsetDateTime::from(now);
     let secs = (now - seen).whole_seconds().max(0);
-    let ago = ago(secs);
+    let ago = periods::relative_secs(secs);
     if secs <= ONLINE_WINDOW_SECS {
         Presence::Online { ago }
     } else {
         Presence::Seen { ago }
-    }
-}
-
-/// "agora há pouco", "há 2 min", "há 1 h", "há 1 dia", "há 3 dias".
-pub fn ago(secs: i64) -> String {
-    match secs.max(0) {
-        0..60 => "agora há pouco".to_string(),
-        s @ 60..3600 => format!("há {} min", s / 60),
-        s @ 3600..86_400 => format!("há {} h", s / 3600),
-        86_400..172_800 => "há 1 dia".to_string(),
-        s => format!("há {} dias", s / 86_400),
-    }
-}
-
-const MONTHS_SHORT: [&str; 12] = [
-    "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez",
-];
-
-/// "12 mar 2026" no fuso de quem olha. Data ilegivel volta crua.
-pub fn paired_label(rfc3339: &str, offset: UtcOffset) -> String {
-    match OffsetDateTime::parse(rfc3339, &Rfc3339) {
-        Ok(t) => {
-            let t = t.to_offset(offset);
-            let month = MONTHS_SHORT[usize::from(u8::from(t.month())) - 1];
-            format!("{} {month} {}", t.day(), t.year())
-        }
-        Err(_) => rfc3339.to_string(),
     }
 }
 
@@ -258,17 +232,5 @@ mod tests {
         assert!(presence(Some(&ten), now).is_online());
         assert!(!presence(Some("2026-10-01T11:49:00Z"), now).is_online());
         assert_eq!(presence(Some("lixo"), now), Presence::Never);
-    }
-
-    #[test]
-    fn rotulo_de_pareamento() {
-        assert_eq!(
-            paired_label("2026-03-12T10:00:00Z", UtcOffset::UTC),
-            "12 mar 2026"
-        );
-        // No fuso de Brasilia, 01:00 UTC ainda e o dia anterior.
-        let brt = UtcOffset::from_hms(-3, 0, 0).unwrap();
-        assert_eq!(paired_label("2026-03-12T01:00:00Z", brt), "11 mar 2026");
-        assert_eq!(paired_label("ontem", UtcOffset::UTC), "ontem");
     }
 }

@@ -17,7 +17,8 @@ use iced::{Alignment, Border, Element, Length, Padding, Theme};
 use super::app::{App, CopyTarget, Message};
 use super::theme::{self, Tokens};
 use super::{fonts, icons, shell, time, widgets};
-use crate::dashboard::people::{Person, paired_label, presence};
+use crate::dashboard::people::{Person, presence};
+use crate::dashboard::periods::paired_label;
 use crate::hub::snapshot::{ActivityKind, Snapshot, Status};
 
 /// Largura minima de cada card da grade antes de empilhar (`minmax(420px, 1fr)`).

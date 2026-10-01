@@ -1,4 +1,5 @@
 mod config;
+mod dashboard;
 mod hub;
 mod pairing;
 mod protocol;

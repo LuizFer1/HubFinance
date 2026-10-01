@@ -364,7 +364,7 @@ fn field<'a>(
 
 fn users_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
-    let count = app.people.len();
+    let count = app.visible_people().count();
     let title = container(widgets::card_title(
         t,
         "Usuários conectados",
@@ -372,11 +372,11 @@ fn users_card(app: &App) -> Element<'_, Message> {
     ))
     .padding([0, 8]);
     let mut col = column![title, Space::new().height(8)];
-    if app.people.is_empty() {
+    if count == 0 {
         col = col.push(empty_users(t));
     } else {
         let now = SystemTime::now();
-        for person in &app.people {
+        for person in app.visible_people() {
             col = col
                 .push(widgets::hdivider(t))
                 .push(person_row(app, person, now));
@@ -466,7 +466,7 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
     .height(32)
     .padding([0, 12])
     .style(theme::danger_outline(t))
-    .on_press(Message::Revoke(person.device_id.clone()));
+    .on_press(Message::AskRemove(person.device_id.clone()));
 
     let content = row![
         // Altura minima da linha (68 com o padding): o iced nao tem `min-height`.

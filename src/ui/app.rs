@@ -21,6 +21,21 @@ use crate::hub::{Command, HubHandle};
 /// Quanto tempo "Copiado" fica no botao, como no prototipo.
 pub const COPIED_FOR: Duration = Duration::from_millis(1600);
 
+/// Quanto tempo o toast de "Desfazer" fica na tela antes de a revogacao ser enviada.
+pub const UNDO_FOR: Duration = Duration::from_secs(5);
+
+/// Remocao confirmada mas ainda nao enviada ao nucleo.
+///
+/// Revogacao adiada, e nao "revogar e des-revogar": durante os 5 s o celular nunca recebe
+/// `401` (que a fatia 3 do app poderia tratar descartando a chave, e ai "Desfazer" mentiria).
+/// Custo aceito: se o hub cair nesses 5 s, a remocao nao aconteceu e a pessoa reaparece.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingRemoval {
+    pub device_id: String,
+    pub toast: String,
+    pub deadline: Instant,
+}
+
 /// Tamanho inicial da janela (`ui::run`); vale ate o primeiro evento de redimensionamento.
 pub const INITIAL_SIZE: Size = Size::new(1440.0, 900.0);
 
@@ -80,6 +95,9 @@ pub struct App {
     pub(super) copied: Option<(CopyTarget, Instant)>,
     /// Linha sob o mouse em "Usuarios conectados" (hover de 4 %).
     pub(super) hover_row: Option<String>,
+    /// Dialogo "Remover ...?" aberto para este `device_id`.
+    pub(super) confirm_remove: Option<String>,
+    pub(super) pending_removal: Option<PendingRemoval>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,7 +105,6 @@ pub enum Message {
     /// Em `Box`: o snapshot e grande e as outras mensagens nao precisam carregar o tamanho dele.
     Snapshot(Box<Snapshot>),
     IssueToken,
-    Revoke(String),
     /// Redesenha a contagem regressiva e os "ha 3 min".
     Tick,
     CloseRequested,
@@ -109,6 +126,10 @@ pub enum Message {
     CopyExpired,
     HoverRow(String),
     UnhoverRow(String),
+    AskRemove(String),
+    CancelRemove,
+    ConfirmRemove,
+    UndoRemove,
     Noop,
 }
 
@@ -141,6 +162,8 @@ impl App {
             avatars: HashMap::new(),
             copied: None,
             hover_row: None,
+            confirm_remove: None,
+            pending_removal: None,
         };
         app.refresh_people();
         app
@@ -169,6 +192,25 @@ impl App {
             avatars.insert(person.device_id.clone(), avatar);
         }
         self.avatars = avatars;
+    }
+
+    /// Pessoas que a tela mostra: sem a da remocao pendente (ela some na hora, como no design).
+    pub(super) fn visible_people(&self) -> impl Iterator<Item = &Person> {
+        let pending = self.pending_removal.as_ref().map(|p| p.device_id.as_str());
+        self.people
+            .iter()
+            .filter(move |p| Some(p.device_id.as_str()) != pending)
+    }
+
+    /// Envia a revogacao pendente agora (prazo vencido, outra remocao, troca de tela ou
+    /// fechamento).
+    fn commit_pending(&mut self) {
+        if let Some(pending) = self.pending_removal.take() {
+            let _ = self
+                .handle
+                .commands
+                .send(Command::RevokeDevice(pending.device_id));
+        }
     }
 
     /// "Copiado" ainda vale para este campo?
@@ -248,16 +290,23 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             let _ = app.handle.commands.send(Command::IssuePairingToken);
             Task::none()
         }
-        Message::Revoke(id) => {
-            let _ = app.handle.commands.send(Command::RevokeDevice(id));
+        Message::Tick => {
+            if app
+                .pending_removal
+                .as_ref()
+                .is_some_and(|p| Instant::now() >= p.deadline)
+            {
+                app.commit_pending();
+            }
             Task::none()
         }
-        Message::Tick => Task::none(),
         Message::CloseRequested => {
             if app.closing {
                 return Task::none();
             }
             app.closing = true;
+            // Antes do `Shutdown`, no mesmo canal: o nucleo processa em ordem.
+            app.commit_pending();
             // Nucleo ja parado (ou morto): nao ha por que esperar o snapshot `Stopped`.
             if app.handle.commands.send(Command::Shutdown).is_err() {
                 return iced::exit();
@@ -304,6 +353,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::Resize(direction) => app.with_window(|id| window::drag_resize(id, direction)),
         Message::SelectScreen(screen) => {
+            app.commit_pending();
             app.screen = screen;
             Task::none()
         }
@@ -353,8 +403,51 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::AskRemove(device_id) => {
+            app.confirm_remove = Some(device_id);
+            Task::none()
+        }
+        Message::CancelRemove => {
+            app.confirm_remove = None;
+            Task::none()
+        }
+        Message::ConfirmRemove => {
+            let Some(device_id) = app.confirm_remove.take() else {
+                return Task::none();
+            };
+            // So uma remocao desfazivel por vez: a anterior vai agora.
+            app.commit_pending();
+            let toast = app
+                .people
+                .iter()
+                .find(|p| p.device_id == device_id)
+                .map_or_else(|| "Aparelho removido do hub".to_string(), removal_toast);
+            app.pending_removal = Some(PendingRemoval {
+                device_id,
+                toast,
+                deadline: Instant::now() + UNDO_FOR,
+            });
+            Task::none()
+        }
+        Message::UndoRemove => {
+            // Nada foi enviado ao nucleo: desfazer e so esquecer.
+            app.pending_removal = None;
+            Task::none()
+        }
         Message::Noop => Task::none(),
     }
+}
+
+/// "Ana foi removida do hub". O genero e uma heuristica (a do prototipo): nome de pessoa
+/// terminado em "a" e feminino; nome de aparelho (sem perfil conhecido) e sempre masculino
+/// ("o Pixel 7").
+pub(super) fn removal_toast(person: &Person) -> String {
+    let feminine = person.user_known && person.display_name.trim_end().ends_with(['a', 'A']);
+    format!(
+        "{} foi {} do hub",
+        person.display_name,
+        if feminine { "removida" } else { "removido" }
+    )
 }
 
 /// Grava o `ui.json` fora da thread da UI (disco lento nao trava a janela). Falha so vira
@@ -591,6 +684,144 @@ pub(super) mod tests {
         assert_eq!(app.people.len(), 1);
         assert_eq!(app.people[0].display_name, "Ana");
         assert!(app.avatars.contains_key("D1"));
+    }
+
+    fn app_with_two_people(
+        dir: &std::path::Path,
+    ) -> (
+        App,
+        mpsc::UnboundedReceiver<Command>,
+        watch::Sender<Snapshot>,
+    ) {
+        use crate::hub::snapshot::DeviceView;
+        let device = |id: &str, name: &str| DeviceView {
+            device_id: id.into(),
+            name: name.into(),
+            paired_at: "2026-09-01T10:00:00Z".into(),
+            last_seen_at: None,
+            last_push_at: None,
+            last_pull_at: None,
+            revoked: false,
+            user_id: None,
+        };
+        let snap = Snapshot {
+            devices: vec![device("D1", "Pixel 7"), device("D2", "iPhone 13")],
+            ..Snapshot::default()
+        };
+        app_with(snap, dir.to_path_buf())
+    }
+
+    fn revoked(rx: &mut mpsc::UnboundedReceiver<Command>) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Ok(cmd) = rx.try_recv() {
+            if let Command::RevokeDevice(id) = cmd {
+                out.push(id);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn remover_pede_confirmacao_e_cancelar_nao_faz_nada() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_two_people(dir.path());
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        assert_eq!(app.confirm_remove.as_deref(), Some("D1"));
+        let _ = update(&mut app, Message::CancelRemove);
+        assert_eq!(app.confirm_remove, None);
+        assert_eq!(app.pending_removal, None);
+        assert!(revoked(&mut rx).is_empty());
+        assert_eq!(app.visible_people().count(), 2);
+    }
+
+    #[test]
+    fn confirmar_esconde_a_linha_e_desfazer_nao_envia_nada() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_two_people(dir.path());
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ConfirmRemove);
+        assert_eq!(app.confirm_remove, None);
+        let pending = app.pending_removal.clone().unwrap();
+        assert_eq!(pending.device_id, "D1");
+        assert_eq!(pending.toast, "Pixel 7 foi removido do hub");
+        assert_eq!(
+            app.visible_people()
+                .map(|p| p.device_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["D2"]
+        );
+        // Tique antes do prazo: nada sai.
+        let _ = update(&mut app, Message::Tick);
+        assert!(revoked(&mut rx).is_empty());
+        let _ = update(&mut app, Message::UndoRemove);
+        assert_eq!(app.pending_removal, None);
+        assert_eq!(app.visible_people().count(), 2);
+        assert!(revoked(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn prazo_vencido_envia_a_revogacao() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_two_people(dir.path());
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ConfirmRemove);
+        app.pending_removal.as_mut().unwrap().deadline = Instant::now();
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(revoked(&mut rx), vec!["D1".to_string()]);
+        assert_eq!(app.pending_removal, None);
+    }
+
+    #[test]
+    fn outra_remocao_ou_trocar_de_tela_envia_a_pendente() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_two_people(dir.path());
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ConfirmRemove);
+        let _ = update(&mut app, Message::AskRemove("D2".into()));
+        let _ = update(&mut app, Message::ConfirmRemove);
+        assert_eq!(revoked(&mut rx), vec!["D1".to_string()]);
+        assert_eq!(app.pending_removal.as_ref().unwrap().device_id, "D2");
+        let _ = update(&mut app, Message::SelectScreen(Screen::Dashboard));
+        assert_eq!(revoked(&mut rx), vec!["D2".to_string()]);
+    }
+
+    #[test]
+    fn fechar_com_remocao_pendente_revoga_antes_do_shutdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_two_people(dir.path());
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ConfirmRemove);
+        let _ = update(&mut app, Message::CloseRequested);
+        assert!(matches!(rx.try_recv(), Ok(Command::RevokeDevice(id)) if id == "D1"));
+        assert!(matches!(rx.try_recv(), Ok(Command::Shutdown)));
+    }
+
+    #[test]
+    fn genero_do_toast() {
+        use crate::dashboard::people::Person;
+        let person = |name: &str, known: bool| Person {
+            device_id: "D".into(),
+            display_name: name.into(),
+            color: None,
+            color_name: None,
+            avatar_uri: None,
+            device_name: "Pixel".into(),
+            paired_at: String::new(),
+            last_seen_at: None,
+            user_known: known,
+        };
+        assert_eq!(
+            removal_toast(&person("Ana", true)),
+            "Ana foi removida do hub"
+        );
+        assert_eq!(
+            removal_toast(&person("Luiz", true)),
+            "Luiz foi removido do hub"
+        );
+        assert_eq!(
+            removal_toast(&person("Pixel da Ana", false)),
+            "Pixel da Ana foi removido do hub"
+        );
     }
 
     #[test]

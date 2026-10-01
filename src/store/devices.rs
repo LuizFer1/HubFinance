@@ -38,7 +38,7 @@ impl Store {
         key_hash: &str,
         now: &str,
     ) -> Result<Device, StoreError> {
-        let conn = self.lock()?;
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO devices (device_id, name, key_hash, paired_at)
              VALUES (?1, ?2, ?3, ?4)
@@ -57,7 +57,7 @@ impl Store {
 
     /// So ativos (`revoked_at IS NULL`).
     pub fn device_by_key_hash(&self, key_hash: &str) -> Result<Option<Device>, StoreError> {
-        let conn = self.lock()?;
+        let conn = self.lock();
         Ok(conn
             .query_row(
                 &format!(
@@ -72,7 +72,7 @@ impl Store {
     /// Ativo ou revogado. A autenticacao usa esta para distinguir "chave revogada" (vira aviso
     /// na janela) de "chave desconhecida"; o `401` e o mesmo nos dois casos.
     pub fn device_by_key_hash_any(&self, key_hash: &str) -> Result<Option<Device>, StoreError> {
-        let conn = self.lock()?;
+        let conn = self.lock();
         Ok(conn
             .query_row(
                 &format!("SELECT {COLUMNS} FROM devices WHERE key_hash = ?1"),
@@ -84,7 +84,7 @@ impl Store {
 
     /// Mais recentes primeiro (`paired_at DESC`).
     pub fn list_devices(&self) -> Result<Vec<Device>, StoreError> {
-        let conn = self.lock()?;
+        let conn = self.lock();
         let mut stmt = conn.prepare(&format!(
             "SELECT {COLUMNS} FROM devices ORDER BY paired_at DESC, device_id"
         ))?;
@@ -97,7 +97,7 @@ impl Store {
     /// `true` se o aparelho existe. Revogar de novo mantem a data da primeira revogacao, que
     /// e a que a janela mostra como historico.
     pub fn revoke_device(&self, device_id: &str, now: &str) -> Result<bool, StoreError> {
-        let conn = self.lock()?;
+        let conn = self.lock();
         let changed = conn.execute(
             "UPDATE devices SET revoked_at = COALESCE(revoked_at, ?2) WHERE device_id = ?1",
             (device_id, now),
@@ -117,7 +117,7 @@ impl Store {
                 "UPDATE devices SET last_seen_at = ?2, last_pull_at = ?2 WHERE device_id = ?1"
             }
         };
-        self.lock()?.execute(sql, (device_id, now))?;
+        self.lock().execute(sql, (device_id, now))?;
         Ok(())
     }
 }

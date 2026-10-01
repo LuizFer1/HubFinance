@@ -1,6 +1,6 @@
 //! Linhas sincronizadas: LWW por linha com `seq`, push em lote e pull paginado.
 
-use rusqlite::OptionalExtension;
+use rusqlite::{OptionalExtension, TransactionBehavior};
 
 use super::{Store, StoreError};
 use crate::protocol::lww::{self, Verdict};
@@ -38,8 +38,11 @@ impl Store {
         origin: &str,
         entries: &[PushEntry],
     ) -> Result<BatchOutcome, StoreError> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
+        let mut conn = self.lock();
+        // IMMEDIATE pega o lock de escrita ja no BEGIN. Com DEFERRED, se outro processo
+        // escrever no arquivo entre a leitura e a escrita, o SQLite devolve
+        // SQLITE_BUSY_SNAPSHOT na hora, sem respeitar o `busy_timeout`.
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut outcome = BatchOutcome::default();
         {
             let mut current_stmt =
@@ -114,7 +117,10 @@ impl Store {
         exclude_origin: &str,
         limit: usize,
     ) -> Result<Page, StoreError> {
-        let mut conn = self.lock()?;
+        // `limit == 0` devolveria `has_more: true` sem nenhuma linha e o cliente entraria em
+        // loop; o servidor ja recusa, mas a store nao depende disso.
+        let limit = limit.max(1);
+        let mut conn = self.lock();
         // Transacao de leitura: a pagina e o `MAX(seq)` precisam ver o mesmo estado, senao o
         // cursor devolvido poderia pular uma linha gravada entre as duas consultas.
         let tx = conn.transaction()?;
@@ -201,7 +207,7 @@ mod tests {
     }
 
     fn stored(store: &Store, id: &str) -> (String, Option<String>, Value, i64) {
-        let conn = store.lock().unwrap();
+        let conn = store.lock();
         conn.query_row(
             "SELECT updated_at, deleted_at, data, seq FROM rows WHERE tbl = 'categories' AND id = ?1",
             [id],
@@ -219,7 +225,7 @@ mod tests {
     }
 
     fn count(store: &Store) -> i64 {
-        let conn = store.lock().unwrap();
+        let conn = store.lock();
         conn.query_row("SELECT COUNT(*) FROM rows", [], |r| r.get(0))
             .unwrap()
     }
@@ -340,7 +346,7 @@ mod tests {
             "CREATE TRIGGER boom BEFORE INSERT ON rows WHEN NEW.id = '{ID2}' \
              BEGIN SELECT RAISE(ABORT, 'boom'); END;"
         );
-        store.lock().unwrap().execute_batch(&trigger).unwrap();
+        store.lock().execute_batch(&trigger).unwrap();
         let result = store.apply_batch(A, &[cat(ID1, 1000), cat(ID2, 1000)]);
         assert!(result.is_err());
         assert_eq!(count(&store), 0);
@@ -399,6 +405,30 @@ mod tests {
         assert_eq!(last.rows.len(), 1);
         assert_eq!(last.cursor, 5);
         assert!(!last.has_more);
+    }
+
+    #[test]
+    fn pagina_vazia_so_com_linhas_proprias_ainda_avanca_o_cursor() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .apply_batch(A, &[cat(ID1, 1000), cat(ID2, 1000)])
+            .unwrap();
+        let page = store.pull_after(0, A, 10).unwrap();
+        assert!(page.rows.is_empty());
+        assert_eq!(page.cursor, 2);
+        assert!(!page.has_more);
+    }
+
+    #[test]
+    fn limit_zero_e_tratado_como_um() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .apply_batch(A, &[cat(ID1, 1000), cat(ID2, 1000)])
+            .unwrap();
+        let page = store.pull_after(0, B, 0).unwrap();
+        assert_eq!(page.rows.len(), 1);
+        assert!(page.has_more);
+        assert_eq!(page.cursor, 1);
     }
 
     #[test]

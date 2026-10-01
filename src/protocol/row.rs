@@ -205,6 +205,20 @@ mod tests {
     }
 
     #[test]
+    fn um_byte_acima_do_limite_e_rejeitado() {
+        let base = serde_json::to_string(&without("dirty")).unwrap().len();
+        let filler = MAX_ROW_BYTES + 1 - base - r#","note":"""#.len();
+        let row = with("note", json!("x".repeat(filler)));
+        let mut data = row.as_object().unwrap().clone();
+        data.remove("dirty");
+        assert_eq!(
+            serde_json::to_string(&data).unwrap().len(),
+            MAX_ROW_BYTES + 1
+        );
+        assert_eq!(parse_row("categories", &row), Err(RowError::RowTooLarge));
+    }
+
+    #[test]
     fn codigos_e_mensagens_seguem_a_spec() {
         let cases = [
             (RowError::InvalidTable, "invalid_table"),

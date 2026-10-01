@@ -88,7 +88,10 @@ impl TokenBook {
             self.active = None;
             return Err(TokenError::Expired);
         }
-        if TokenBook::normalize(candidate) == active.token.value {
+        if ct_eq(
+            TokenBook::normalize(candidate).as_bytes(),
+            active.token.value.as_bytes(),
+        ) {
             self.active = None;
             return Ok(());
         }
@@ -102,6 +105,17 @@ impl TokenBook {
         })
     }
 
+    /// O token ativo e este? Nao consome nem conta tentativa: `GET /p/{token}` (guia da CA)
+    /// usa isto, e o celular abre o guia antes de parear — se contasse, o token morreria ali.
+    pub fn matches(&self, candidate: &str, now: SystemTime) -> bool {
+        self.current(now).is_some_and(|token| {
+            ct_eq(
+                TokenBook::normalize(candidate).as_bytes(),
+                token.value.as_bytes(),
+            )
+        })
+    }
+
     /// Como a pessoa digita: `abc-def`, `ABC DEF` e `ABCDEF` sao o mesmo codigo.
     pub fn normalize(candidate: &str) -> String {
         candidate
@@ -110,6 +124,12 @@ impl TokenBook {
             .flat_map(char::to_uppercase)
             .collect()
     }
+}
+
+/// Comparacao em tempo constante: `==` de String para no primeiro byte diferente, e o tempo de
+/// resposta diria quantos caracteres do codigo ja estao certos.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 #[cfg(test)]
@@ -217,6 +237,36 @@ mod tests {
             Err(TokenError::Mismatch { .. })
         ));
         assert_eq!(book.consume(&second.value, t0()), Ok(()));
+    }
+
+    #[test]
+    fn matches_nao_consome_nem_conta_tentativa() {
+        let mut book = TokenBook::default();
+        let token = book.issue(t0());
+        let bad = wrong(&token);
+        assert!(!book.matches(&bad, t0()));
+        for _ in 0..10 {
+            assert!(!book.matches(&bad, t0()));
+            assert!(book.matches(&token.value.to_lowercase(), t0()));
+        }
+        // Os erros em `matches` nao gastaram nenhuma das cinco tentativas.
+        assert_eq!(
+            book.consume(&bad, t0()),
+            Err(TokenError::Mismatch {
+                remaining: MAX_ATTEMPTS - 1
+            })
+        );
+        assert!(!book.matches(&token.value, t0() + minutes(6)));
+        assert_eq!(book.consume(&token.value, t0()), Ok(()));
+        assert!(!book.matches(&token.value, t0()));
+    }
+
+    #[test]
+    fn ct_eq_compara_tamanho_e_conteudo() {
+        assert!(ct_eq(b"ABCDEF", b"ABCDEF"));
+        assert!(!ct_eq(b"ABCDEF", b"ABCDEG"));
+        assert!(!ct_eq(b"ABCDE", b"ABCDEF"));
+        assert!(ct_eq(b"", b""));
     }
 
     #[test]

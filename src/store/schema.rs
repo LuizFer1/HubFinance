@@ -40,7 +40,8 @@ CREATE TABLE devices (
 );
 ";
 
-/// WAL deixa o pull ler enquanto um push escreve e nao corrompe numa queda de energia.
+/// WAL pela durabilidade: um commit interrompido por queda de energia nao corrompe o banco.
+/// (Nao e por concorrencia: push e pull passam pelo mesmo Mutex da `Store`.)
 /// Em memoria o SQLite ignora o pedido e fica em `memory`, o que basta para os testes.
 pub fn configure(conn: &Connection) -> rusqlite::Result<()> {
     let _mode: String = conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;

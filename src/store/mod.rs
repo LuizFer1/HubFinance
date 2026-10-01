@@ -1,7 +1,7 @@
 //! Persistencia SQLite das linhas e dos aparelhos; unico modulo que conhece rusqlite.
 
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::Connection;
 
@@ -17,8 +17,6 @@ pub enum StoreError {
     Io(#[from] std::io::Error),
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("mutex envenenado")]
-    Poisoned,
 }
 
 /// `Connection` nao e `Sync`; o Mutex serializa o acesso. Para um hub domestico, uma
@@ -55,12 +53,15 @@ impl Store {
     }
 
     pub fn max_seq(&self) -> Result<i64, StoreError> {
-        let conn = self.lock()?;
+        let conn = self.lock();
         Ok(conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM rows", [], |r| r.get(0))?)
     }
 
-    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, Connection>, StoreError> {
-        self.conn.lock().map_err(|_| StoreError::Poisoned)
+    /// Mutex envenenado (panico com o lock na mao) nao derruba o hub ate reiniciar: a
+    /// conexao continua consistente porque a `Transaction` do rusqlite faz rollback no `Drop`,
+    /// entao o lote que estava no meio simplesmente nao entrou.
+    pub(crate) fn lock(&self) -> MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -71,7 +72,6 @@ mod tests {
     fn user_version(store: &Store) -> i32 {
         store
             .lock()
-            .unwrap()
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap()
     }
@@ -87,7 +87,6 @@ mod tests {
         assert!(ulid::Ulid::from_string(store.epoch()).is_ok());
         let mode: String = store
             .lock()
-            .unwrap()
             .query_row("PRAGMA journal_mode", [], |r| r.get(0))
             .unwrap();
         assert_eq!(mode.to_lowercase(), "wal");
@@ -107,7 +106,6 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let created: String = store
             .lock()
-            .unwrap()
             .query_row("SELECT value FROM meta WHERE key = 'created_at'", [], |r| {
                 r.get(0)
             })
@@ -134,7 +132,7 @@ mod tests {
     #[test]
     fn migrate_e_idempotente() {
         let store = Store::open_in_memory().unwrap();
-        let conn = store.lock().unwrap();
+        let conn = store.lock();
         schema::migrate(&conn).unwrap();
         schema::migrate(&conn).unwrap();
         let epoch = schema::ensure_epoch(&conn).unwrap();

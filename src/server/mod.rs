@@ -6,3 +6,4 @@ pub mod info;
 pub mod pair;
 pub mod router;
 pub mod state;
+pub mod sync;

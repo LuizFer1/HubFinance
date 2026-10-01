@@ -250,9 +250,9 @@ fn sidebar(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-/// Lancamentos vivos no total (preenchido a partir do dataset da tarefa 10).
-pub(super) fn transactions_count(_app: &App) -> usize {
-    0
+/// Lancamentos vivos no total.
+pub(super) fn transactions_count(app: &App) -> usize {
+    app.snapshot.dashboard.alive_transactions().count()
 }
 
 /// Aparelhos ativos: e o numero de linhas da lista "Usuarios conectados".
@@ -359,9 +359,9 @@ pub(super) fn status_lines(app: &App) -> StatusLines {
     }
 }
 
-/// Ha lancamento vivo no hub (preenchido a partir do dataset da tarefa 10).
+/// Ha lancamento vivo no hub.
 pub(super) fn has_data(app: &App) -> bool {
-    transactions_count(app) > 0
+    !app.snapshot.dashboard.is_empty()
 }
 
 /// "Último sync há 2 min · Pixel da Ana": o maior entre envio e recebimento de todos os

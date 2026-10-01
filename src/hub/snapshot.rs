@@ -3,8 +3,10 @@
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::SystemTime;
 
+use crate::dashboard::dataset::Dataset;
 use crate::store::devices::Device;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -87,6 +89,9 @@ pub struct Snapshot {
     pub devices: Vec<DeviceView>,
     /// Mais recente primeiro.
     pub activity: Vec<ActivityEntry>,
+    /// `Arc` porque o snapshot e republicado inteiro a cada mudanca: clonar o `Arc` e um
+    /// incremento, e a UI compara por ponteiro para saber se os dados mudaram.
+    pub dashboard: Arc<Dataset>,
 }
 
 impl Snapshot {

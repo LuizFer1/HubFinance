@@ -3,6 +3,7 @@
 use rusqlite::{OptionalExtension, TransactionBehavior};
 
 use super::{Store, StoreError};
+use crate::dashboard::dataset::RawRow;
 use crate::protocol::lww::{self, Verdict};
 use crate::protocol::messages::{AcceptedRow, IgnoredRow, PushEntry, RejectedRow};
 use crate::protocol::row;
@@ -155,6 +156,40 @@ impl Store {
             cursor,
             has_more,
         })
+    }
+
+    /// `seq > after AND tbl IN (tables) ORDER BY seq`, pelo indice `rows_by_seq`: a carga
+    /// incremental do dashboard. Linha atualizada ganhou `seq` novo, entao aparece uma vez so,
+    /// com a versao atual. So leitura: o dashboard nunca escreve no banco.
+    pub fn rows_since(&self, after: i64, tables: &[&str]) -> Result<Vec<RawRow>, StoreError> {
+        if tables.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders: Vec<String> = (0..tables.len()).map(|i| format!("?{}", i + 2)).collect();
+        let sql = format!(
+            "SELECT tbl, id, deleted_at, seq, data FROM rows
+             WHERE seq > ?1 AND tbl IN ({}) ORDER BY seq",
+            placeholders.join(", ")
+        );
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(tables.len() + 1);
+        params.push(&after);
+        for table in tables {
+            params.push(table);
+        }
+        let conn = self.lock();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params.as_slice(), |r| {
+                Ok(RawRow {
+                    table: r.get(0)?,
+                    id: r.get(1)?,
+                    deleted_at: r.get(2)?,
+                    seq: r.get(3)?,
+                    data: r.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 }
 
@@ -429,6 +464,56 @@ mod tests {
         assert_eq!(page.rows.len(), 1);
         assert!(page.has_more);
         assert_eq!(page.cursor, 1);
+    }
+
+    fn tx_entry(id: &str, millis: u64, deleted: bool) -> PushEntry {
+        entry(
+            "transactions",
+            id,
+            &t(millis),
+            deleted.then(|| t(millis)).as_deref(),
+            json!({ "kind": "expense", "description": "X", "amountMinor": 1, "occurredOn": "2026-09-01" }),
+        )
+    }
+
+    #[test]
+    fn rows_since_filtra_tabela_e_seq_em_ordem() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .apply_batch(
+                A,
+                &[
+                    tx_entry(ID1, 1000, false),
+                    cat(ID2, 1000),
+                    tx_entry(ID3, 1000, true),
+                ],
+            )
+            .unwrap();
+        let rows = store.rows_since(0, &["transactions"]).unwrap();
+        let got: Vec<(&str, i64, bool)> = rows
+            .iter()
+            .map(|r| (r.id.as_str(), r.seq, r.deleted_at.is_some()))
+            .collect();
+        assert_eq!(got, vec![(ID1, 1, false), (ID3, 3, true)]);
+        assert!(rows.iter().all(|r| r.table == "transactions"));
+        let data: Value = serde_json::from_str(&rows[0].data).unwrap();
+        assert_eq!(data["description"], "X");
+
+        let after = store
+            .rows_since(2, &["transactions", "categories"])
+            .unwrap();
+        assert_eq!(after.iter().map(|r| r.seq).collect::<Vec<_>>(), vec![3]);
+        assert!(store.rows_since(0, &[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rows_since_devolve_a_linha_atualizada_uma_vez_com_seq_novo() {
+        let store = Store::open_in_memory().unwrap();
+        store.apply_batch(A, &[tx_entry(ID1, 1000, false)]).unwrap();
+        store.apply_batch(A, &[tx_entry(ID1, 2000, false)]).unwrap();
+        let rows = store.rows_since(0, &["transactions"]).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].seq, 2);
     }
 
     #[test]

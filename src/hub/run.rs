@@ -11,6 +11,7 @@ use time::OffsetDateTime;
 use tokio::sync::{mpsc, watch};
 
 use super::Command;
+use super::dashboard::{DashboardState, REFRESH_DEBOUNCE};
 use super::snapshot::{ActivityKind, DeviceView, PairingView, Snapshot, Status};
 use crate::config::Config;
 use crate::pairing::token::TokenBook;
@@ -35,6 +36,10 @@ struct Hub {
     ca: tls::ca::Ca,
     server_cert: ServerCert,
     snap: Snapshot,
+    dashboard: DashboardState,
+    /// Quando o dashboard deve recarregar; `None` = nada pendente. Cada push com linha aceita
+    /// empurra o prazo (debounce).
+    refresh_due: Option<tokio::time::Instant>,
 }
 
 pub(super) async fn run(
@@ -123,8 +128,12 @@ async fn boot(config: &Config, snap: &mut Snapshot) -> Result<Hub, String> {
         ca: material.ca,
         server_cert: material.server,
         snap: snap.clone(),
+        dashboard: DashboardState::default(),
+        refresh_due: None,
     };
     hub.reload_devices().await;
+    // Falha aqui vira linha de erro na atividade; o hub sobe mesmo assim, com dataset vazio.
+    hub.refresh_dashboard().await;
     hub.snap.log(ActivityKind::Info, "Hub ligado");
     if hub.snap.addresses.is_empty() {
         hub.snap.log(ActivityKind::Warning, "Sem rede local");
@@ -164,6 +173,12 @@ impl Hub {
                 },
                 Some(event) = self.events.recv() => self.on_event(event).await,
                 _ = tick.tick() => self.on_tick().await,
+                _ = tokio::time::sleep_until(
+                    self.refresh_due.unwrap_or_else(tokio::time::Instant::now)
+                ), if self.refresh_due.is_some() => {
+                    self.refresh_due = None;
+                    self.refresh_dashboard().await;
+                }
             }
             snapshot.send_replace(self.snap.clone());
         }
@@ -261,6 +276,10 @@ impl Hub {
                 };
                 self.snap.log(kind, text);
                 self.reload_devices().await;
+                // Pull nao muda o banco; so push com linha aceita pede refresh.
+                if accepted > 0 {
+                    self.refresh_due = Some(tokio::time::Instant::now() + REFRESH_DEBOUNCE);
+                }
             }
             ServerEvent::Pulled { name, rows, .. } => {
                 // Pull vazio e o celular so conferindo; registrar cada um afogaria o resto.
@@ -355,6 +374,36 @@ impl Hub {
             Err(e) => self.snap.log(
                 ActivityKind::Error,
                 format!("Falha ao recarregar o certificado: {e}"),
+            ),
+        }
+    }
+
+    async fn refresh_dashboard(&mut self) {
+        let ignored_before = self.snap.dashboard.ignored_total();
+        match self.dashboard.refresh(&self.store, SystemTime::now()).await {
+            Ok(report) => {
+                self.snap.dashboard = Arc::clone(&self.dashboard.dataset);
+                if report.ignored_total > ignored_before {
+                    let detail: Vec<String> = self
+                        .dashboard
+                        .dataset
+                        .ignored
+                        .iter()
+                        .map(|(table, ids)| format!("{table}: {}", ids.len()))
+                        .collect();
+                    self.snap.log(
+                        ActivityKind::Warning,
+                        format!(
+                            "Dashboard: {} fora do contrato de campos ({})",
+                            plural(report.ignored_total, "linha", "linhas"),
+                            detail.join(", ")
+                        ),
+                    );
+                }
+            }
+            Err(e) => self.snap.log(
+                ActivityKind::Error,
+                format!("Erro ao atualizar o dashboard: {e}"),
             ),
         }
     }

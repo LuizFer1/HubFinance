@@ -4,6 +4,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::config::Config;
 
+pub mod dashboard;
 mod run;
 pub mod snapshot;
 
@@ -104,12 +105,29 @@ mod tests {
     fn sobe_pareia_revoga_e_desliga() {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let dir = tempfile::tempdir().unwrap();
+        // Banco com dado antes de subir: o primeiro `Running` ja tem que trazer o dataset.
+        {
+            let store = crate::store::Store::open(&dir.path().join("hub.sqlite")).unwrap();
+            store
+                .apply_batch(
+                    "01HZZZZZZZZZZZZZZZZZZZZZZA",
+                    &[dashboard::tests::push_entry(
+                        "transactions",
+                        "01HZZZZZZZZZZZZZZZZZZZZZT1",
+                        1000,
+                        false,
+                        dashboard::tests::tx(serde_json::json!(100)),
+                    )],
+                )
+                .unwrap();
+        }
         let (mut handle, join) = start(config(dir.path()));
 
         let snap = wait_for(&mut handle.snapshot, Duration::from_secs(10), |s| {
             up(s) || matches!(s.status, Status::Failed(_))
         });
         assert!(up(&snap), "{:?}", snap.status);
+        assert_eq!(snap.dashboard.alive_transactions().count(), 1);
         assert_eq!(snap.epoch.len(), 26);
         assert_ne!(snap.https_port, 0);
         assert_ne!(snap.http_port, 0);

@@ -304,6 +304,41 @@ pub(crate) mod tests {
         assert_eq!(status, StatusCode::CREATED);
     }
 
+    const USER: &str = "01HZZZZZZZZZZZZZZZZZZZZZP1";
+
+    #[tokio::test]
+    async fn pair_com_user_id_invalido_e_400_e_nao_gasta_o_token() {
+        let app = test_app();
+        let token = app.issue_token();
+        let body = json!({ "token": token, "deviceId": DEVICE_A, "name": "A", "userId": "abc" });
+        let (status, resp) = app.call("POST", "/v1/pair", Some(body), None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+        assert_eq!(resp["error"], "invalid_request");
+        let body = json!({ "token": token, "deviceId": DEVICE_A, "name": "A", "userId": USER });
+        let (status, resp) = app.call("POST", "/v1/pair", Some(body), None).await;
+        assert_eq!(status, StatusCode::CREATED, "{resp}");
+        let key = resp["key"].as_str().unwrap().to_string();
+        let (status, me) = app.call("GET", "/v1/me", None, Some(&key)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(me["userId"], USER);
+        assert_eq!(
+            app.state.store.list_devices().unwrap()[0]
+                .user_id
+                .as_deref(),
+            Some(USER)
+        );
+    }
+
+    #[tokio::test]
+    async fn pair_sem_user_id_devolve_null_no_me() {
+        let app = test_app();
+        let key = app.pair(DEVICE_A, "A").await;
+        let (status, me) = app.call("GET", "/v1/me", None, Some(&key)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(me["userId"], Value::Null);
+        assert!(me.as_object().unwrap().contains_key("userId"));
+    }
+
     #[tokio::test]
     async fn me_exige_chave_ativa() {
         let mut app = test_app();

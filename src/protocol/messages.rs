@@ -23,6 +23,10 @@ pub struct PairRequest {
     pub token: String,
     pub device_id: String,
     pub name: String,
+    /// `meta.localUserId` do app: liga o aparelho a pessoa para a tela Conexao. Opcional
+    /// porque um app sem perfil (ou mais antigo) ainda pode parear.
+    #[serde(default)]
+    pub user_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -41,6 +45,8 @@ pub struct MeResponse {
     pub name: String,
     pub paired_at: String,
     pub epoch: String,
+    /// `null` quando o pareamento veio sem `userId`.
+    pub user_id: Option<String>,
 }
 
 /// `row` fica como `Value` de proposito: a validacao e por linha (`parse_row`), e uma linha
@@ -230,6 +236,10 @@ mod tests {
         let ok = json!({ "token": "ABCDEF", "deviceId": "D", "name": "Pixel" });
         let parsed: PairRequest = serde_json::from_value(ok).unwrap();
         assert_eq!(parsed.device_id, "D");
+        assert_eq!(parsed.user_id, None);
+        let with_user = json!({ "token": "ABCDEF", "deviceId": "D", "name": "N", "userId": "U" });
+        let parsed: PairRequest = serde_json::from_value(with_user).unwrap();
+        assert_eq!(parsed.user_id.as_deref(), Some("U"));
         let missing = json!({ "token": "ABCDEF", "deviceId": "D" });
         assert!(serde_json::from_value::<PairRequest>(missing).is_err());
     }
@@ -251,11 +261,17 @@ mod tests {
             name: "N".into(),
             paired_at: "P".into(),
             epoch: "E".into(),
+            user_id: None,
         };
         assert_eq!(
             serde_json::to_value(&me).unwrap(),
-            json!({ "deviceId": "D", "name": "N", "pairedAt": "P", "epoch": "E" })
+            json!({ "deviceId": "D", "name": "N", "pairedAt": "P", "epoch": "E", "userId": null })
         );
+        let me = MeResponse {
+            user_id: Some("U".into()),
+            ..me
+        };
+        assert_eq!(serde_json::to_value(&me).unwrap()["userId"], "U");
     }
 
     #[test]

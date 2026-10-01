@@ -16,6 +16,8 @@ pub struct Device {
     pub last_push_at: Option<String>,
     pub last_pull_at: Option<String>,
     pub revoked_at: Option<String>,
+    /// `meta.localUserId` do app que pareou; `None` se o app nao mandou.
+    pub user_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -29,24 +31,25 @@ impl Store {
     /// Parear de novo o mesmo `device_id` substitui a chave: e o caso "restaurei o backup
     /// no celular novo" — o antigo passa a receber 401.
     ///
-    /// A linha inteira e substituida, inclusive `last_*`: a atividade do aparelho antigo nao
-    /// descreve o novo.
+    /// A linha inteira e substituida, inclusive `last_*` e `user_id`: a atividade e a pessoa
+    /// do aparelho antigo nao descrevem o novo (re-parear sem `userId` zera a pessoa).
     pub fn upsert_device(
         &self,
         device_id: &str,
         name: &str,
         key_hash: &str,
+        user_id: Option<&str>,
         now: &str,
     ) -> Result<Device, StoreError> {
         let conn = self.lock();
         conn.execute(
-            "INSERT INTO devices (device_id, name, key_hash, paired_at)
-             VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO devices (device_id, name, key_hash, paired_at, user_id)
+             VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT (device_id) DO UPDATE SET
                name = excluded.name, key_hash = excluded.key_hash,
                paired_at = excluded.paired_at, last_seen_at = NULL, last_push_at = NULL,
-               last_pull_at = NULL, revoked_at = NULL",
-            (device_id, name, key_hash, now),
+               last_pull_at = NULL, revoked_at = NULL, user_id = excluded.user_id",
+            (device_id, name, key_hash, now, user_id),
         )?;
         Ok(conn.query_row(
             &format!("SELECT {COLUMNS} FROM devices WHERE device_id = ?1"),
@@ -125,7 +128,7 @@ impl Store {
 }
 
 const COLUMNS: &str = "device_id, name, key_hash, paired_at, last_seen_at, last_push_at, \
-                       last_pull_at, revoked_at";
+                       last_pull_at, revoked_at, user_id";
 
 fn device_from_row(r: &Row<'_>) -> rusqlite::Result<Device> {
     Ok(Device {
@@ -137,6 +140,7 @@ fn device_from_row(r: &Row<'_>) -> rusqlite::Result<Device> {
         last_push_at: r.get(5)?,
         last_pull_at: r.get(6)?,
         revoked_at: r.get(7)?,
+        user_id: r.get(8)?,
     })
 }
 
@@ -158,7 +162,7 @@ mod tests {
     fn upsert_cria_e_lista() {
         let store = Store::open_in_memory().unwrap();
         let device = store
-            .upsert_device(A, "Pixel da Ana", &hash('a'), T1)
+            .upsert_device(A, "Pixel da Ana", &hash('a'), None, T1)
             .unwrap();
         assert_eq!(device.device_id, A);
         assert_eq!(device.name, "Pixel da Ana");
@@ -171,8 +175,8 @@ mod tests {
     #[test]
     fn lista_mais_recentes_primeiro() {
         let store = Store::open_in_memory().unwrap();
-        store.upsert_device(A, "A", &hash('a'), T1).unwrap();
-        store.upsert_device(B, "B", &hash('b'), T2).unwrap();
+        store.upsert_device(A, "A", &hash('a'), None, T1).unwrap();
+        store.upsert_device(B, "B", &hash('b'), None, T2).unwrap();
         let ids: Vec<String> = store
             .list_devices()
             .unwrap()
@@ -185,7 +189,7 @@ mod tests {
     #[test]
     fn acha_ativo_pelo_hash() {
         let store = Store::open_in_memory().unwrap();
-        store.upsert_device(A, "A", &hash('a'), T1).unwrap();
+        store.upsert_device(A, "A", &hash('a'), None, T1).unwrap();
         let found = store.device_by_key_hash(&hash('a')).unwrap();
         assert_eq!(found.map(|d| d.device_id), Some(A.to_string()));
         assert_eq!(store.device_by_key_hash(&hash('f')).unwrap(), None);
@@ -194,7 +198,7 @@ mod tests {
     #[test]
     fn revogado_nao_e_achado_mas_continua_na_lista() {
         let store = Store::open_in_memory().unwrap();
-        store.upsert_device(A, "A", &hash('a'), T1).unwrap();
+        store.upsert_device(A, "A", &hash('a'), None, T1).unwrap();
         assert!(store.revoke_device(A, T2).unwrap());
         assert_eq!(store.device_by_key_hash(&hash('a')).unwrap(), None);
         let listed = store.list_devices().unwrap();
@@ -205,7 +209,7 @@ mod tests {
     #[test]
     fn busca_any_acha_revogado() {
         let store = Store::open_in_memory().unwrap();
-        store.upsert_device(A, "A", &hash('a'), T1).unwrap();
+        store.upsert_device(A, "A", &hash('a'), None, T1).unwrap();
         store.revoke_device(A, T2).unwrap();
         let found = store.device_by_key_hash_any(&hash('a')).unwrap().unwrap();
         assert_eq!(found.revoked_at.as_deref(), Some(T2));
@@ -215,7 +219,7 @@ mod tests {
     #[test]
     fn revogar_de_novo_mantem_a_data_original() {
         let store = Store::open_in_memory().unwrap();
-        store.upsert_device(A, "A", &hash('a'), T1).unwrap();
+        store.upsert_device(A, "A", &hash('a'), None, T1).unwrap();
         store.revoke_device(A, T2).unwrap();
         assert!(store.revoke_device(A, T3).unwrap());
         assert_eq!(
@@ -227,10 +231,14 @@ mod tests {
     #[test]
     fn reparear_substitui_chave_e_reativa() {
         let store = Store::open_in_memory().unwrap();
-        store.upsert_device(A, "Antigo", &hash('a'), T1).unwrap();
+        store
+            .upsert_device(A, "Antigo", &hash('a'), None, T1)
+            .unwrap();
         store.touch_device(A, Touch::Push, T1).unwrap();
         store.revoke_device(A, T2).unwrap();
-        let device = store.upsert_device(A, "Novo", &hash('b'), T3).unwrap();
+        let device = store
+            .upsert_device(A, "Novo", &hash('b'), None, T3)
+            .unwrap();
         assert_eq!(device.name, "Novo");
         assert_eq!(device.key_hash, hash('b'));
         assert_eq!(device.paired_at, T3);
@@ -241,10 +249,29 @@ mod tests {
         assert_eq!(store.list_devices().unwrap().len(), 1);
     }
 
+    const USER: &str = "01HZZZZZZZZZZZZZZZZZZZZZP1";
+
+    #[test]
+    fn grava_a_pessoa_e_reparear_sem_ela_zera() {
+        let store = Store::open_in_memory().unwrap();
+        let device = store
+            .upsert_device(A, "Pixel da Ana", &hash('a'), Some(USER), T1)
+            .unwrap();
+        assert_eq!(device.user_id.as_deref(), Some(USER));
+        assert_eq!(
+            store.list_devices().unwrap()[0].user_id.as_deref(),
+            Some(USER)
+        );
+        let device = store
+            .upsert_device(A, "Pixel da Ana", &hash('b'), None, T2)
+            .unwrap();
+        assert_eq!(device.user_id, None);
+    }
+
     #[test]
     fn touch_preenche_os_campos_certos() {
         let store = Store::open_in_memory().unwrap();
-        store.upsert_device(A, "A", &hash('a'), T1).unwrap();
+        store.upsert_device(A, "A", &hash('a'), None, T1).unwrap();
 
         store.touch_device(A, Touch::Seen, T1).unwrap();
         let d = &store.list_devices().unwrap()[0];

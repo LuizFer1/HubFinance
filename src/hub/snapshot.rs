@@ -38,6 +38,8 @@ pub struct DeviceView {
     pub last_push_at: Option<String>,
     pub last_pull_at: Option<String>,
     pub revoked: bool,
+    /// A pessoa do app que pareou (`users[user_id]`), quando o app mandou.
+    pub user_id: Option<String>,
 }
 
 impl From<Device> for DeviceView {
@@ -50,6 +52,7 @@ impl From<Device> for DeviceView {
             last_push_at: d.last_push_at,
             last_pull_at: d.last_pull_at,
             revoked: d.revoked_at.is_some(),
+            user_id: d.user_id,
         }
     }
 }
@@ -125,6 +128,7 @@ mod tests {
             last_push_at: None,
             last_pull_at: None,
             revoked_at: Some("2026-10-01T19:00:00Z".into()),
+            user_id: None,
         });
         assert!(view.revoked);
         assert!(!format!("{view:?}").contains("segredo"));

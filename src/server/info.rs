@@ -25,5 +25,6 @@ pub async fn me(State(state): State<AppState>, AuthDevice(device): AuthDevice) -
         name: device.name,
         paired_at: device.paired_at,
         epoch: state.store.epoch().to_string(),
+        user_id: device.user_id,
     })
 }

@@ -28,6 +28,13 @@ pub async fn pair(
             "deviceId precisa ter 26 caracteres Crockford.",
         ));
     }
+    if let Some(user_id) = &req.user_id
+        && !is_valid_id(user_id)
+    {
+        return Err(ApiError::invalid_request(
+            "userId precisa ter 26 caracteres Crockford.",
+        ));
+    }
     let name = req.name.trim().to_string();
     let name_len = name.chars().count();
     if name_len == 0 || name_len > MAX_NAME_CHARS {
@@ -57,8 +64,11 @@ pub async fn pair(
     let hash = hash_key(&key);
     let now = state.now_rfc3339();
     let device_id = req.device_id.clone();
+    let user_id = req.user_id.clone();
     let device = state
-        .blocking(move |store| store.upsert_device(&device_id, &name, &hash, &now))
+        .blocking(move |store| {
+            store.upsert_device(&device_id, &name, &hash, user_id.as_deref(), &now)
+        })
         .await?;
     state.emit(ServerEvent::Paired {
         device: device.clone(),

@@ -582,6 +582,7 @@ mod tests {
             last_push_at: push.map(Into::into),
             last_pull_at: pull.map(Into::into),
             revoked,
+            user_id: None,
         }
     }
 

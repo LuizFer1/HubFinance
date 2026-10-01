@@ -495,6 +495,36 @@ pub fn chip(t: &'static Tokens, active: bool) -> impl Fn(&Theme, button::Status)
     }
 }
 
+/// Botao de categoria da barra de filtros: como o chip, mas com raio 8.
+pub fn filter_button(
+    t: &'static Tokens,
+    active: bool,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| button::Style {
+        border: outline(if active { t.accent } else { t.divider() }, 8.0),
+        ..chip(t, active)(theme, status)
+    }
+}
+
+/// Item do menu de categoria: raio 6, escolhido com o acento a 10 %, hover texto a 6 %.
+pub fn menu_item(
+    t: &'static Tokens,
+    selected: bool,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| button::Style {
+        background: if hovered(status) {
+            bg(t.text_alpha(0.06))
+        } else if selected {
+            bg(alpha(t.accent, 0.10))
+        } else {
+            None
+        },
+        text_color: t.text,
+        border: rounded(6.0),
+        ..button::Style::default()
+    }
+}
+
 /// Botao sem fundo nem hover (setas do seletor de mes, area clicavel generica).
 pub fn plain(color: Color) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |_, _| button::Style {

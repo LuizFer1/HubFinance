@@ -15,7 +15,7 @@ use super::connection_view;
 use super::theme::Tokens;
 use crate::config::{ThemeMode, UiPrefs};
 use crate::dashboard::dataset::avatar_bytes;
-use crate::dashboard::list::Filters;
+use crate::dashboard::list::{Filters, NONE_KEY, TypeFilter};
 use crate::dashboard::people::{DeviceInfo, Person, people};
 use crate::dashboard::periods::month_window;
 use crate::dashboard::view::{
@@ -117,6 +117,8 @@ pub struct App {
     /// um quadro nunca percorre o dataset.
     pub(super) dashboard: DashboardView,
     pub(super) transactions: TransactionsView,
+    /// Menu de categoria da tela Lancamentos aberto.
+    pub(super) cat_menu_open: bool,
     /// Categoria sob o mouse na legenda da rosca.
     pub(super) hover_category: Option<String>,
     /// Geometria dos graficos; limpa quando dados, mes, hover da legenda ou tema mudam.
@@ -141,6 +143,17 @@ pub enum Message {
     /// Mouse saiu: so limpa se ainda for a mesma (a saida pode chegar depois da entrada na
     /// vizinha).
     UnhoverCategory(String),
+    /// Abre ou fecha o menu de categoria (o botao alterna, como no prototipo).
+    ToggleCategoryMenu,
+    CloseCategoryMenu,
+    /// `None` = todas; `Some("")` = "Sem categoria".
+    PickCategory(Option<String>),
+    /// Chip de autor; `""` = "Sem autor".
+    ToggleAuthor(String),
+    /// "Todos" dos chips de autor.
+    AllAuthors,
+    SetType(TypeFilter),
+    ClearFilters,
     CloseRequested,
     ForceExit,
     WindowId(Option<window::Id>),
@@ -204,6 +217,7 @@ impl App {
             filters: Filters::default(),
             dashboard: DashboardView::default(),
             transactions: TransactionsView::default(),
+            cat_menu_open: false,
             hover_category: None,
             donut_cache: canvas::Cache::new(),
             bars_cache: canvas::Cache::new(),
@@ -254,6 +268,15 @@ impl App {
         self.refresh_user_avatars();
         self.clear_charts();
         tracing::trace!("telas recalculadas para {month}");
+    }
+
+    /// Muda os filtros e recalcula so se mudaram de fato.
+    fn set_filters(&mut self, change: impl FnOnce(&mut Filters)) {
+        let before = self.filters.clone();
+        change(&mut self.filters);
+        if self.filters != before {
+            self.rebuild();
+        }
     }
 
     /// Fotos dos perfis vivos, decodificadas so quando o data URI muda.
@@ -500,6 +523,47 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::SelectScreen(screen) => {
             app.commit_pending();
             app.screen = screen;
+            app.cat_menu_open = false;
+            Task::none()
+        }
+        Message::ToggleCategoryMenu => {
+            app.cat_menu_open = !app.cat_menu_open;
+            Task::none()
+        }
+        Message::CloseCategoryMenu => {
+            app.cat_menu_open = false;
+            Task::none()
+        }
+        Message::PickCategory(category) => {
+            app.cat_menu_open = false;
+            app.set_filters(|f| f.category = category);
+            Task::none()
+        }
+        Message::ToggleAuthor(key) => {
+            // Todos os chips da tela: perfis vivos e, se aparecer, "Sem autor".
+            let mut all: Vec<String> = app
+                .transactions
+                .authors
+                .iter()
+                .map(|a| a.id.clone())
+                .collect();
+            if app.transactions.unauthored_chip {
+                all.push(NONE_KEY.to_string());
+            }
+            app.set_filters(|f| f.toggle_author(&key, &all));
+            Task::none()
+        }
+        Message::AllAuthors => {
+            app.set_filters(|f| f.authors.clear());
+            Task::none()
+        }
+        Message::SetType(kind) => {
+            app.set_filters(|f| f.kind = kind);
+            Task::none()
+        }
+        Message::ClearFilters => {
+            app.cat_menu_open = false;
+            app.set_filters(Filters::clear);
             Task::none()
         }
         Message::SetTheme(mode) => {
@@ -1121,6 +1185,79 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
         assert!(app.user_avatars.contains_key("U1"));
         assert!(!app.user_avatars.contains_key("U2"));
+    }
+
+    #[test]
+    fn menu_de_categoria_abre_fecha_e_escolhe() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::ToggleCategoryMenu);
+        assert!(app.cat_menu_open);
+        let _ = update(&mut app, Message::ToggleCategoryMenu);
+        assert!(!app.cat_menu_open);
+        let _ = update(&mut app, Message::ToggleCategoryMenu);
+        let _ = update(&mut app, Message::CloseCategoryMenu);
+        assert!(!app.cat_menu_open, "clicar fora fecha");
+        let _ = update(&mut app, Message::ToggleCategoryMenu);
+        let _ = update(&mut app, Message::PickCategory(Some("C1".into())));
+        assert!(!app.cat_menu_open, "escolher fecha");
+        assert_eq!(app.filters.category.as_deref(), Some("C1"));
+        assert_eq!(app.transactions.list.count, 1);
+        assert_eq!(
+            app.transactions
+                .selected_category
+                .as_ref()
+                .map(|c| c.name.as_str()),
+            Some("Alimentação")
+        );
+        let _ = update(&mut app, Message::PickCategory(Some(String::new())));
+        assert_eq!(
+            app.transactions.list.count, 2,
+            "sem categoria: nula e apagada"
+        );
+        let _ = update(&mut app, Message::ToggleCategoryMenu);
+        let _ = update(&mut app, Message::SelectScreen(Screen::Dashboard));
+        assert!(!app.cat_menu_open, "trocar de tela fecha");
+    }
+
+    #[test]
+    fn chips_de_autor_e_tipo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        // Setembro tem lancamento sem autor: ha tres chips (Ana, Luiz, Sem autor).
+        assert!(app.transactions.unauthored_chip);
+        let _ = update(&mut app, Message::ToggleAuthor("U1".into()));
+        assert_eq!(app.transactions.list.count, 3);
+        let _ = update(&mut app, Message::ToggleAuthor("U2".into()));
+        assert_eq!(app.filters.authors.len(), 2, "falta o Sem autor");
+        let _ = update(&mut app, Message::ToggleAuthor(String::new()));
+        assert!(app.filters.authors.is_empty(), "todos marcados = Todos");
+        assert_eq!(app.transactions.list.count, 7);
+        let _ = update(&mut app, Message::ToggleAuthor("U2".into()));
+        let _ = update(&mut app, Message::AllAuthors);
+        assert!(app.filters.authors.is_empty());
+        let _ = update(&mut app, Message::SetType(TypeFilter::Income));
+        assert_eq!(app.transactions.list.count, 1);
+        let _ = update(&mut app, Message::SetType(TypeFilter::All));
+        assert!(!app.filters.is_active());
+    }
+
+    #[test]
+    fn filtros_sobrevivem_a_troca_de_mes_e_limpar_zera() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::PickCategory(Some("C2".into())));
+        let _ = update(&mut app, Message::SetType(TypeFilter::Expense));
+        let _ = update(&mut app, Message::PrevMonth);
+        assert_eq!(app.filters.category.as_deref(), Some("C2"));
+        assert_eq!(app.filters.kind, TypeFilter::Expense);
+        assert_eq!(app.transactions.month, "2026-08");
+        assert_eq!(app.transactions.list.count, 1, "aluguel de agosto");
+        let _ = update(&mut app, Message::ToggleCategoryMenu);
+        let _ = update(&mut app, Message::ClearFilters);
+        assert_eq!(app.filters, Filters::default());
+        assert!(!app.cat_menu_open);
+        assert_eq!(app.transactions.list.count, 3);
     }
 
     #[test]

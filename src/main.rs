@@ -1,40 +1,26 @@
-use iced::widget::{button, column, text};
-use iced::{Center, Element};
+// Temporario: os modulos ainda nao sao ligados ao `main`; a Tarefa 17 remove isto.
+#![allow(dead_code)]
+
+mod config;
+mod hub;
+mod pairing;
+mod protocol;
+mod server;
+mod store;
+mod tls;
+mod ui;
 
 fn main() -> iced::Result {
-    iced::application(Hub::default, Hub::update, Hub::view)
-        .title("HubFinance")
-        .run()
-}
-
-#[derive(Default)]
-struct Hub {
-    contador: i64,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Message {
-    Incrementar,
-    Decrementar,
-}
-
-impl Hub {
-    fn update(&mut self, message: Message) {
-        match message {
-            Message::Incrementar => self.contador += 1,
-            Message::Decrementar => self.contador -= 1,
-        }
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+    // O provider precisa existir antes de qualquer `ServerConfig::builder()`; sem ele o
+    // rustls entra em panico na primeira conexao, nao no boot.
+    if rustls::crypto::ring::default_provider()
+        .install_default()
+        .is_err()
+    {
+        tracing::warn!("provider rustls ja instalado");
     }
-
-    fn view(&self) -> Element<'_, Message> {
-        column![
-            button("+").on_press(Message::Incrementar),
-            text(self.contador).size(40),
-            button("-").on_press(Message::Decrementar),
-        ]
-        .spacing(10)
-        .padding(20)
-        .align_x(Center)
-        .into()
-    }
+    ui::run()
 }

@@ -34,6 +34,8 @@ impl Store {
         Store::init(Connection::open(path)?)
     }
 
+    /// So os testes usam: o hub de verdade sempre tem arquivo.
+    #[cfg(test)]
     pub fn open_in_memory() -> Result<Store, StoreError> {
         Store::init(Connection::open_in_memory()?)
     }
@@ -52,6 +54,7 @@ impl Store {
         &self.epoch
     }
 
+    #[cfg(test)]
     pub fn max_seq(&self) -> Result<i64, StoreError> {
         let conn = self.lock();
         Ok(conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM rows", [], |r| r.get(0))?)

@@ -55,7 +55,9 @@ impl Store {
         )?)
     }
 
-    /// So ativos (`revoked_at IS NULL`).
+    /// So ativos (`revoked_at IS NULL`). A autenticacao usa `device_by_key_hash_any`, que
+    /// tambem ve os revogados; esta fica para os testes conferirem a revogacao.
+    #[cfg(test)]
     pub fn device_by_key_hash(&self, key_hash: &str) -> Result<Option<Device>, StoreError> {
         let conn = self.lock();
         Ok(conn

@@ -31,14 +31,12 @@ pub enum ServerEvent {
         device: Device,
     },
     Pushed {
-        device_id: String,
         name: String,
         accepted: usize,
         ignored: usize,
         rejected: usize,
     },
     Pulled {
-        device_id: String,
         name: String,
         rows: usize,
     },

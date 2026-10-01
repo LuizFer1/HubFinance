@@ -45,7 +45,6 @@ pub async fn push(
         })
         .await?;
     state.emit(ServerEvent::Pushed {
-        device_id: device.device_id,
         name: device.name,
         accepted: outcome.accepted.len(),
         ignored: outcome.ignored.len(),
@@ -88,7 +87,6 @@ pub async fn pull(
         })
         .await?;
     state.emit(ServerEvent::Pulled {
-        device_id: device.device_id,
         name: device.name,
         rows: page.rows.len(),
     });

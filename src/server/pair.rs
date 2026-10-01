@@ -1,5 +1,7 @@
 //! `POST /v1/pair`: troca o token de uso unico por uma chave de longa duracao.
 
+use std::sync::PoisonError;
+
 use axum::Json;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
@@ -37,7 +39,9 @@ pub async fn pair(
     let consumed = state
         .tokens
         .lock()
-        .map_err(|_| ApiError::internal("mutex do token envenenado"))?
+        // Envenenado so se alguem entrou em panico com o lock; o `TokenBook` continua
+        // coerente, e recusar aqui travaria o pareamento ate reiniciar o hub.
+        .unwrap_or_else(PoisonError::into_inner)
         .consume(&req.token, (state.now)());
     match consumed {
         Ok(()) => {}

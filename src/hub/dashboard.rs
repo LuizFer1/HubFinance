@@ -22,6 +22,10 @@ pub const TABLES: [&str; 5] = [
 #[derive(Default)]
 pub struct DashboardState {
     pub dataset: Arc<Dataset>,
+    /// Maior `seq` do banco ja olhado por um refresh. Nao e o `loaded_seq` do dataset: linha de
+    /// tabela fora do contrato nem sai do banco, entao `loaded_seq` pode ficar para tras para
+    /// sempre e o tique refaria o refresh a cada volta.
+    pub seen_seq: i64,
 }
 
 impl DashboardState {
@@ -34,10 +38,16 @@ impl DashboardState {
     ) -> Result<ApplyReport, String> {
         let after = self.dataset.loaded_seq;
         let store = Arc::clone(store);
-        let rows = tokio::task::spawn_blocking(move || store.rows_since(after, &TABLES))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
+        // `max_seq` antes de `rows_since`: toda linha com `seq` ate ele ja estava gravada (o
+        // lote inteiro e uma transacao sob o mesmo lock), entao nenhuma fica para tras.
+        let (max_seq, rows) = tokio::task::spawn_blocking(move || {
+            let max_seq = store.max_seq()?;
+            Ok::<_, crate::store::StoreError>((max_seq, store.rows_since(after, &TABLES)?))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+        self.seen_seq = self.seen_seq.max(max_seq);
         if rows.is_empty() {
             return Ok(ApplyReport {
                 applied: 0,
@@ -49,7 +59,20 @@ impl DashboardState {
         let dataset = Arc::make_mut(&mut self.dataset);
         let report = dataset.apply(rows);
         dataset.refreshed_at = Some(now);
+        self.seen_seq = self.seen_seq.max(dataset.loaded_seq);
         Ok(report)
+    }
+
+    /// O banco tem linha que nenhum refresh olhou? O evento `Pushed` sai do handler depois do
+    /// `.await` da gravacao; se a requisicao for cancelada no meio (celular fechou a conexao),
+    /// as linhas entram e o aviso nao. O tique do nucleo pergunta isto e se recupera sozinho.
+    pub async fn is_behind(&self, store: &Arc<Store>) -> Result<bool, String> {
+        let store = Arc::clone(store);
+        let max_seq = tokio::task::spawn_blocking(move || store.max_seq())
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        Ok(max_seq > self.seen_seq.max(self.dataset.loaded_seq))
     }
 }
 
@@ -96,6 +119,50 @@ pub(crate) mod tests {
             "amountMinor": amount,
             "occurredOn": "2026-09-14"
         })
+    }
+
+    #[tokio::test]
+    async fn push_sem_evento_e_recuperado_no_tique() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let mut state = DashboardState::default();
+        state.refresh(&store, SystemTime::now()).await.unwrap();
+        assert!(!state.is_behind(&store).await.unwrap());
+
+        // Gravou e o evento se perdeu (handler cancelado depois do `apply_batch`).
+        store
+            .apply_batch(
+                ORIGIN,
+                &[push_entry(
+                    "transactions",
+                    "01HZZZZZZZZZZZZZZZZZZZZZT1",
+                    1000,
+                    false,
+                    tx(json!(100)),
+                )],
+            )
+            .unwrap();
+        // O tique ve a diferenca e o refresh traz a linha.
+        assert!(state.is_behind(&store).await.unwrap());
+        state.refresh(&store, SystemTime::now()).await.unwrap();
+        assert_eq!(state.dataset.alive_transactions().count(), 1);
+        assert!(!state.is_behind(&store).await.unwrap());
+
+        // Tabela que o dashboard nao le avanca o banco mas nao deixa o tique em laco.
+        store
+            .apply_batch(
+                ORIGIN,
+                &[push_entry(
+                    "recurrenceAdjustments",
+                    "01HZZZZZZZZZZZZZZZZZZZZZA1",
+                    2000,
+                    false,
+                    json!({ "x": 1 }),
+                )],
+            )
+            .unwrap();
+        assert!(state.is_behind(&store).await.unwrap());
+        state.refresh(&store, SystemTime::now()).await.unwrap();
+        assert!(!state.is_behind(&store).await.unwrap());
     }
 
     #[tokio::test]

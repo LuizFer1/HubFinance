@@ -54,7 +54,8 @@ impl Store {
         &self.epoch
     }
 
-    #[cfg(test)]
+    /// Maior `seq` gravado (0 em banco vazio). O nucleo compara com o que o dashboard ja leu
+    /// para se recuperar de um push cujo evento se perdeu.
     pub fn max_seq(&self) -> Result<i64, StoreError> {
         let conn = self.lock();
         Ok(conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM rows", [], |r| r.get(0))?)

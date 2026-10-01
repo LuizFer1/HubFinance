@@ -308,6 +308,18 @@ impl Hub {
     }
 
     async fn on_tick(&mut self) {
+        // Push gravado cujo evento se perdeu: o dashboard alcanca o banco aqui. Com um refresh
+        // ja agendado, ele mesmo resolve.
+        if self.refresh_due.is_none() {
+            match self.dashboard.is_behind(&self.store).await {
+                Ok(true) => self.refresh_dashboard().await,
+                Ok(false) => {}
+                Err(e) => self.snap.log(
+                    ActivityKind::Error,
+                    format!("Erro ao atualizar o dashboard: {e}"),
+                ),
+            }
+        }
         if self
             .snap
             .pairing

@@ -315,15 +315,21 @@ const AVATAR_PREFIXES: [&str; 3] = [
     "data:image/png;base64,",
 ];
 
-/// `data:image/webp;base64,...` -> bytes. Prefixo fora da lista ou base64 quebrado -> `None`
-/// (a tela mostra a inicial).
+/// `data:image/webp;base64,...` -> bytes. Prefixo fora da lista, base64 quebrado ou bytes que
+/// nao comecam com a assinatura de PNG, JPEG ou WebP -> `None` (a tela mostra a inicial). A
+/// assinatura e conferida aqui porque o iced nao avisa quando uma imagem nao decodifica: sem
+/// ela, foto corrompida viraria um circulo vazio em vez da inicial.
 pub fn avatar_bytes(data_uri: &str) -> Option<Vec<u8>> {
     let payload = AVATAR_PREFIXES
         .iter()
         .find_map(|prefix| data_uri.strip_prefix(prefix))?;
-    base64::engine::general_purpose::STANDARD
+    let bytes = base64::engine::general_purpose::STANDARD
         .decode(payload.trim())
-        .ok()
+        .ok()?;
+    let png = bytes.starts_with(&[0x89, b'P', b'N', b'G']);
+    let jpeg = bytes.starts_with(&[0xFF, 0xD8, 0xFF]);
+    let webp = bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP";
+    (png || jpeg || webp).then_some(bytes)
 }
 
 #[cfg(test)]
@@ -555,7 +561,10 @@ mod tests {
         let png = avatar_bytes("data:image/png;base64,iVBORw0KGgo=").unwrap();
         assert_eq!(&png[..4], &[0x89, b'P', b'N', b'G']);
         assert!(avatar_bytes("data:image/jpeg;base64,/9j/4AAQ").is_some());
-        assert!(avatar_bytes("data:image/webp;base64,UklGRg==").is_some());
+        assert!(avatar_bytes("data:image/webp;base64,UklGRgAAAABXRUJQ").is_some());
+        // Base64 valido mas sem assinatura de imagem: sem foto.
+        assert_eq!(avatar_bytes("data:image/png;base64,AAAA"), None);
+        assert_eq!(avatar_bytes("data:image/webp;base64,UklGRg=="), None);
         assert_eq!(avatar_bytes("data:image/svg+xml;base64,PHN2Zz4="), None);
         assert_eq!(avatar_bytes("data:image/png;base64,%%%nao-e-base64"), None);
         assert_eq!(avatar_bytes("https://exemplo/foto.png"), None);

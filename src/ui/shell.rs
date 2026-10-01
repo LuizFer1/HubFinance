@@ -14,6 +14,7 @@ use crate::hub::snapshot::Status;
 
 const TITLEBAR_HEIGHT: f32 = 36.0;
 const SIDEBAR_WIDTH: f32 = 232.0;
+const CONTENT_MAX: f32 = 1180.0;
 /// Espessura da borda que redimensiona; os cantos pegam 12 px ao longo de cada lado.
 const EDGE: f32 = 6.0;
 const CORNER: f32 = 12.0;
@@ -466,17 +467,34 @@ fn content(app: &App) -> Element<'_, Message> {
         }
     };
     let page = column![header(app), body].spacing(14);
-    let inner = container(page).max_width(1180).padding(Padding {
+    let inner = container(page).max_width(CONTENT_MAX).padding(Padding {
         top: 28.0,
         right: 32.0,
         bottom: 40.0,
         left: 32.0,
     });
-    container(scrollable(inner).width(Length::Fill).height(Length::Fill))
+    let scroll = scrollable(inner)
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new()
+                .width(6)
+                .scroller_width(6)
+                .margin(3),
+        ))
+        .style(theme::scrollbar(t))
+        .width(Length::Fill)
+        .height(Length::Fill);
+    container(scroll)
         .width(Length::Fill)
         .height(Length::Fill)
         .style(theme::fill(t.bg, 0.0))
         .into()
+}
+
+/// Largura util do conteudo (sem a lateral, a borda e o padding de 32 + 32), limitada pelo
+/// maximo de 1180. As telas usam para decidir colunas: o iced nao tem `auto-fit`.
+pub(super) fn content_width(app: &App) -> f32 {
+    let available = app.window_size.width - SIDEBAR_WIDTH - 1.0;
+    available.min(CONTENT_MAX) - 64.0
 }
 
 fn header(app: &App) -> Element<'_, Message> {

@@ -8,12 +8,6 @@ pub fn parse(rfc3339: &str) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(rfc3339, &Rfc3339).ok()
 }
 
-pub fn format_date(t: OffsetDateTime, offset: UtcOffset) -> String {
-    t.to_offset(offset)
-        .format(format_description!("[day]/[month]/[year]"))
-        .unwrap_or_default()
-}
-
 pub fn format_time(t: OffsetDateTime, offset: UtcOffset) -> String {
     t.to_offset(offset)
         .format(format_description!("[hour]:[minute]"))

@@ -40,7 +40,7 @@ pub fn run(
     .antialiasing(true)
     .theme(|app: &app::App| app.iced_theme.clone())
     .window(window::Settings {
-        size: Size::new(1440.0, 900.0),
+        size: app::INITIAL_SIZE,
         min_size: Some(Size::new(1024.0, 720.0)),
         // Barra de titulo propria (shell.rs), como o design desenha.
         decorations: false,

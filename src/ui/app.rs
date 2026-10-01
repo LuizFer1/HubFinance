@@ -1,18 +1,40 @@
 //! Estado e mensagens da janela. O estado e o ultimo snapshot do nucleo mais o que e da
 //! propria tela: tela atual, tema, janela (id, maximizada), QR desenhado, se esta fechando.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use iced::widget::qr_code;
-use iced::{Element, Subscription, Task, window};
+use iced::widget::{image, qr_code};
+use iced::{Element, Size, Subscription, Task, window};
 use time::UtcOffset;
 use tokio::sync::watch;
 
+use super::connection_view;
 use super::theme::Tokens;
 use crate::config::{ThemeMode, UiPrefs};
+use crate::dashboard::dataset::avatar_bytes;
+use crate::dashboard::people::{DeviceInfo, Person, people};
 use crate::hub::snapshot::{Snapshot, Status};
 use crate::hub::{Command, HubHandle};
+
+/// Quanto tempo "Copiado" fica no botao, como no prototipo.
+pub const COPIED_FOR: Duration = Duration::from_millis(1600);
+
+/// Tamanho inicial da janela (`ui::run`); vale ate o primeiro evento de redimensionamento.
+pub const INITIAL_SIZE: Size = Size::new(1440.0, 900.0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyTarget {
+    Address,
+    CaLink,
+}
+
+/// Foto decodificada e o data URI de onde veio: so decodifica de novo quando o URI muda.
+pub struct Avatar {
+    pub uri: String,
+    pub handle: image::Handle,
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Screen {
@@ -48,6 +70,16 @@ pub struct App {
     pub(super) screen: Screen,
     /// Onde fica o `ui.json` (o diretorio de dados do hub).
     pub(super) prefs_dir: PathBuf,
+    /// Largura da janela: o iced nao tem `auto-fit`, entao a tela decide colunas por ela.
+    pub(super) window_size: Size,
+    /// Linhas de "Usuarios conectados", recalculadas so quando aparelhos ou dataset mudam.
+    pub(super) people: Vec<Person>,
+    /// `device_id` -> foto.
+    pub(super) avatars: HashMap<String, Avatar>,
+    /// Qual campo mostra "Copiado" e ate quando.
+    pub(super) copied: Option<(CopyTarget, Instant)>,
+    /// Linha sob o mouse em "Usuarios conectados" (hover de 4 %).
+    pub(super) hover_row: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -67,11 +99,16 @@ pub enum Message {
     Minimize,
     ToggleMaximize,
     Maximized(bool),
-    /// A janela mudou de tamanho por fora (Win+seta, encaixe): reconsulta se esta maximizada.
-    Resized,
+    /// A janela mudou de tamanho (arrasto, Win+seta, encaixe): guarda a largura e reconsulta
+    /// se esta maximizada.
+    Resized(Size),
     Resize(window::Direction),
     SelectScreen(Screen),
     SetTheme(ThemeMode),
+    Copy(CopyTarget),
+    CopyExpired,
+    HoverRow(String),
+    UnhoverRow(String),
     Noop,
 }
 
@@ -84,7 +121,7 @@ impl App {
     ) -> App {
         let snapshot = handle.snapshot.borrow().clone();
         let tokens = Tokens::for_mode(prefs.theme);
-        App {
+        let mut app = App {
             handle,
             snapshot,
             qr: None,
@@ -99,7 +136,45 @@ impl App {
             iced_theme: tokens.iced_theme(),
             screen: Screen::default(),
             prefs_dir,
+            window_size: INITIAL_SIZE,
+            people: Vec::new(),
+            avatars: HashMap::new(),
+            copied: None,
+            hover_row: None,
+        };
+        app.refresh_people();
+        app
+    }
+
+    /// Pessoas e fotos a partir do snapshot atual. A foto so e decodificada de novo quando o
+    /// data URI muda: decodificar base64 de 60 KB a cada push seria desperdicio.
+    pub(super) fn refresh_people(&mut self) {
+        let infos: Vec<DeviceInfo> = self.snapshot.devices.iter().map(DeviceInfo::from).collect();
+        self.people = people(&self.snapshot.dashboard, &infos);
+        let mut avatars = HashMap::new();
+        for person in &self.people {
+            let Some(uri) = &person.avatar_uri else {
+                continue;
+            };
+            let avatar = match self.avatars.remove(&person.device_id) {
+                Some(old) if &old.uri == uri => old,
+                _ => match avatar_bytes(uri) {
+                    Some(bytes) => Avatar {
+                        uri: uri.clone(),
+                        handle: image::Handle::from_bytes(bytes),
+                    },
+                    None => continue,
+                },
+            };
+            avatars.insert(person.device_id.clone(), avatar);
         }
+        self.avatars = avatars;
+    }
+
+    /// "Copiado" ainda vale para este campo?
+    pub(super) fn is_copied(&self, target: CopyTarget) -> bool {
+        self.copied
+            .is_some_and(|(t, until)| t == target && Instant::now() < until)
     }
 
     /// Acao sobre a janela; sem id ainda, nada (com um aviso so, para nao inundar o log).
@@ -157,7 +232,12 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     .and_then(|p| qr_code::Data::new(&p.qr_url).ok());
             }
             let stopped = s.status == Status::Stopped;
+            let people_changed = !std::sync::Arc::ptr_eq(&s.dashboard, &app.snapshot.dashboard)
+                || s.devices != app.snapshot.devices;
             app.snapshot = *s;
+            if people_changed {
+                app.refresh_people();
+            }
             if stopped && app.closing {
                 iced::exit()
             } else {
@@ -218,7 +298,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.maximized = maximized;
             Task::none()
         }
-        Message::Resized => app.with_window(|id| window::is_maximized(id).map(Message::Maximized)),
+        Message::Resized(size) => {
+            app.window_size = size;
+            app.with_window(|id| window::is_maximized(id).map(Message::Maximized))
+        }
         Message::Resize(direction) => app.with_window(|id| window::drag_resize(id, direction)),
         Message::SelectScreen(screen) => {
             app.screen = screen;
@@ -235,6 +318,40 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 save_prefs(UiPrefs { theme: mode }, app.prefs_dir.clone()),
                 |_| Message::Noop,
             )
+        }
+        Message::Copy(target) => {
+            let text = match target {
+                CopyTarget::Address => connection_view::hub_url(&app.snapshot),
+                CopyTarget::CaLink => connection_view::ca_url(&app.snapshot),
+            };
+            let Some(text) = text else {
+                return Task::none();
+            };
+            app.copied = Some((target, Instant::now() + COPIED_FOR));
+            // O iced nao devolve falha da area de transferencia; o rotulo vira "Copiado" mesmo
+            // assim (limite aceito na spec).
+            Task::batch([
+                iced::clipboard::write(text),
+                Task::perform(delay(COPIED_FOR), |_| Message::CopyExpired),
+            ])
+        }
+        Message::CopyExpired => {
+            // Um segundo clique adiou o prazo: o timer do primeiro nao apaga o do segundo.
+            if app.copied.is_some_and(|(_, until)| Instant::now() >= until) {
+                app.copied = None;
+            }
+            Task::none()
+        }
+        Message::HoverRow(id) => {
+            app.hover_row = Some(id);
+            Task::none()
+        }
+        Message::UnhoverRow(id) => {
+            // Saida de uma linha pode chegar depois da entrada na vizinha.
+            if app.hover_row.as_ref() == Some(&id) {
+                app.hover_row = None;
+            }
+            Task::none()
         }
         Message::Noop => Task::none(),
     }
@@ -285,7 +402,7 @@ fn ticks() -> futures::channel::mpsc::Receiver<()> {
 pub fn subscription(_app: &App) -> Subscription<Message> {
     Subscription::batch([
         window::close_requests().map(|_| Message::CloseRequested),
-        window::resize_events().map(|_| Message::Resized),
+        window::resize_events().map(|(_, size)| Message::Resized(size)),
         Subscription::run(ticks).map(|()| Message::Tick),
     ])
 }
@@ -389,6 +506,91 @@ pub(super) mod tests {
         assert!(app.warned_no_window);
         let _ = update(&mut app, Message::Maximized(true));
         assert!(app.maximized);
+    }
+
+    #[test]
+    fn copiar_marca_o_campo_e_expira() {
+        let dir = tempfile::tempdir().unwrap();
+        let snap = Snapshot {
+            addresses: vec![std::net::Ipv4Addr::new(192, 168, 0, 12)],
+            https_port: 7777,
+            http_port: 7778,
+            ..Snapshot::default()
+        };
+        let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
+        let _ = update(&mut app, Message::Copy(CopyTarget::Address));
+        assert!(app.is_copied(CopyTarget::Address));
+        assert!(!app.is_copied(CopyTarget::CaLink));
+        // Timer chegou antes do prazo (outro clique adiou): continua.
+        let _ = update(&mut app, Message::CopyExpired);
+        assert!(app.copied.is_some());
+        app.copied = Some((CopyTarget::Address, Instant::now()));
+        let _ = update(&mut app, Message::CopyExpired);
+        assert!(app.copied.is_none());
+    }
+
+    #[test]
+    fn copiar_sem_rede_nao_faz_nada() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        let _ = update(&mut app, Message::Copy(CopyTarget::Address));
+        assert!(app.copied.is_none());
+    }
+
+    #[test]
+    fn hover_de_linha_tolera_saida_atrasada() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        let _ = update(&mut app, Message::HoverRow("A".into()));
+        let _ = update(&mut app, Message::HoverRow("B".into()));
+        let _ = update(&mut app, Message::UnhoverRow("A".into()));
+        assert_eq!(app.hover_row.as_deref(), Some("B"));
+        let _ = update(&mut app, Message::UnhoverRow("B".into()));
+        assert_eq!(app.hover_row, None);
+    }
+
+    #[test]
+    fn snapshot_novo_recalcula_pessoas_e_fotos() {
+        use crate::dashboard::dataset::{Dataset, RawRow};
+        use crate::hub::snapshot::DeviceView;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        assert!(app.people.is_empty());
+
+        let user = "01HZZZZZZZZZZZZZZZZZZZZZP1";
+        let mut ds = Dataset::default();
+        ds.apply([RawRow {
+            table: "users".into(),
+            id: user.into(),
+            deleted_at: None,
+            seq: 1,
+            data: serde_json::json!({
+                "name": "Ana",
+                "color": "fuchsia",
+                "avatar": "data:image/png;base64,iVBORw0KGgo="
+            })
+            .to_string(),
+        }]);
+        let device = DeviceView {
+            device_id: "D1".into(),
+            name: "Pixel da Ana".into(),
+            paired_at: "2026-09-01T10:00:00Z".into(),
+            last_seen_at: None,
+            last_push_at: None,
+            last_pull_at: None,
+            revoked: false,
+            user_id: Some(user.into()),
+        };
+        let snap = Snapshot {
+            devices: vec![device],
+            dashboard: std::sync::Arc::new(ds),
+            ..Snapshot::default()
+        };
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert_eq!(app.people.len(), 1);
+        assert_eq!(app.people[0].display_name, "Ana");
+        assert!(app.avatars.contains_key("D1"));
     }
 
     #[test]

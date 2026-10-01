@@ -7,7 +7,7 @@
 // Parte dos estilos so ganha uso nas telas do plano 2b (Dashboard e Lancamentos).
 #![allow(dead_code)]
 
-use iced::widget::{button, container};
+use iced::widget::{button, container, scrollable};
 use iced::{Background, Border, Color, Shadow, Theme, Vector};
 
 use crate::config::ThemeMode;
@@ -496,6 +496,36 @@ pub fn plain(color: Color) -> impl Fn(&Theme, button::Status) -> button::Style {
         background: None,
         text_color: color,
         ..button::Style::default()
+    }
+}
+
+/// Barra de rolagem discreta: sem trilho, so o cursor em texto a 18 % (32 % sob o mouse). A
+/// padrao do iced pinta o trilho com a paleta derivada, que nao e a do design.
+pub fn scrollbar(t: &'static Tokens) -> impl Fn(&Theme, scrollable::Status) -> scrollable::Style {
+    move |theme, status| {
+        let active = matches!(
+            status,
+            scrollable::Status::Hovered {
+                is_vertical_scrollbar_hovered: true,
+                ..
+            } | scrollable::Status::Dragged {
+                is_vertical_scrollbar_dragged: true,
+                ..
+            }
+        );
+        let rail = scrollable::Rail {
+            background: None,
+            border: Border::default(),
+            scroller: scrollable::Scroller {
+                background: Background::Color(t.text_alpha(if active { 0.32 } else { 0.18 })),
+                border: rounded(3.0),
+            },
+        };
+        scrollable::Style {
+            vertical_rail: rail,
+            horizontal_rail: rail,
+            ..scrollable::default(theme, status)
+        }
     }
 }
 

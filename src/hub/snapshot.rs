@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use crate::dashboard::dataset::Dataset;
+use crate::dashboard::people::DeviceInfo;
 use crate::store::devices::Device;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -55,6 +56,22 @@ impl From<Device> for DeviceView {
             last_pull_at: d.last_pull_at,
             revoked: d.revoked_at.is_some(),
             user_id: d.user_id,
+        }
+    }
+}
+
+/// O modulo puro `dashboard::people` tem a sua copia do aparelho; a ponte fica aqui, no hub.
+impl From<&DeviceView> for DeviceInfo {
+    fn from(d: &DeviceView) -> Self {
+        DeviceInfo {
+            device_id: d.device_id.clone(),
+            name: d.name.clone(),
+            user_id: d.user_id.clone(),
+            paired_at: d.paired_at.clone(),
+            last_seen_at: d.last_seen_at.clone(),
+            last_push_at: d.last_push_at.clone(),
+            last_pull_at: d.last_pull_at.clone(),
+            revoked: d.revoked,
         }
     }
 }

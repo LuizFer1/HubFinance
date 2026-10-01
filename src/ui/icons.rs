@@ -249,6 +249,16 @@ pub fn icon<'a, M: 'a>(glyph: &'static str, size: f32, color: Color) -> Element<
         .into()
 }
 
+/// Icone sem cor propria: herda a cor de texto do botao em volta (que muda no hover), como o
+/// `<i>` do prototipo herda o `color` do pai.
+pub fn icon_inherit<'a, M: 'a>(glyph: &'static str, size: f32) -> Element<'a, M> {
+    text(glyph)
+        .font(fonts::PHOSPHOR)
+        .size(size)
+        .line_height(1.0)
+        .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2,6 +2,7 @@
 
 mod app;
 mod fonts;
+mod icons;
 mod view;
 
 use time::UtcOffset;

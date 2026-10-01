@@ -28,6 +28,4 @@ pub const INTER_SEMIBOLD: Font = Font {
     weight: Weight::Semibold,
     ..Font::DEFAULT
 };
-// Usada a partir dos icones (tarefa 2 do plano 2a).
-#[allow(dead_code)]
 pub const PHOSPHOR: Font = Font::with_name("Phosphor");

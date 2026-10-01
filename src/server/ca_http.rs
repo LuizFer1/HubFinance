@@ -102,6 +102,9 @@ fn page(body: &str) -> String {
 }
 
 /// Pagina unica, sem JS nem recurso externo: o celular ainda nao confia em nada alem dela.
+/// O link do app leva endereco e codigo no fragmento (`#hub=...&token=...`), nao na query: o
+/// navegador nunca manda o fragmento ao servidor, entao o codigo de pareamento nao chega ao
+/// GitHub Pages (nem aos logs dele); o app le `location.hash`.
 /// `pair` so e `Some` com o token ativo (validado pelo chamador), que e Crockford — nao ha o
 /// que escapar.
 pub fn guide_html(ip: Option<Ipv4Addr>, https_port: u16, pair: Option<&str>) -> String {
@@ -129,7 +132,7 @@ Certificado de CA → <i>Instalar mesmo assim</i> → escolha <code>HubFinance-C
         Some(token) => body.push_str(&format!(
             "<h2>3. Abrir o HomeFinance</h2>\
 <p>Com o certificado instalado, abra o app já com o endereço e o código preenchidos:</p>\
-<a class=\"btn\" href=\"{PWA_URL}?hub={address}&token={token}\">Abrir o HomeFinance</a>\
+<a class=\"btn\" href=\"{PWA_URL}#hub={address}&token={token}\">Abrir o HomeFinance</a>\
 <p>Ou digite no app o endereço <code>{address}</code> e o código <code>{token}</code>.</p>"
         )),
         None => body.push_str(
@@ -207,7 +210,7 @@ mod tests {
         assert!(body.contains("Baixar certificado"));
         assert!(body.contains("/ca.crt"));
         assert!(body.contains("192.168.0.5:7777"));
-        assert!(!body.contains("luizfer1.github.io/homefinance/?hub="));
+        assert!(!body.contains("luizfer1.github.io/homefinance/#hub="));
     }
 
     #[tokio::test]
@@ -217,8 +220,10 @@ mod tests {
         let (status, _, body) = get(&state, &format!("/p/{token}")).await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains(&format!(
-            "https://luizfer1.github.io/homefinance/?hub=192.168.0.5:7777&token={token}"
+            "https://luizfer1.github.io/homefinance/#hub=192.168.0.5:7777&token={token}"
         )));
+        // O codigo nunca vai na query (que o navegador mandaria ao GitHub Pages).
+        assert!(!body.contains("homefinance/?"));
 
         // Minusculo com hifen e o mesmo codigo.
         let typed = format!(

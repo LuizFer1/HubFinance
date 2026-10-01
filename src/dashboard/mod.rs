@@ -6,4 +6,5 @@
 pub mod colors;
 pub mod contract;
 pub mod dataset;
+pub mod money;
 pub mod people;

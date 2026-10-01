@@ -150,6 +150,13 @@ fn network_status(ips: &[Ipv4Addr]) -> Status {
     }
 }
 
+/// URL do QR: o guia da CA com o token, no IP principal. Sem rede, `127.0.0.1` (o QR nao
+/// serve a um celular, mas o endereco continua valido na propria maquina).
+fn qr_url(primary: Option<Ipv4Addr>, http_port: u16, token: &str) -> String {
+    let host = primary.map_or_else(|| "127.0.0.1".to_string(), |ip| ip.to_string());
+    format!("http://{host}:{http_port}/p/{token}")
+}
+
 fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
@@ -202,14 +209,13 @@ impl Hub {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .issue(SystemTime::now());
-        let host = self
-            .snap
-            .addresses
-            .first()
-            .map_or_else(|| "127.0.0.1".to_string(), Ipv4Addr::to_string);
         self.snap.pairing = Some(PairingView {
             display: token.display(),
-            qr_url: format!("http://{host}:{}/p/{}", self.snap.http_port, token.value),
+            qr_url: qr_url(
+                self.snap.addresses.first().copied(),
+                self.snap.http_port,
+                &token.value,
+            ),
             token: token.value,
             expires_at: token.expires_at,
         });
@@ -350,6 +356,15 @@ impl Hub {
                 .write()
                 .unwrap_or_else(PoisonError::into_inner) = ips.first().copied();
             self.snap.addresses = ips;
+            // O QR na tela aponta para o IP antigo: com o IP novo, o mesmo token ganha o
+            // endereco certo (o celular que ler o QR depois da troca acha o hub).
+            if let Some(pairing) = self.snap.pairing.as_mut() {
+                pairing.qr_url = qr_url(
+                    self.snap.addresses.first().copied(),
+                    self.snap.http_port,
+                    &pairing.token,
+                );
+            }
             if matches!(self.snap.status, Status::Running | Status::NoNetwork) {
                 self.snap.status = network_status(&self.snap.addresses);
             }
@@ -448,5 +463,26 @@ impl Hub {
             Ok(Err(e)) => Err(e.to_string()),
             Err(e) => Err(e.to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn url_do_qr_segue_o_ip_principal() {
+        assert_eq!(
+            qr_url(Some(Ipv4Addr::new(192, 168, 0, 5)), 7778, "ABCDEF"),
+            "http://192.168.0.5:7778/p/ABCDEF"
+        );
+        assert_eq!(
+            qr_url(Some(Ipv4Addr::new(10, 0, 0, 7)), 7778, "ABCDEF"),
+            "http://10.0.0.7:7778/p/ABCDEF"
+        );
+        assert_eq!(
+            qr_url(None, 7778, "ABCDEF"),
+            "http://127.0.0.1:7778/p/ABCDEF"
+        );
     }
 }

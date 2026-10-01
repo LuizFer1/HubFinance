@@ -36,6 +36,7 @@ fn main() -> iced::Result {
         }
     };
     let prefs = config::UiPrefs::load(&config.data_dir);
+    let prefs_dir = config.data_dir.clone();
     let (handle, _nucleo) = hub::start(config);
-    ui::run(handle, offset, prefs)
+    ui::run(handle, offset, prefs, prefs_dir)
 }

@@ -79,8 +79,6 @@ impl UiPrefs {
             .unwrap_or_default()
     }
 
-    // A janela passa a gravar ao trocar o tema na casca (tarefa 6 do plano 2a).
-    #[allow(dead_code)]
     pub fn save(&self, data_dir: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(data_dir)?;
         let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;

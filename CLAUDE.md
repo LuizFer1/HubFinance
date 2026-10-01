@@ -13,6 +13,11 @@ fora deste repositório. Leia `ARCHITECTURE.md` antes de tocar em `src/`.
 `RUST_LOG=debug cargo run` para log detalhado. `HUBFINANCE_DATA_DIR=<dir>` muda o diretório de
 dados (padrão: `%LOCALAPPDATA%\HubFinance\data`).
 
+`scripts/freeze-inter.sh` e `scripts/oklch.py` são geração offline (fontes com `tnum` congelado
+e tabela de cores); o resultado é commitado e `assets/fonts` é vendorizado com as licenças. O
+binário nunca baixa nada. `scripts/e2e.sh` e `scripts/seed-dashboard.sh <ip> <token>` falam
+com um hub de verdade por curl.
+
 ## Restrições de produto (inegociáveis)
 
 - O hub **nunca edita dado**: toda mutação nasce num celular; o hub só aplica LWW por linha.
@@ -32,12 +37,16 @@ dados (padrão: `%LOCALAPPDATA%\HubFinance\data`).
 - `dirty` é removido ao armazenar e nunca devolvido.
 - `epoch` nasce com o banco e só muda se o banco for apagado.
 - A chave do aparelho nunca é gravada: só `sha256` hex.
+- Linha fora do contrato de campos é ignorada e contada no dashboard; nunca derruba sync nem
+  janela.
 
 ## Layering
 
 `protocol/` é puro (sem rusqlite, axum, tokio, iced). `store/` é o único módulo com rusqlite;
-`server/` o único com axum; `ui/` o único com iced. `hub/` liga tudo numa thread com runtime
-tokio e publica `Snapshot` por `watch`; a UI só renderiza o snapshot e envia `Command`.
+`server/` o único com axum; `ui/` o único com iced. `dashboard/` é puro (sem rusqlite, axum,
+tokio, iced): contrato de campos, dataset e agregações; a UI deriva as telas dele. `hub/` liga
+tudo numa thread com runtime tokio e publica `Snapshot` por `watch`; a UI só renderiza o
+snapshot e envia `Command`.
 
 ## Convenções
 

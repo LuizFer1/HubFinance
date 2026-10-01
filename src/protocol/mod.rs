@@ -3,4 +3,5 @@
 pub mod hlc;
 pub mod ids;
 pub mod lww;
+pub mod messages;
 pub mod row;

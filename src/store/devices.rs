@@ -69,6 +69,19 @@ impl Store {
             .optional()?)
     }
 
+    /// Ativo ou revogado. A autenticacao usa esta para distinguir "chave revogada" (vira aviso
+    /// na janela) de "chave desconhecida"; o `401` e o mesmo nos dois casos.
+    pub fn device_by_key_hash_any(&self, key_hash: &str) -> Result<Option<Device>, StoreError> {
+        let conn = self.lock()?;
+        Ok(conn
+            .query_row(
+                &format!("SELECT {COLUMNS} FROM devices WHERE key_hash = ?1"),
+                [key_hash],
+                device_from_row,
+            )
+            .optional()?)
+    }
+
     /// Mais recentes primeiro (`paired_at DESC`).
     pub fn list_devices(&self) -> Result<Vec<Device>, StoreError> {
         let conn = self.lock()?;
@@ -185,6 +198,16 @@ mod tests {
         let listed = store.list_devices().unwrap();
         assert_eq!(listed[0].revoked_at.as_deref(), Some(T2));
         assert!(!store.revoke_device("inexistente", T2).unwrap());
+    }
+
+    #[test]
+    fn busca_any_acha_revogado() {
+        let store = Store::open_in_memory().unwrap();
+        store.upsert_device(A, "A", &hash('a'), T1).unwrap();
+        store.revoke_device(A, T2).unwrap();
+        let found = store.device_by_key_hash_any(&hash('a')).unwrap().unwrap();
+        assert_eq!(found.revoked_at.as_deref(), Some(T2));
+        assert_eq!(store.device_by_key_hash_any(&hash('f')).unwrap(), None);
     }
 
     #[test]

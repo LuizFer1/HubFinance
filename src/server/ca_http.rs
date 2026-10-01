@@ -9,10 +9,11 @@ use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
+use tokio::sync::mpsc;
 
-use super::state::Clock;
+use super::state::{Clock, ServerEvent};
 use crate::config::PWA_URL;
-use crate::pairing::token::TokenBook;
+use crate::pairing::token::{TokenBook, TokenError};
 
 #[derive(Clone)]
 pub struct CaState {
@@ -22,6 +23,8 @@ pub struct CaState {
     pub primary_ip: Arc<RwLock<Option<Ipv4Addr>>>,
     pub https_port: u16,
     pub now: Clock,
+    /// Para avisar o nucleo quando o guia invalida o token (a janela tira o QR da tela).
+    pub events: mpsc::UnboundedSender<ServerEvent>,
 }
 
 pub fn ca_router(state: CaState) -> Router {
@@ -59,16 +62,19 @@ async fn guide(State(state): State<CaState>) -> Html<String> {
 }
 
 /// So mostra o token se ele for o ativo: quem chega aqui por um QR velho ve "expirado", e nao
-/// um link que vai falhar no app. Ver a pagina nao consome o token.
+/// um link que vai falhar no app. Ver a pagina nao consome o token; errar gasta do orcamento
+/// proprio do guia (`check_guide`), que acaba invalidando o token.
 async fn pair_guide(State(state): State<CaState>, Path(token): Path<String>) -> Response {
-    // `matches` e nao `consume`: o celular abre este guia antes de parear; consumir aqui
-    // mataria o token, e contar tentativa daria ao QR um jeito de gastar as cinco.
-    let valid = state
+    let checked = state
         .tokens
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .matches(&token, (state.now)());
-    if valid {
+        .check_guide(&token, (state.now)());
+    if checked == Err(TokenError::Exhausted) {
+        // Receiver caido = nucleo fechando: o aviso so se perde.
+        let _ = state.events.send(ServerEvent::TokenExhausted);
+    }
+    if checked.is_ok() {
         let token = TokenBook::normalize(&token);
         Html(guide_html(
             primary_ip(&state),
@@ -166,6 +172,7 @@ mod tests {
             primary_ip: Arc::new(RwLock::new(Some(Ipv4Addr::new(192, 168, 0, 5)))),
             https_port: 7777,
             now: Arc::new(t0),
+            events: mpsc::unbounded_channel().0,
         }
     }
 
@@ -241,6 +248,35 @@ mod tests {
         }
         // O token continua vivo e com as cinco tentativas.
         assert_eq!(state.tokens.lock().unwrap().consume(&token, t0()), Ok(()));
+    }
+
+    #[tokio::test]
+    async fn vinte_erros_no_guia_matam_o_token() {
+        let (events, mut rx) = mpsc::unbounded_channel();
+        let state = CaState { events, ..state() };
+        let token = state.tokens.lock().unwrap().issue(t0()).value;
+        let wrong = if token == "000000" {
+            "111111"
+        } else {
+            "000000"
+        };
+        for _ in 0..21 {
+            assert_eq!(
+                get(&state, &format!("/p/{wrong}")).await.0,
+                StatusCode::NOT_FOUND
+            );
+        }
+        // O 22o, mesmo certo, ja nao abre o guia, e o pareamento tambem nao aceita mais.
+        assert_eq!(
+            get(&state, &format!("/p/{token}")).await.0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            state.tokens.lock().unwrap().consume(&token, t0()),
+            Err(TokenError::Missing)
+        );
+        assert!(matches!(rx.try_recv(), Ok(ServerEvent::TokenExhausted)));
+        assert!(rx.try_recv().is_err(), "um aviso so");
     }
 
     #[tokio::test]

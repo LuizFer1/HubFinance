@@ -95,7 +95,7 @@ async fn boot(config: &Config, snap: &mut Snapshot) -> Result<Hub, String> {
     let api = full_api(AppState {
         store: Arc::clone(&store),
         tokens: Arc::clone(&tokens),
-        events: events_tx,
+        events: events_tx.clone(),
         now: Arc::clone(&now),
     });
     let ca = ca_router(CaState {
@@ -105,6 +105,7 @@ async fn boot(config: &Config, snap: &mut Snapshot) -> Result<Hub, String> {
         // Porta configurada: nas portas fixas de producao e a real. So os testes usam 0.
         https_port: config.https_port,
         now,
+        events: events_tx.clone(),
     });
     let servers = bind_servers(config.https_port, config.http_port, api, ca, &material)
         .await
@@ -293,8 +294,10 @@ impl Hub {
             }
             ServerEvent::TokenExhausted => {
                 self.snap.pairing = None;
-                self.snap
-                    .log(ActivityKind::Warning, "Código invalidado após 5 tentativas");
+                self.snap.log(
+                    ActivityKind::Warning,
+                    "Código invalidado após tentativas demais",
+                );
             }
             ServerEvent::RevokedAttempt { name } => self.snap.log(
                 ActivityKind::Warning,

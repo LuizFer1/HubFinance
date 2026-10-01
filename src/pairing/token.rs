@@ -5,6 +5,11 @@ use std::time::{Duration, SystemTime};
 pub const TOKEN_LEN: usize = 6;
 pub const TOKEN_TTL: Duration = Duration::from_secs(5 * 60);
 pub const MAX_ATTEMPTS: u8 = 5;
+/// Erros tolerados em `GET /p/{token}` (o guia da CA) antes de o token morrer. Orcamento
+/// proprio e maior que o do pareamento: o guia nao pode gastar as cinco chances do app (o
+/// celular abre o guia antes de parear), mas sem limite nenhum ele vira um oraculo — 404 ou
+/// 200 diz se o chute acertou, e um script testaria o espaco inteiro sem gastar nada.
+pub const MAX_GUIDE_MISSES: u8 = 20;
 
 /// Alfabeto Crockford: sem `I`, `L`, `O`, `U`, que se confundem com `1`, `0` e `V` na tela.
 const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -48,6 +53,7 @@ pub struct TokenBook {
 struct Active {
     token: PairingToken,
     failures: u8,
+    guide_misses: u8,
 }
 
 impl TokenBook {
@@ -67,10 +73,13 @@ impl TokenBook {
         self.active = Some(Active {
             token: token.clone(),
             failures: 0,
+            guide_misses: 0,
         });
         token
     }
 
+    /// Token ativo e valido. So os testes consultam: o nucleo guarda o que `issue` devolveu.
+    #[cfg(test)]
     pub fn current(&self, now: SystemTime) -> Option<PairingToken> {
         self.active
             .as_ref()
@@ -105,14 +114,30 @@ impl TokenBook {
         })
     }
 
-    /// O token ativo e este? Nao consome nem conta tentativa: `GET /p/{token}` (guia da CA)
-    /// usa isto, e o celular abre o guia antes de parear — se contasse, o token morreria ali.
-    pub fn matches(&self, candidate: &str, now: SystemTime) -> bool {
-        self.current(now).is_some_and(|token| {
-            ct_eq(
-                TokenBook::normalize(candidate).as_bytes(),
-                token.value.as_bytes(),
-            )
+    /// O token ativo e este? Para `GET /p/{token}` (guia da CA): acertar nao consome nada (o
+    /// celular abre o guia antes de parear; consumir aqui mataria o token), e errar gasta do
+    /// orcamento do guia, nao das cinco tentativas do pareamento. O vigesimo erro invalida o
+    /// token (`Exhausted`); sem token ativo, `Missing`/`Expired` sem contar nada.
+    pub fn check_guide(&mut self, candidate: &str, now: SystemTime) -> Result<(), TokenError> {
+        let Some(active) = self.active.as_mut() else {
+            return Err(TokenError::Missing);
+        };
+        if now >= active.token.expires_at {
+            return Err(TokenError::Expired);
+        }
+        if ct_eq(
+            TokenBook::normalize(candidate).as_bytes(),
+            active.token.value.as_bytes(),
+        ) {
+            return Ok(());
+        }
+        active.guide_misses = active.guide_misses.saturating_add(1);
+        if active.guide_misses >= MAX_GUIDE_MISSES {
+            self.active = None;
+            return Err(TokenError::Exhausted);
+        }
+        Err(TokenError::Mismatch {
+            remaining: MAX_GUIDE_MISSES - active.guide_misses,
         })
     }
 
@@ -240,25 +265,49 @@ mod tests {
     }
 
     #[test]
-    fn matches_nao_consome_nem_conta_tentativa() {
+    fn guia_nao_consome_nem_gasta_as_tentativas_do_pareamento() {
         let mut book = TokenBook::default();
         let token = book.issue(t0());
         let bad = wrong(&token);
-        assert!(!book.matches(&bad, t0()));
         for _ in 0..10 {
-            assert!(!book.matches(&bad, t0()));
-            assert!(book.matches(&token.value.to_lowercase(), t0()));
+            assert!(book.check_guide(&bad, t0()).is_err());
+            assert_eq!(book.check_guide(&token.value.to_lowercase(), t0()), Ok(()));
         }
-        // Os erros em `matches` nao gastaram nenhuma das cinco tentativas.
+        // Os erros no guia nao gastaram nenhuma das cinco tentativas do pareamento.
         assert_eq!(
             book.consume(&bad, t0()),
             Err(TokenError::Mismatch {
                 remaining: MAX_ATTEMPTS - 1
             })
         );
-        assert!(!book.matches(&token.value, t0() + minutes(6)));
+        assert_eq!(
+            book.check_guide(&token.value, t0() + minutes(6)),
+            Err(TokenError::Expired)
+        );
         assert_eq!(book.consume(&token.value, t0()), Ok(()));
-        assert!(!book.matches(&token.value, t0()));
+        assert_eq!(
+            book.check_guide(&token.value, t0()),
+            Err(TokenError::Missing)
+        );
+    }
+
+    #[test]
+    fn vinte_erros_no_guia_invalidam_o_token() {
+        let mut book = TokenBook::default();
+        let token = book.issue(t0());
+        let bad = wrong(&token);
+        for remaining in (1..MAX_GUIDE_MISSES).rev() {
+            assert_eq!(
+                book.check_guide(&bad, t0()),
+                Err(TokenError::Mismatch { remaining })
+            );
+        }
+        assert_eq!(book.check_guide(&bad, t0()), Err(TokenError::Exhausted));
+        assert_eq!(
+            book.check_guide(&token.value, t0()),
+            Err(TokenError::Missing)
+        );
+        assert_eq!(book.consume(&token.value, t0()), Err(TokenError::Missing));
     }
 
     #[test]

@@ -11,6 +11,7 @@ pub mod list;
 pub mod money;
 pub mod people;
 pub mod periods;
+pub mod view;
 
 /// Dataset de exemplo das tarefas de agregacao, lista e telas: duas pessoas vivas e uma
 /// apagada, cinco categorias (uma apagada), formas de pagamento (uma apagada), uma

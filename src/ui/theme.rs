@@ -164,6 +164,11 @@ impl Tokens {
         mix(self.surface, self.token(token), amount)
     }
 
+    /// Anel de 1 px do `shadow-md`, para o que e desenhado em canvas (tooltip das barras).
+    pub fn shadow_md_ring(&self) -> Color {
+        self.shadow_md_ring
+    }
+
     /// `0 0 0 1px` + `0 6px 18px`: o anel vira a borda de 1 px (o iced desenha borda por
     /// dentro, o que da a mesma caixa visual para quem olha).
     pub fn shadow_md(&self) -> (Border, Shadow) {

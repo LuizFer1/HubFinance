@@ -1,6 +1,7 @@
 //! Janela iced: so renderiza o snapshot do nucleo e envia comandos; unico modulo com iced.
 
 mod app;
+mod charts;
 mod connection_view;
 mod dashboard_view;
 mod fonts;

@@ -5,6 +5,7 @@ mod fonts;
 mod icons;
 mod theme;
 mod view;
+mod widgets;
 
 use time::UtcOffset;
 

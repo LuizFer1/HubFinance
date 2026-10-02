@@ -3,6 +3,7 @@ name = "hub_finance"
 version = "0.0.1"
 edition = "2024"
 description = "Hub de sync opcional do HomeFinance, so na rede local"
+license = "MIT"
 authors = ["Luiz Fernando"]
 repository = "https://github.com/LuizFer1/HubFinance"
 

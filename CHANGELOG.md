@@ -6,6 +6,32 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [0.0.2] - 2026-10-02
+
+Versão para o primeiro teste de campo. Nenhuma mudança no protocolo `/v1` nem no banco:
+instalar por cima da 0.0.1 preserva `epoch`, certificado e aparelhos pareados.
+
+### Adicionado
+
+- Log em arquivo: `<pasta de dados>/logs/hub.AAAA-MM-DD.log`, rotação diária, últimos 7
+  dias; `RUST_LOG` continua valendo. Toda linha da atividade da janela vai para o arquivo.
+  Nunca contém chave, hash, código de pareamento nem linha sincronizada.
+- Versão visível na barra lateral ("Hub de casa · v0.0.2") e card "Sobre o hub" na tela
+  Conexão com versão, pasta de dados, pasta de logs (ambas com "Copiar") e o botão "Versões
+  no GitHub", que abre a página de Releases no navegador do sistema — o hub continua sem
+  abrir nenhuma conexão para fora da rede local.
+- `SHA256SUMS.txt` publicado junto dos instaladores; `release.yml` recusa tag diferente da
+  versão do `Cargo.toml` e usa esta seção como texto da release.
+- `LICENSE` (MIT) e este `CHANGELOG.md`.
+
+### Alterado
+
+- O rodapé do card Atividade mostra só o epoch; o caminho dos dados mudou para "Sobre o hub".
+- README: seção "Updating" (como ver a versão, onde baixar, conferir o download, o que uma
+  atualização preserva, não misturar formatos).
+- O CI também pode ser disparado à mão (`workflow_dispatch`); foi assim que os testes rodaram
+  pela primeira vez em Linux e macOS, todos verdes.
+
 ## [0.0.1] - 2026-10-01
 
 Primeira versão publicada. Nunca testada com aparelhos reais: é a base sobre a qual o teste de
@@ -35,5 +61,6 @@ campo da 0.0.2 acontece.
 - Scripts `scripts/e2e.sh` (roteiro curl de pareamento e sync) e `scripts/seed-dashboard.sh`
   (carga de exemplo do dashboard).
 
-[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v0.0.1...HEAD
+[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/LuizFer1/HubFinance/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/LuizFer1/HubFinance/releases/tag/v0.0.1

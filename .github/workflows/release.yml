@@ -1,0 +1,141 @@
+name: Release
+
+# Uma tag `v*` monta os instaladores dos tres sistemas e publica a GitHub Release da tag.
+# `workflow_dispatch` monta os mesmos instaladores como artefatos do run, sem release: serve
+# para testar o empacotamento antes de criar a tag.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fixo: o formato da config em [package.metadata.packager] e o nome dos arquivos gerados
+  # mudam entre versoes do packager, e o passo de renomear depende deles.
+  CARGO_PACKAGER_VERSION: 0.11.8
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            formats: nsis,wix
+          # 22.04 e nao latest: o binario linka na glibc do runner, e a mais antiga alcanca
+          # mais distribuicoes.
+          - name: linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            formats: deb,appimage
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            formats: app,dmg
+          # Compilacao cruzada no runner ARM: os runners Intel do GitHub estao saindo de
+          # linha, e o toolchain da Apple gera x86_64 nativamente.
+          - name: macos-x64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            formats: app,dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Dependencias de sistema (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libx11-dev libx11-xcb-dev libxkbcommon-dev libwayland-dev file
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Instala o cargo-packager
+        shell: bash
+        run: |
+          if ! cargo packager --version 2>/dev/null | grep -q "$CARGO_PACKAGER_VERSION"; then
+            cargo install cargo-packager --locked --version "$CARGO_PACKAGER_VERSION"
+          fi
+
+      - name: Empacota
+        shell: bash
+        env:
+          # O `before-packaging-command` e um `cargo build --release` sem alvo; esta variavel
+          # faz ele compilar para o alvo da matrix (no macOS x64, a compilacao cruzada).
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+          # O linuxdeploy roda o plugin de AppImage, que tambem e um AppImage; o runner nao
+          # tem FUSE, entao ele se extrai e roda em vez de montar.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: cargo packager --release --target "${{ matrix.target }}" --formats "${{ matrix.formats }}"
+
+      # O packager nomeia .exe, .msi, .deb e .AppImage pelo nome do binario (`hub_finance`),
+      # e o .msi ainda leva o idioma. Aqui tudo passa a `HubFinance_<versao>_<arquitetura>`.
+      - name: Renomeia os instaladores
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cd dist
+          shopt -s nullglob
+          for f in hub_finance_*; do
+            [ -f "$f" ] || continue
+            new="HubFinance_${f#hub_finance_}"
+            new="${new/_en-US.msi/.msi}"
+            mv "$f" "../release/$new"
+          done
+          for f in HubFinance_*.dmg; do
+            mv "$f" ../release/
+          done
+          # O .app e um diretorio: vai como zip, com `ditto` para manter atributos e links.
+          if [ -d HubFinance.app ]; then
+            dmg=$(ls ../release/HubFinance_*.dmg)
+            base=$(basename "$dmg" .dmg)
+            ditto -c -k --sequesterRsrc --keepParent HubFinance.app "../release/${base}.app.zip"
+          fi
+          ls -la ../release
+          test -n "$(ls ../release)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: release/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - run: ls -la release
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: HubFinance ${{ github.ref_name }}
+          files: release/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body: |
+            The installers are not code-signed. On Windows, SmartScreen warns on first run
+            ("More info" > "Run anyway"); on macOS, right-click the app > Open the first time.
+            See the README for details.

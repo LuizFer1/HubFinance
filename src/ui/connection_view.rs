@@ -60,9 +60,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
     } else {
         width
     };
-    // A spec pede "Sobre o hub" como terceiro card do grid (auto-fit, minimo 420). Com
-    // `CONTENT_MAX` nunca cabem tres colunas, entao num grid CSS ele cairia na segunda linha,
-    // primeira coluna: embaixo do endereco.
+    // A spec pede "Sobre o hub" como terceiro card do grid (auto-fit, minimo 420). Fica sempre
+    // em duas colunas, embaixo do endereco: o card de usuarios cresce com a lista e uma terceira
+    // coluna o deixaria estreito demais para os nomes.
     let grid: Element<'_, Message> = if two_columns {
         row![
             column![address_card(app, card_width), about_card(app)]

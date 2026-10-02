@@ -5,6 +5,9 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  # Enquanto push e pull_request nao disparam neste repo (ROADMAP 0.0.2, item 1), e o unico
+  # jeito de rodar os testes em Linux e macOS. Fica depois: rodar o CI de qualquer ref a mao.
+  workflow_dispatch:
 
 permissions:
   contents: read

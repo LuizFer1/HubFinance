@@ -292,6 +292,12 @@ fn resize_frame<'a>() -> Element<'a, Message> {
 
 // ---- barra lateral ----
 
+/// "Somente leitura" ja esta no subtitulo do Dashboard e no card "Sobre"; a versao precisa de um
+/// lugar permanente, e o subtitulo curto deixa de quebrar em duas linhas.
+pub(super) fn brand_subtitle() -> String {
+    format!("Hub de casa · v{}", crate::config::VERSION)
+}
+
 fn sidebar(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let mark = container(icons::icon(icons::HOUSE_LINE, 17.0, t.accent_300))
@@ -306,9 +312,7 @@ fn sidebar(app: &App) -> Element<'_, Message> {
                     .font(fonts::INTER_MEDIUM)
                     .line_height(1.2)
                     .color(t.text),
-                text("Hub de casa · somente leitura")
-                    .size(11)
-                    .color(t.text_alpha(0.55)),
+                text(brand_subtitle()).size(11).color(t.text_alpha(0.55)),
             ],
         ]
         .spacing(10)
@@ -733,6 +737,16 @@ mod tests {
     use super::super::app::tests::app_with;
     use super::*;
     use crate::hub::snapshot::{DeviceView, Snapshot};
+
+    #[test]
+    fn marca_mostra_a_versao_numa_linha_curta() {
+        let subtitle = brand_subtitle();
+        assert!(subtitle.starts_with("Hub de casa · v"), "{subtitle}");
+        assert!(subtitle.contains(crate::config::VERSION), "{subtitle}");
+        assert!(!subtitle.contains("somente leitura"), "{subtitle}");
+        // Cabe numa linha de 11 px nos ~174 px uteis da lateral.
+        assert!(subtitle.chars().count() <= 24, "{subtitle}");
+    }
 
     fn device(name: &str, push: Option<&str>, pull: Option<&str>, revoked: bool) -> DeviceView {
         DeviceView {

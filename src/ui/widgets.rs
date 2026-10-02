@@ -1,0 +1,338 @@
+//! Blocos visuais do design, reutilizados pelas telas: rotulos, tile de categoria, avatar,
+//! tag de cor, passo numerado.
+//!
+//! Tudo recebe `&'static Tokens`: o estilo e decidido aqui, a tela so monta.
+
+use iced::widget::{Space, button, container, image, row, text};
+use iced::{Alignment, Border, Color, Element, Length, Padding, Theme};
+
+use super::fonts;
+use super::icons;
+use super::theme::{self, Tokens};
+
+/// Rotulo em caixa alta (11 Medium a 55 %). O texto ja vem em maiusculas: o iced nao tem
+/// `text-transform` nem `letter-spacing`, entao o espacamento de 0,08 em fica de fora.
+pub fn kicker<'a, M: 'a>(t: &'static Tokens, content: &str) -> Element<'a, M> {
+    text(content.to_uppercase())
+        .size(11)
+        .font(fonts::INTER_MEDIUM)
+        .color(t.text_alpha(0.55))
+        .into()
+}
+
+/// Rotulo em caixa alta no acento ("ENDEREÇO DO HUB", "CERTIFICADO DO HUB").
+pub fn kicker_accent<'a, M: 'a>(t: &'static Tokens, content: &str) -> Element<'a, M> {
+    text(content.to_uppercase())
+        .size(11)
+        .font(fonts::INTER_MEDIUM)
+        .color(t.accent_300)
+        .into()
+}
+
+/// Titulo da pagina (28 Medium) + subtitulo (13 a 55 %), separados por 4 px.
+pub fn page_title<'a, M: 'a>(t: &'static Tokens, title: &str, subtitle: &str) -> Element<'a, M> {
+    iced::widget::column![
+        text(title.to_string())
+            .size(28)
+            .font(fonts::INTER_MEDIUM)
+            .line_height(1.15)
+            .color(t.text),
+        text(subtitle.to_string())
+            .size(13)
+            .color(t.text_alpha(0.55)),
+    ]
+    .spacing(4)
+    .into()
+}
+
+/// Titulo de card (15 Medium) com um aparte a direita (12 a 55 %).
+pub fn card_title<'a, M: 'a>(
+    t: &'static Tokens,
+    title: &str,
+    aside: Option<String>,
+) -> Element<'a, M> {
+    let mut line = row![
+        text(title.to_string())
+            .size(15)
+            .font(fonts::INTER_MEDIUM)
+            .color(t.text)
+            .width(Length::Fill)
+    ]
+    .align_y(Alignment::End)
+    .spacing(12);
+    if let Some(aside) = aside {
+        line = line.push(text(aside).size(12).color(t.text_alpha(0.55)));
+    }
+    line.into()
+}
+
+/// Circulo solido de `size` px.
+pub fn dot<'a, M: 'a>(color: Color, size: f32) -> Element<'a, M> {
+    container(Space::new())
+        .width(size)
+        .height(size)
+        .style(theme::fill(color, size / 2.0))
+        .into()
+}
+
+/// Tile de categoria: 32 x 32, raio 8, fundo a cor a 18 % sobre a superficie, icone 16 na cor
+/// cheia.
+pub fn tile<'a, M: 'a>(t: &'static Tokens, glyph: &'static str, token: &str) -> Element<'a, M> {
+    container(icons::icon(glyph, 16.0, t.token(token)))
+        .width(32)
+        .height(32)
+        .center(32)
+        .style(theme::fill(t.token_tint(token, 0.18), 8.0))
+        .into()
+}
+
+/// Tamanho da inicial por diametro do avatar (40 / 24 / 22 no design).
+fn initial_size(size: f32) -> f32 {
+    if size >= 40.0 {
+        16.0
+    } else if size >= 24.0 {
+        11.0
+    } else {
+        10.0
+    }
+}
+
+/// Avatar redondo. Com foto: a imagem recortada em circulo, anel de 2 px na superficie e anel
+/// de 1,5 px na cor da pessoa (os aneis ficam por fora, como o `box-shadow` do prototipo).
+/// Sem foto: a inicial (SemiBold, cor `bg`) sobre um circulo solido na cor; sem token,
+/// `neutral_600` (aparelho sem perfil conhecido).
+pub fn avatar<'a, M: 'a>(
+    t: &'static Tokens,
+    name: &str,
+    token: Option<&str>,
+    photo: Option<&image::Handle>,
+    size: f32,
+) -> Element<'a, M> {
+    let color = token.map_or(t.neutral_600, |tk| t.token(tk));
+    if let Some(handle) = photo {
+        let ring = 1.5;
+        let gap = 2.0;
+        let outer = size + 2.0 * (ring + gap);
+        let surface = t.surface;
+        return container(
+            image(handle.clone())
+                .width(size)
+                .height(size)
+                .content_fit(iced::ContentFit::Cover)
+                .border_radius(size / 2.0),
+        )
+        .width(outer)
+        .height(outer)
+        .padding(ring + gap)
+        .style(move |_: &Theme| container::Style {
+            background: Some(surface.into()),
+            border: Border {
+                color,
+                width: ring,
+                radius: (outer / 2.0).into(),
+            },
+            ..container::Style::default()
+        })
+        .into();
+    }
+    container(
+        text(initial(name))
+            .size(initial_size(size))
+            .font(fonts::INTER_SEMIBOLD)
+            .line_height(1.0)
+            .color(t.bg),
+    )
+    .center(size)
+    .style(theme::fill(color, size / 2.0))
+    .into()
+}
+
+/// Tag da cor da pessoa: pilula de 20 px, fundo a cor a 16 % sobre a superficie, ponto de 6 e o
+/// nome da cor ("Magenta") em 11 Medium na cor.
+pub fn color_tag<'a, M: 'a>(t: &'static Tokens, token: &str) -> Element<'a, M> {
+    let color = t.token(token);
+    container(
+        row![
+            dot(color, 6.0),
+            text(crate::dashboard::colors::color_name(token))
+                .size(11)
+                .font(fonts::INTER_MEDIUM)
+                .line_height(1.0)
+                .color(color),
+        ]
+        .spacing(5)
+        .align_y(Alignment::Center),
+    )
+    .height(20)
+    .padding([0, 7])
+    .align_y(Alignment::Center)
+    .style(theme::fill(t.token_tint(token, 0.16), 999.0))
+    .into()
+}
+
+/// Passo numerado: circulo de 20 px (`accent_900` / `accent_300`, 11 SemiBold) + texto 13 a
+/// 75 % (o texto vem pronto, pode ter link no meio).
+pub fn step<'a, M: 'a>(t: &'static Tokens, n: u8, content: Element<'a, M>) -> Element<'a, M> {
+    let number = container(
+        text(n.to_string())
+            .size(11)
+            .font(fonts::INTER_SEMIBOLD)
+            .line_height(1.0)
+            .color(t.accent_300),
+    )
+    .center(20)
+    .style(theme::fill(t.accent_900, 10.0));
+    row![number, container(content).width(Length::Fill)]
+        .spacing(10)
+        .align_y(Alignment::Start)
+        .into()
+}
+
+/// Texto de passo: 13 a 75 %, altura de linha 1,45 do prototipo.
+pub fn step_text<'a>(t: &'static Tokens, content: impl text::IntoFragment<'a>) -> text::Text<'a> {
+    text(content)
+        .size(13)
+        .line_height(1.45)
+        .color(t.text_alpha(0.75))
+}
+
+/// Separador vertical de 1 x 20 no divisor, com 4 px de margem dos lados.
+pub fn vdivider<'a, M: 'a>(t: &'static Tokens) -> Element<'a, M> {
+    container(
+        container(Space::new())
+            .width(1)
+            .height(20)
+            .style(theme::fill(t.divider(), 0.0)),
+    )
+    .padding([0, 4])
+    .into()
+}
+
+/// Separador horizontal de 1 px no divisor (borda superior das linhas de lista).
+pub fn hdivider<'a, M: 'a>(t: &'static Tokens) -> Element<'a, M> {
+    container(Space::new())
+        .width(Length::Fill)
+        .height(1)
+        .style(theme::fill(t.divider(), 0.0))
+        .into()
+}
+
+/// Valor grande dos cards: prefixo ("R$", "+R$", "−R$") e centavos em 16 Regular, inteiro em
+/// 32 Medium. O iced nao alinha por linha de base; com altura de linha 1,0 a base da Inter fica
+/// a 0,136 em do fundo da caixa, entao os pedacos de 16 sobem 2 px para casar com o de 32.
+pub fn money_big<'a, M: 'a>(
+    prefix: &str,
+    whole: &str,
+    cents: &str,
+    main: Color,
+    small: Color,
+) -> Element<'a, M> {
+    let piece = |content: String| {
+        container(text(content).size(16).line_height(1.0).color(small)).padding(Padding {
+            bottom: 2.0,
+            ..Padding::ZERO
+        })
+    };
+    row![
+        piece(prefix.to_string()),
+        text(whole.to_string())
+            .size(32)
+            .font(fonts::INTER_MEDIUM)
+            .line_height(1.0)
+            .color(main),
+        piece(format!(",{cents}")),
+    ]
+    .spacing(4)
+    .align_y(Alignment::End)
+    .into()
+}
+
+/// Tag "Parcial · até 24 set": pilula de 24 px em `accent_900` com `clock` e texto 11 Medium
+/// em `accent_300`. Avisa que o mes corrente ainda pode crescer.
+pub fn partial_tag<'a, M: 'a>(t: &'static Tokens, until: &str) -> Element<'a, M> {
+    container(
+        row![
+            icons::icon(icons::CLOCK, 11.0, t.accent_300),
+            text(format!("Parcial · até {until}"))
+                .size(11)
+                .font(fonts::INTER_MEDIUM)
+                .line_height(1.0)
+                .color(t.accent_300),
+        ]
+        .spacing(5)
+        .align_y(Alignment::Center),
+    )
+    .height(24)
+    .padding([0, 9])
+    .align_y(Alignment::Center)
+    .style(theme::fill(t.accent_900, 999.0))
+    .into()
+}
+
+/// Largura do rotulo do seletor de mes. O prototipo pede `min-width: 116`; o iced nao tem
+/// largura minima, entao e fixa (o mes mais longo, "Fevereiro 2026", cabe com folga).
+const MONTH_LABEL_WIDTH: f32 = 116.0;
+
+/// Seletor de mes: 36 px, superficie, borda no divisor, raio 8; setas de 34 px e o mes em 13
+/// Medium no meio. Seta sem mensagem (limite da janela) fica a 30 % e nao reage.
+pub fn month_picker<'a, M: Clone + 'a>(
+    t: &'static Tokens,
+    label: &str,
+    prev: Option<M>,
+    next: Option<M>,
+) -> Element<'a, M> {
+    let arrow = |glyph: &'static str, message: Option<M>| {
+        let color = if message.is_some() {
+            t.text
+        } else {
+            t.text_alpha(0.30)
+        };
+        button(container(icons::icon(glyph, 14.0, color)).center(Length::Fill))
+            .width(34)
+            .height(Length::Fill)
+            .padding(0)
+            .style(theme::plain(color))
+            .on_press_maybe(message)
+    };
+    container(
+        row![
+            arrow(icons::CARET_LEFT, prev),
+            container(
+                text(label.to_string())
+                    .size(13)
+                    .font(fonts::INTER_MEDIUM)
+                    .color(t.text)
+            )
+            .width(MONTH_LABEL_WIDTH)
+            .center_x(MONTH_LABEL_WIDTH),
+            arrow(icons::CARET_RIGHT, next),
+        ]
+        .height(Length::Fill)
+        .align_y(Alignment::Center),
+    )
+    .height(36)
+    .style(theme::card_inset(t))
+    .into()
+}
+
+/// Primeira letra em maiuscula, para o avatar sem foto. `chars().next()` e nao grafema: nome
+/// com acento combinante e raro e o pior caso e a inicial sem o acento.
+pub fn initial(name: &str) -> String {
+    name.trim()
+        .chars()
+        .next()
+        .map_or_else(|| "?".to_string(), |c| c.to_uppercase().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inicial_maiuscula_e_vazio_vira_interrogacao() {
+        assert_eq!(initial("ana"), "A");
+        assert_eq!(initial("  érico"), "É");
+        assert_eq!(initial("Pixel da Ana"), "P");
+        assert_eq!(initial(""), "?");
+    }
+}

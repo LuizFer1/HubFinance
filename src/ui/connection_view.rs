@@ -17,6 +17,7 @@ use iced::{Alignment, Border, Element, Length, Padding, Theme};
 use super::app::{App, CopyTarget, Message};
 use super::theme::{self, Tokens};
 use super::{fonts, icons, shell, time, widgets};
+use crate::config;
 use crate::dashboard::people::{Person, presence};
 use crate::dashboard::periods::paired_label;
 use crate::hub::snapshot::{ActivityKind, Snapshot, Status};
@@ -59,18 +60,27 @@ pub fn view(app: &App) -> Element<'_, Message> {
     } else {
         width
     };
+    // A spec pede "Sobre o hub" como terceiro card do grid (auto-fit, minimo 420). Com
+    // `CONTENT_MAX` nunca cabem tres colunas, entao num grid CSS ele cairia na segunda linha,
+    // primeira coluna: embaixo do endereco.
     let grid: Element<'_, Message> = if two_columns {
         row![
-            container(address_card(app, card_width)).width(Length::FillPortion(1)),
+            column![address_card(app, card_width), about_card(app)]
+                .spacing(GAP)
+                .width(Length::FillPortion(1)),
             container(users_card(app)).width(Length::FillPortion(1)),
         ]
         .spacing(GAP)
         .align_y(Alignment::Start)
         .into()
     } else {
-        column![address_card(app, card_width), users_card(app)]
-            .spacing(GAP)
-            .into()
+        column![
+            address_card(app, card_width),
+            users_card(app),
+            about_card(app)
+        ]
+        .spacing(GAP)
+        .into()
     };
     column![grid, certificate_card(app, width), activity_card(app)]
         .spacing(GAP)
@@ -322,6 +332,28 @@ fn field<'a>(
     let value = container(shown.wrapping(Wrapping::None))
         .width(Length::Fill)
         .clip(true);
+    let copy = copy_button(app, target, enabled);
+    container(
+        row![icons::icon(glyph, 15.0, glyph_color), value, copy]
+            .spacing(10)
+            .align_y(Alignment::Center),
+    )
+    .height(44)
+    .width(Length::Fill)
+    .padding(Padding {
+        top: 0.0,
+        right: 6.0,
+        bottom: 0.0,
+        left: 14.0,
+    })
+    .align_y(Alignment::Center)
+    .style(theme::field(t))
+    .into()
+}
+
+/// Botao "Copiar"/"Copiado" de 32 px, extraido de `field` para o card "Sobre" reusar.
+fn copy_button(app: &App, target: CopyTarget, enabled: bool) -> Element<'_, Message> {
+    let t = app.tokens;
     let copied = app.is_copied(target);
     let mut copy = button(
         container(
@@ -343,22 +375,116 @@ fn field<'a>(
     if enabled {
         copy = copy.on_press(Message::Copy(target));
     }
-    container(
-        row![icons::icon(glyph, 15.0, glyph_color), value, copy]
-            .spacing(10)
+    copy.into()
+}
+
+// ---- sobre o hub ----
+
+/// "Versoes no GitHub" abre o navegador do sistema; se nao abrir, a URL com "Copiar", sem
+/// dialogo (spec de atualizacao, "Tratamento de erros").
+fn releases_link(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    if app.releases_open_failed {
+        return row![
+            text(config::RELEASES_URL)
+                .size(12)
+                .color(t.text_alpha(0.55)),
+            copy_button(app, CopyTarget::ReleasesUrl, true),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into();
+    }
+    button(
+        container(
+            row![
+                text("Versões no GitHub").size(12).font(fonts::INTER_MEDIUM),
+                icons::icon_inherit(icons::ARROW_SQUARE_OUT, 14.0),
+            ]
+            .spacing(6)
             .align_y(Alignment::Center),
+        )
+        .height(Length::Fill)
+        .align_y(Alignment::Center),
     )
-    .height(44)
-    .width(Length::Fill)
-    .padding(Padding {
-        top: 0.0,
-        right: 6.0,
-        bottom: 0.0,
-        left: 14.0,
-    })
-    .align_y(Alignment::Center)
-    .style(theme::field(t))
+    .height(32)
+    .padding([0, 10])
+    .style(theme::ghost(t))
+    .on_press(Message::OpenReleases)
     .into()
+}
+
+/// Textos do card "Sobre o hub", separados do layout para o teste.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct AboutLines {
+    pub version: String,
+    pub data_dir: String,
+    pub logs_dir: String,
+}
+
+pub(super) fn about_lines(snap: &Snapshot) -> AboutLines {
+    AboutLines {
+        version: format!("{} v{}", config::HUB_NAME, config::VERSION),
+        data_dir: snap.data_dir.display().to_string(),
+        logs_dir: config::logs_dir(&snap.data_dir).display().to_string(),
+    }
+}
+
+fn about_card(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let lines = about_lines(&app.snapshot);
+    let version = row![
+        icons::icon(icons::INFO, 16.0, t.accent_300),
+        rich_text::<(), _, _, _>([
+            span(format!("{} ", config::HUB_NAME)),
+            span(format!("v{}", config::VERSION)).font(fonts::INTER_MEDIUM),
+        ])
+        .size(14)
+        .color(t.text),
+        Space::new().width(Length::Fill),
+        releases_link(app),
+    ]
+    .spacing(10)
+    .height(32)
+    .align_y(Alignment::Center);
+    // Quebra por glifo em vez de cortar: um caminho e uma palavra so, e a pessoa precisa le-lo
+    // inteiro para achar a pasta (o iced 0.14 nao tem reticencias).
+    let path_row = |label: &'static str, path: String, target: CopyTarget| {
+        row![
+            text(label).size(12).color(t.text_alpha(0.55)),
+            text(path)
+                .size(12)
+                .color(t.text)
+                .wrapping(Wrapping::Glyph)
+                .width(Length::Fill),
+            copy_button(app, target, true),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+    };
+    let footer = row![
+        icons::icon(icons::HOUSE_SIMPLE, 12.0, t.text_alpha(0.55)),
+        text("Este programa nunca consulta a internet.")
+            .size(12)
+            .color(t.text_alpha(0.55)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    let body = column![
+        widgets::card_title(t, "Sobre o hub", None),
+        Space::new().height(4),
+        version,
+        path_row("Dados em ", lines.data_dir, CopyTarget::DataDir),
+        path_row("Logs em ", lines.logs_dir, CopyTarget::LogsDir),
+        Space::new().height(4),
+        footer,
+    ]
+    .spacing(10);
+    container(body)
+        .padding(24)
+        .width(Length::Fill)
+        .style(theme::card(t))
+        .into()
 }
 
 // ---- usuarios conectados ----
@@ -681,7 +807,8 @@ fn activity_card(app: &App) -> Element<'_, Message> {
     let epoch: String = snap.epoch.chars().take(8).collect();
     col = col.push(
         container(
-            text(format!("epoch {epoch} · {}", snap.data_dir.display()))
+            // O caminho dos dados mora no card "Sobre o hub".
+            text(format!("epoch {epoch}"))
                 .size(11)
                 .color(t.text_alpha(0.45)),
         )
@@ -723,5 +850,22 @@ mod tests {
             ca_url(&snap).as_deref(),
             Some("http://192.168.0.12:7778/ca.crt")
         );
+    }
+
+    #[test]
+    fn sobre_mostra_versao_e_as_duas_pastas() {
+        let snap = Snapshot {
+            data_dir: std::path::PathBuf::from("C:/x/HubFinance/data"),
+            ..Snapshot::default()
+        };
+        let lines = about_lines(&snap);
+        assert_eq!(lines.version, format!("HubFinance v{}", config::VERSION));
+        assert_eq!(lines.data_dir, "C:/x/HubFinance/data");
+        assert_eq!(
+            lines.logs_dir,
+            config::logs_dir(&snap.data_dir).display().to_string()
+        );
+        assert!(lines.logs_dir.starts_with(&lines.data_dir));
+        assert!(lines.logs_dir.ends_with("logs"));
     }
 }

@@ -112,13 +112,24 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// A atividade guarda 50 linhas e some ao fechar; o arquivo de log e a memoria. A atividade
+    /// ja nunca traz chave, hash, token nem linha sincronizada, e o espelho herda a garantia.
+    /// O `target` proprio deixa `RUST_LOG=hub_finance::atividade=info` isolar so a atividade.
     pub fn log(&mut self, kind: ActivityKind, text: impl Into<String>) {
+        let text = text.into();
+        match kind {
+            ActivityKind::Info | ActivityKind::Sync => {
+                tracing::info!(target: "hub_finance::atividade", "{text}");
+            }
+            ActivityKind::Warning => tracing::warn!(target: "hub_finance::atividade", "{text}"),
+            ActivityKind::Error => tracing::error!(target: "hub_finance::atividade", "{text}"),
+        }
         self.activity.insert(
             0,
             ActivityEntry {
                 at: SystemTime::now(),
                 kind,
-                text: text.into(),
+                text,
             },
         );
         self.activity.truncate(MAX_ACTIVITY);

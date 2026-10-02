@@ -13,7 +13,7 @@ use tokio::sync::watch;
 
 use super::connection_view;
 use super::theme::Tokens;
-use crate::config::{ThemeMode, UiPrefs};
+use crate::config::{self, ThemeMode, UiPrefs};
 use crate::dashboard::dataset::avatar_bytes;
 use crate::dashboard::list::{Filters, NONE_KEY, TypeFilter};
 use crate::dashboard::people::{DeviceInfo, Person, people};
@@ -49,6 +49,11 @@ pub const INITIAL_SIZE: Size = Size::new(1440.0, 900.0);
 pub enum CopyTarget {
     Address,
     CaLink,
+    /// Pastas do card "Sobre o hub": copiaveis mesmo sem rede, ao contrario dos enderecos.
+    DataDir,
+    LogsDir,
+    /// Fallback quando o navegador nao abre: a URL das releases com "Copiar".
+    ReleasesUrl,
 }
 
 /// Foto decodificada e o data URI de onde veio: so decodifica de novo quando o URI muda.
@@ -127,6 +132,8 @@ pub struct App {
     pub(super) empty_cache: canvas::Cache,
     /// `user_id` -> foto, para as linhas e os chips de autor (`avatars` e por aparelho).
     pub(super) user_avatars: HashMap<String, Avatar>,
+    /// `open::that_detached` falhou: a linha da versao mostra a URL com "Copiar".
+    pub(super) releases_open_failed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -171,6 +178,8 @@ pub enum Message {
     SetTheme(ThemeMode),
     Copy(CopyTarget),
     CopyExpired,
+    /// "Versoes no GitHub" do card "Sobre o hub".
+    OpenReleases,
     HoverRow(String),
     UnhoverRow(String),
     AskRemove(String),
@@ -223,6 +232,7 @@ impl App {
             bars_cache: canvas::Cache::new(),
             empty_cache: canvas::Cache::new(),
             user_avatars: HashMap::new(),
+            releases_open_failed: false,
         };
         app.refresh_people();
         app.set_today(local_today(offset));
@@ -584,6 +594,13 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             let text = match target {
                 CopyTarget::Address => connection_view::hub_url(&app.snapshot),
                 CopyTarget::CaLink => connection_view::ca_url(&app.snapshot),
+                CopyTarget::DataDir => Some(app.snapshot.data_dir.display().to_string()),
+                CopyTarget::LogsDir => Some(
+                    config::logs_dir(&app.snapshot.data_dir)
+                        .display()
+                        .to_string(),
+                ),
+                CopyTarget::ReleasesUrl => Some(config::RELEASES_URL.to_string()),
             };
             let Some(text) = text else {
                 return Task::none();
@@ -595,6 +612,16 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 iced::clipboard::write(text),
                 Task::perform(delay(COPIED_FOR), |_| Message::CopyExpired),
             ])
+        }
+        Message::OpenReleases => {
+            // O navegador do usuario vai ao GitHub por um clique dele; este processo nao abre
+            // socket. `that_detached`, e nao `that`: em alguns Linux o `xdg-open` so volta
+            // quando o navegador fecha, e `update` roda na thread da janela.
+            if let Err(err) = open::that_detached(config::RELEASES_URL) {
+                tracing::warn!("nao foi possivel abrir o navegador: {err}");
+                app.releases_open_failed = true;
+            }
+            Task::none()
         }
         Message::CopyExpired => {
             // Um segundo clique adiou o prazo: o timer do primeiro nao apaga o do segundo.
@@ -840,6 +867,41 @@ pub(super) mod tests {
         app.copied = Some((CopyTarget::Address, Instant::now()));
         let _ = update(&mut app, Message::CopyExpired);
         assert!(app.copied.is_none());
+    }
+
+    #[test]
+    fn copiar_as_pastas_funciona_sem_rede() {
+        let dir = tempfile::tempdir().unwrap();
+        let snap = Snapshot {
+            data_dir: PathBuf::from("C:/x/HubFinance/data"),
+            ..Snapshot::default()
+        };
+        assert!(snap.addresses.is_empty());
+        let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
+        let _ = update(&mut app, Message::Copy(CopyTarget::DataDir));
+        assert!(app.is_copied(CopyTarget::DataDir));
+        assert!(!app.is_copied(CopyTarget::Address));
+        let _ = update(&mut app, Message::Copy(CopyTarget::LogsDir));
+        assert!(app.is_copied(CopyTarget::LogsDir));
+        assert!(!app.is_copied(CopyTarget::DataDir));
+    }
+
+    #[test]
+    fn nasce_sem_falha_ao_abrir_o_navegador() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        assert!(!app.releases_open_failed);
+    }
+
+    #[test]
+    fn fallback_das_releases_desenha_e_copia_a_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        let _ = super::super::connection_view::view(&app);
+        app.releases_open_failed = true;
+        let _ = super::super::connection_view::view(&app);
+        let _ = update(&mut app, Message::Copy(CopyTarget::ReleasesUrl));
+        assert!(app.is_copied(CopyTarget::ReleasesUrl));
     }
 
     #[test]

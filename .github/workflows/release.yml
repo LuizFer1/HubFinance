@@ -18,8 +18,34 @@ env:
   CARGO_PACKAGER_VERSION: 0.11.8
 
 jobs:
+  version:
+    name: Confere a versao
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: read
+        shell: bash
+        # A tag e `v<version>` do Cargo.toml, uma so fonte (ROADMAP, "Versionamento"). Sem esta
+        # checagem uma tag errada publicaria um binario que se apresenta com outra versao. Roda
+        # antes de `package` para falhar em segundos, e nao depois de compilar quatro vezes.
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^version = "([^"]+)"$/\1/p' Cargo.toml | head -n1)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag=${GITHUB_REF_NAME#v}
+            if [[ "$tag" != "$version" ]]; then
+              echo "::error::tag v$tag nao bate com version = \"$version\" do Cargo.toml"
+              exit 1
+            fi
+          fi
+
   package:
     name: ${{ matrix.name }}
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -116,26 +142,62 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: package
+    needs: [version, package]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      # Para ler o CHANGELOG.md.
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v4
         with:
           path: release
           merge-multiple: true
 
-      - run: ls -la release
+      # Nomes sem caminho: e o que deixa `sha256sum -c SHA256SUMS.txt` funcionar na pasta de
+      # downloads. Verificacao manual hoje; pre-requisito de qualquer verificacao automatica.
+      - name: SHA256SUMS.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum HubFinance_* > SHA256SUMS.txt
+          ls -la
+          cat SHA256SUMS.txt
+
+      # Corpo = secao da versao no CHANGELOG.md (sem o cabecalho e sem os links do rodape) + o
+      # aviso fixo. `generate_release_notes` sairia duplicado.
+      - name: Notas da release
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          awk -v v="$VERSION" '/^## \[/{p=($0 ~ "^## \\[" v "\\]"); next} /^\[.*\]: /{p=0} p' CHANGELOG.md > body.md
+          if ! grep -q '[^[:space:]]' body.md; then
+            echo "::error::CHANGELOG.md nao tem a secao [$VERSION]"
+            exit 1
+          fi
+          cat >> body.md <<'EOF'
+
+          ---
+
+          Os instaladores **não são assinados** (não há certificado pago por trás deste
+          projeto). No Windows, o SmartScreen avisa na primeira execução ("Mais informações" →
+          "Executar assim mesmo"); no macOS, use Ajustes do Sistema → Privacidade e Segurança →
+          "Abrir mesmo assim". Confira o download com o `SHA256SUMS.txt` ao lado. Detalhes e
+          instruções de atualização no [README](https://github.com/LuizFer1/HubFinance#readme).
+          EOF
+          cat body.md
 
       - uses: softprops/action-gh-release@v2
         with:
           name: HubFinance ${{ github.ref_name }}
           files: release/*
           fail_on_unmatched_files: true
-          generate_release_notes: true
-          body: |
-            The installers are not code-signed. On Windows, SmartScreen warns on first run
-            ("More info" > "Run anyway"); on macOS, use System Settings > Privacy & Security >
-            "Open Anyway". See the README for details.
+          generate_release_notes: false
+          body_path: body.md
+          # Tag com `-` (v0.2.0-rc.1) e pre-release e nao entra no latest.json da 0.1.0.
+          prerelease: ${{ contains(github.ref_name, '-') }}

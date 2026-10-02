@@ -15,7 +15,7 @@ data. It is a small desktop program that:
 
 - runs on **your** computer (Windows, Linux or macOS), never in the cloud;
 - listens **only on your local network**: nothing goes to the internet, no accounts, no
-  telemetry, no update checks;
+  telemetry, no update checks made by the hub itself (see [Updating](#updating));
 - **stores and relays** the rows each phone sends, so every phone gets what the others wrote;
 - shows a **read-only dashboard** of the synced data (it never edits anything: every change
   is born on a phone);
@@ -149,14 +149,48 @@ incoming TCP on 7777 and 7778 for private networks in your firewall, for example
 | macOS | `~/Library/Application Support/HubFinance` |
 
 It contains `hub.sqlite` (the synced rows and paired devices), `tls/` (the hub's local
-certificate authority and server certificate, **including private keys**) and `ui.json`
-(window preferences). Uninstalling the app does not delete this directory.
+certificate authority and server certificate, **including private keys**), `ui.json`
+(window preferences) and `logs/` (daily `hub.<date>.log` files, last 7 days; the path is shown
+in the **Sobre o hub** card. Logs never contain keys, hashes or synced rows). Uninstalling the
+app does not delete this directory.
 
 Set `HUBFINANCE_DATA_DIR` to use a different directory.
 
 Deleting the directory resets the hub: phones will need to pair again and the certificate
 must be reinstalled on each phone. The finance data itself is not lost: every phone keeps its
 own full copy.
+
+---
+
+## Updating
+
+**Which version do I have?** The sidebar brand shows it (*Hub de casa · v0.0.2*), and so does
+the **Sobre o hub** (About) card on the **Conexão** screen. Its **Versões no GitHub** button
+opens the [Releases](https://github.com/LuizFer1/HubFinance/releases) page in your browser;
+the hub itself never connects to the internet.
+
+**Where to download.** From the Releases page, in the **same format you installed**: `.exe`
+over `.exe`, `.msi` over `.msi`, `.deb` over `.deb`, replace the AppImage file, replace the
+`.app`. **Do not mix formats** on one computer: that leaves two installs pointing at the same
+data directory.
+
+**Close the hub before installing** (on Windows the installer asks).
+
+**Verify the download.** Every release has a `SHA256SUMS.txt` next to the installers:
+
+```sh
+sha256sum -c SHA256SUMS.txt --ignore-missing          # Linux
+shasum -a 256 -c SHA256SUMS.txt --ignore-missing      # macOS
+certutil -hashfile HubFinance_<version>_x64-setup.exe SHA256   # Windows: compare by eye
+```
+
+**What is preserved.** Everything in the [data directory](#where-the-data-lives): synced rows,
+the database `epoch`, paired devices, the local certificate authority and server certificate,
+and `ui.json`. **No phone needs to pair again or reinstall the certificate.** While the hub
+restarts, phones just see it as offline.
+
+**Going back.** Installing the previous version over the new one works the same way (database
+changes are additive in 0.x).
 
 ---
 
@@ -180,7 +214,7 @@ Development commands:
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
-RUST_LOG=debug cargo run   # verbose log
+RUST_LOG=debug cargo run   # verbose log (console and <data_dir>/logs/)
 ```
 
 ### Installers

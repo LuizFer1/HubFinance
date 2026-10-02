@@ -1,7 +1,10 @@
 [package]
 name = "hub_finance"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
+description = "Hub de sync opcional do HomeFinance, so na rede local"
+authors = ["Luiz Fernando"]
+repository = "https://github.com/LuizFer1/HubFinance"
 
 [dependencies]
 iced = { version = "0.14", features = ["qr_code", "canvas", "image"] }
@@ -31,3 +34,63 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+
+# Icone e metadados embutidos no .exe (Explorer, atalhos do instalador, barra de tarefas antes
+# da janela abrir). So existe no build hospedado no Windows.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+# Instaladores com `cargo packager --release --formats <lista>`; o resultado sai em `dist/`.
+# Os formatos vem da linha de comando e nao daqui: a lista e uma so para todos os sistemas, e o
+# packager tentaria montar NSIS e .app ate no Linux. Por sistema: Windows `nsis,wix`, Linux
+# `deb,appimage`, macOS `app,dmg` (ver .github/workflows/release.yml).
+[package.metadata.packager]
+product-name = "HubFinance"
+identifier = "io.github.luizfer1.hubfinance"
+description = "Hub de sync opcional do HomeFinance, so na rede local"
+long-description = "Guarda e retransmite as linhas que os celulares com HomeFinance enviam, mostra um dashboard somente leitura e pareia aparelhos. Nada sai da rede local."
+homepage = "https://github.com/LuizFer1/HubFinance"
+authors = ["Luiz Fernando"]
+publisher = "Luiz Fernando"
+copyright = "Copyright (c) 2026 Luiz Fernando"
+category = "Finance"
+out-dir = "dist"
+before-packaging-command = "cargo build --release"
+# Sem o 1024: nao e tamanho padrao do tema hicolor, que o .deb e o AppImage usam. O macOS usa o
+# .icns e o Windows o .ico.
+icons = [
+  "assets/icon/32x32.png",
+  "assets/icon/64x64.png",
+  "assets/icon/128x128.png",
+  "assets/icon/256x256.png",
+  "assets/icon/512x512.png",
+  "assets/icon/icon.ico",
+  "assets/icon/icon.icns",
+]
+
+[package.metadata.packager.nsis]
+installer-icon = "assets/icon/icon.ico"
+# Por usuario, sem pedir administrador: o hub roda como o usuario e guarda os dados no perfil.
+installer-mode = "currentUser"
+
+[package.metadata.packager.deb]
+package-name = "hubfinance"
+section = "utils"
+# O winit, o wgpu e o softbuffer abrem estas bibliotecas por dlopen em tempo de execucao, entao
+# nada aparece no `ldd` do binario e o dpkg nao deduziria. Sem elas a janela nao abre: X11 e
+# Wayland (janela e teclado), Vulkan e EGL (wgpu; sem eles cai no renderizador por software).
+depends = [
+  "libc6",
+  "libgcc-s1",
+  "libx11-6",
+  "libx11-xcb1",
+  "libxcb1",
+  "libxcursor1",
+  "libxrandr2",
+  "libxi6",
+  "libxkbcommon0",
+  "libxkbcommon-x11-0",
+  "libwayland-client0",
+  "libvulkan1",
+  "libegl1",
+]

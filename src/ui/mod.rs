@@ -48,7 +48,32 @@ pub fn run(
         // Fechar desliga o hub com ordem: o X da barra manda `CloseRequested`, que manda
         // `Shutdown`, e a janela so some quando o nucleo responde `Stopped` (ou em 5 s).
         exit_on_close_request: false,
+        icon: window_icon(),
         ..window::Settings::default()
     })
     .run()
+}
+
+/// Gerado por `scripts/gen-icon.py`, o mesmo desenho dos instaladores.
+const WINDOW_ICON_PNG: &[u8] = include_bytes!("../../assets/icon/64x64.png");
+
+/// Icone que nao decodifica so custa o icone padrao do sistema; nunca impede a janela de abrir.
+fn window_icon() -> Option<window::Icon> {
+    match window::icon::from_file_data(WINDOW_ICON_PNG, None) {
+        Ok(icon) => Some(icon),
+        Err(err) => {
+            tracing::warn!("icone da janela invalido: {err}");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icone_da_janela_decodifica() {
+        assert!(window_icon().is_some());
+    }
 }

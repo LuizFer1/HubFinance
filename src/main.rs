@@ -1,3 +1,8 @@
+// Build release no Windows e app de janela: sem isso abre um console preto junto. Os logs do
+// `tracing` vao para o stdout e somem nesse modo, o que e aceitavel porque nada essencial passa
+// por eles: estado e erros aparecem na propria janela. Em debug o console continua, para o log.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod config;
 mod dashboard;
 mod hub;

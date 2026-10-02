@@ -10,6 +10,14 @@ pub const PROTOCOL: u32 = 1;
 /// Origens que podem chamar a API. A de dev entra sempre: o Bearer é o que autoriza.
 pub const ALLOWED_ORIGINS: [&str; 2] = ["https://luizfer1.github.io", "http://localhost:5173"];
 pub const PWA_URL: &str = "https://luizfer1.github.io/homefinance/";
+/// Subpasta de `data_dir` com os `hub.AAAA-MM-DD.log` (ver `logging.rs`).
+pub const LOGS_DIR: &str = "logs";
+
+/// Funcao livre, e nao so metodo: a UI so tem o `data_dir` do `Snapshot` e precisa mostrar a
+/// pasta de logs sem conhecer `Config`.
+pub fn logs_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join(LOGS_DIR)
+}
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -91,6 +99,14 @@ impl UiPrefs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn logs_ficam_numa_subpasta_dos_dados() {
+        assert_eq!(
+            logs_dir(Path::new("/x/data")),
+            PathBuf::from("/x/data").join("logs")
+        );
+    }
 
     #[test]
     fn gravar_e_atomico_e_nao_deixa_temporario() {

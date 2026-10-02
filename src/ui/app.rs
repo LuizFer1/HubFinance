@@ -13,7 +13,7 @@ use tokio::sync::watch;
 
 use super::connection_view;
 use super::theme::Tokens;
-use crate::config::{ThemeMode, UiPrefs};
+use crate::config::{self, ThemeMode, UiPrefs};
 use crate::dashboard::dataset::avatar_bytes;
 use crate::dashboard::list::{Filters, NONE_KEY, TypeFilter};
 use crate::dashboard::people::{DeviceInfo, Person, people};
@@ -49,6 +49,9 @@ pub const INITIAL_SIZE: Size = Size::new(1440.0, 900.0);
 pub enum CopyTarget {
     Address,
     CaLink,
+    /// Pastas do card "Sobre o hub": copiaveis mesmo sem rede, ao contrario dos enderecos.
+    DataDir,
+    LogsDir,
 }
 
 /// Foto decodificada e o data URI de onde veio: so decodifica de novo quando o URI muda.
@@ -584,6 +587,12 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             let text = match target {
                 CopyTarget::Address => connection_view::hub_url(&app.snapshot),
                 CopyTarget::CaLink => connection_view::ca_url(&app.snapshot),
+                CopyTarget::DataDir => Some(app.snapshot.data_dir.display().to_string()),
+                CopyTarget::LogsDir => Some(
+                    config::logs_dir(&app.snapshot.data_dir)
+                        .display()
+                        .to_string(),
+                ),
             };
             let Some(text) = text else {
                 return Task::none();
@@ -840,6 +849,23 @@ pub(super) mod tests {
         app.copied = Some((CopyTarget::Address, Instant::now()));
         let _ = update(&mut app, Message::CopyExpired);
         assert!(app.copied.is_none());
+    }
+
+    #[test]
+    fn copiar_as_pastas_funciona_sem_rede() {
+        let dir = tempfile::tempdir().unwrap();
+        let snap = Snapshot {
+            data_dir: PathBuf::from("C:/x/HubFinance/data"),
+            ..Snapshot::default()
+        };
+        assert!(snap.addresses.is_empty());
+        let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
+        let _ = update(&mut app, Message::Copy(CopyTarget::DataDir));
+        assert!(app.is_copied(CopyTarget::DataDir));
+        assert!(!app.is_copied(CopyTarget::Address));
+        let _ = update(&mut app, Message::Copy(CopyTarget::LogsDir));
+        assert!(app.is_copied(CopyTarget::LogsDir));
+        assert!(!app.is_copied(CopyTarget::DataDir));
     }
 
     #[test]

@@ -77,10 +77,11 @@ pub const WALLET: &str = "\u{E68A}";
 pub const WIFI_HIGH: &str = "\u{E4EA}";
 pub const LIGHTNING: &str = "\u{E2DE}";
 pub const INFO: &str = "\u{E2CE}";
+pub const ARROW_SQUARE_OUT: &str = "\u{E5DE}";
 
 /// Todas as constantes, para o teste garantir que nenhuma ficou vazia.
 #[cfg(test)]
-pub const ALL: [&str; 65] = [
+pub const ALL: [&str; 66] = [
     HOUSE_LINE,
     CHART_PIE_SLICE,
     LIST_BULLETS,
@@ -146,6 +147,7 @@ pub const ALL: [&str; 65] = [
     WIFI_HIGH,
     LIGHTNING,
     INFO,
+    ARROW_SQUARE_OUT,
 ];
 
 /// As 36 chaves de `HomeFinance_Mobile/src/features/icons/icon-set.ts`.

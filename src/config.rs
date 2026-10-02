@@ -10,6 +10,15 @@ pub const PROTOCOL: u32 = 1;
 /// Origens que podem chamar a API. A de dev entra sempre: o Bearer é o que autoriza.
 pub const ALLOWED_ORIGINS: [&str; 2] = ["https://luizfer1.github.io", "http://localhost:5173"];
 pub const PWA_URL: &str = "https://luizfer1.github.io/homefinance/";
+/// Prefixo de toda URL do projeto que o hub mostra. Na 0.0.2 so o teste o usa (garante que
+/// `RELEASES_URL` nao saiu do repo); a 0.1.0 monta `.../releases/tag/v<versao>` a partir dele.
+#[cfg_attr(not(test), expect(dead_code, reason = "usado a partir da 0.1.0"))]
+pub const REPO_URL: &str = "https://github.com/LuizFer1/HubFinance";
+/// Fixa no binario: o hub nunca recebe URL de fora (celular, arquivo) para abrir. No Windows o
+/// `open` passa a URL por `cmd /c start`, que interpreta `&` e `^`: uma URL de fora seria uma
+/// injecao. Quando a 0.1.0 montar `.../releases/tag/v<versao>`, a versao tera passado antes
+/// pelo parser estrito (tres inteiros) — mantenha isso para quem mexer aqui.
+pub const RELEASES_URL: &str = "https://github.com/LuizFer1/HubFinance/releases";
 /// Subpasta de `data_dir` com os `hub.AAAA-MM-DD.log` (ver `logging.rs`).
 pub const LOGS_DIR: &str = "logs";
 
@@ -99,6 +108,18 @@ impl UiPrefs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_das_releases_e_fixa_e_segura_para_o_start() {
+        assert_eq!(
+            RELEASES_URL,
+            "https://github.com/LuizFer1/HubFinance/releases"
+        );
+        assert!(RELEASES_URL.starts_with(REPO_URL));
+        for c in [' ', '&', '^', '"', '%'] {
+            assert!(!RELEASES_URL.contains(c), "{c:?}");
+        }
+    }
 
     #[test]
     fn logs_ficam_numa_subpasta_dos_dados() {

@@ -380,6 +380,40 @@ fn copy_button(app: &App, target: CopyTarget, enabled: bool) -> Element<'_, Mess
 
 // ---- sobre o hub ----
 
+/// "Versoes no GitHub" abre o navegador do sistema; se nao abrir, a URL com "Copiar", sem
+/// dialogo (spec de atualizacao, "Tratamento de erros").
+fn releases_link(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    if app.releases_open_failed {
+        return row![
+            text(config::RELEASES_URL)
+                .size(12)
+                .color(t.text_alpha(0.55)),
+            copy_button(app, CopyTarget::ReleasesUrl, true),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into();
+    }
+    button(
+        container(
+            row![
+                text("Versões no GitHub").size(12).font(fonts::INTER_MEDIUM),
+                icons::icon_inherit(icons::ARROW_SQUARE_OUT, 14.0),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .height(Length::Fill)
+        .align_y(Alignment::Center),
+    )
+    .height(32)
+    .padding([0, 10])
+    .style(theme::ghost(t))
+    .on_press(Message::OpenReleases)
+    .into()
+}
+
 /// Textos do card "Sobre o hub", separados do layout para o teste.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct AboutLines {
@@ -408,6 +442,7 @@ fn about_card(app: &App) -> Element<'_, Message> {
         .size(14)
         .color(t.text),
         Space::new().width(Length::Fill),
+        releases_link(app),
     ]
     .spacing(10)
     .height(32)

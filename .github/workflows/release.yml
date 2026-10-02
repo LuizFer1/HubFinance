@@ -137,5 +137,5 @@ jobs:
           generate_release_notes: true
           body: |
             The installers are not code-signed. On Windows, SmartScreen warns on first run
-            ("More info" > "Run anyway"); on macOS, right-click the app > Open the first time.
-            See the README for details.
+            ("More info" > "Run anyway"); on macOS, use System Settings > Privacy & Security >
+            "Open Anyway". See the README for details.

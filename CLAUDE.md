@@ -10,8 +10,10 @@ fora deste repositório. Leia `ARCHITECTURE.md` antes de tocar em `src/`.
 ## Comandos
 
 `cargo run` · `cargo test` · `cargo clippy --all-targets -- -D warnings` · `cargo fmt --check`.
-`RUST_LOG=debug cargo run` para log detalhado. `HUBFINANCE_DATA_DIR=<dir>` muda o diretório de
-dados (padrão: `%LOCALAPPDATA%\HubFinance\data`).
+`RUST_LOG=debug cargo run` para log detalhado; o log vai para o console **e** para
+`<data_dir>/logs/hub.AAAA-MM-DD.log` (7 arquivos, rotação diária). Nunca logar chave, hash,
+token de pareamento nem linha inteira — a atividade da janela é espelhada no arquivo.
+`HUBFINANCE_DATA_DIR=<dir>` muda o diretório de dados (padrão: `%LOCALAPPDATA%\HubFinance\data`).
 
 `scripts/freeze-inter.sh` e `scripts/oklch.py` são geração offline (fontes com `tnum` congelado
 e tabela de cores); o resultado é commitado e `assets/fonts` é vendorizado com as licenças. O
@@ -22,7 +24,8 @@ com um hub de verdade por curl.
 
 - O hub **nunca edita dado**: toda mutação nasce num celular; o hub só aplica LWW por linha.
 - **Nada fora da LAN.** Nenhuma dependência que telefone para casa, nenhum relay, nenhuma
-  checagem de versão.
+  checagem de versão **pelo processo do hub**: abrir o navegador numa URL fixa é ação do
+  usuário executada pelo sistema.
 - **Opcional.** App com sync desligado é completo; hub desligado não degrada nenhum celular.
 - **Uma regra para todas as tabelas.** Linhas são JSON opaco; tabela ou campo novo no celular
   sincroniza sem código novo aqui.
@@ -39,6 +42,8 @@ com um hub de verdade por curl.
 - A chave do aparelho nunca é gravada: só `sha256` hex.
 - Linha fora do contrato de campos é ignorada e contada no dashboard; nunca derruba sync nem
   janela.
+- A versão é uma só: `version` do `Cargo.toml` (`config::VERSION`); a tag é `v<versão>` e
+  `release.yml` falha se diferirem. Toda release tem seção no `CHANGELOG.md`.
 
 ## Layering
 
@@ -46,7 +51,9 @@ com um hub de verdade por curl.
 `server/` o único com axum; `ui/` o único com iced. `dashboard/` é puro (sem rusqlite, axum,
 tokio, iced): contrato de campos, dataset e agregações; a UI deriva as telas dele. `hub/` liga
 tudo numa thread com runtime tokio e publica `Snapshot` por `watch`; a UI só renderiza o
-snapshot e envia `Command`.
+snapshot e envia `Command`. `logging.rs` e `main.rs` são os únicos com `tracing-subscriber`/
+`tracing-appender`; `ui/` abre o navegador só por `open::that_detached` com URL constante de
+`config.rs`.
 
 ## Convenções
 

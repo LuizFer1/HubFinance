@@ -6,6 +6,28 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [0.0.3] - 2026-10-03
+
+Nenhuma mudança no protocolo `/v1` nem no banco: instalar por cima da 0.0.2 preserva `epoch`,
+certificado e aparelhos pareados.
+
+### Adicionado
+
+- Página **Reservas** na janela: total separado, emergência coberta (meses de custo essencial),
+  guardado e retirado nos últimos 12 meses, card da reserva de emergência com meta derivada
+  (múltiplo × custo essencial médio das categorias que o app indicar), caixinhas com ritmo,
+  evolução de 12 meses por reserva e as últimas movimentações. Só leitura, a partir das
+  tabelas `reserves` e `reserveMovements`; movimentação de reserva não é receita nem despesa
+  e não altera Dashboard nem Lançamentos. O app ainda não sincroniza essas tabelas: até lá a
+  página mostra o estado vazio.
+
+### Corrigido
+
+- O conteúdo das páginas ocupa a largura toda da janela: o teto de 1180 px deixava uma faixa
+  vazia à direita com a janela maximizada.
+- O rótulo de cima do eixo dos gráficos ("R$ 12 mil") não perde mais o "R": a coluna do eixo
+  passou de 52 para 68 px, o que cabe até "R$ 120 mil".
+
 ## [0.0.2] - 2026-10-02
 
 Versão para o primeiro teste de campo. Nenhuma mudança no protocolo `/v1` nem no banco:
@@ -61,6 +83,7 @@ campo da 0.0.2 acontece.
 - Scripts `scripts/e2e.sh` (roteiro curl de pareamento e sync) e `scripts/seed-dashboard.sh`
   (carga de exemplo do dashboard).
 
-[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v0.0.2...HEAD
+[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/LuizFer1/HubFinance/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/LuizFer1/HubFinance/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/LuizFer1/HubFinance/releases/tag/v0.0.1

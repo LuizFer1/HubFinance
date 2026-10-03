@@ -84,6 +84,23 @@ pub fn month_window(today: &str) -> Vec<String> {
     last_months(&month_of(today), 12)
 }
 
+/// Meses de `from` (exclusivo) ate `to` (inclusivo): "do proximo mes ate o prazo". Negativo
+/// quando `to` ja passou. Invalido -> 0: quem chama trata 0 como "sem prazo util".
+pub fn months_between(from: &str, to: &str) -> i32 {
+    match (parse_month(from), parse_month(to)) {
+        (Some((fy, fm)), Some((ty, tm))) => (ty - fy) * 12 + i32::from(tm) - i32::from(fm),
+        _ => 0,
+    }
+}
+
+/// "jul 2027": prazo da caixinha e mes da projecao; invalido volta cru.
+pub fn month_short_year(month: &str) -> String {
+    match parse_month(month) {
+        Some((y, m)) => format!("{} {y}", SHORT[usize::from(m) - 1]),
+        None => month.to_string(),
+    }
+}
+
 /// "setembro"; mes invalido -> "".
 pub fn month_long(month: &str) -> &'static str {
     month_index(month).map_or("", |i| LONG[i])
@@ -244,6 +261,24 @@ mod tests {
         assert_eq!(short_date("2026-02-31"), "2026-02-31");
         assert_eq!(partial_label("2026-09-24"), "24 set");
         assert_eq!(partial_label("2026-09-04"), "4 set");
+    }
+
+    #[test]
+    fn meses_ate_o_prazo() {
+        assert_eq!(months_between("2026-09", "2027-07"), 10);
+        assert_eq!(months_between("2026-09", "2026-10"), 1);
+        assert_eq!(months_between("2026-09", "2026-09"), 0);
+        assert_eq!(months_between("2026-09", "2026-06"), -3);
+        assert_eq!(months_between("2026-12", "2027-01"), 1);
+        assert_eq!(months_between("x", "2027-01"), 0);
+        assert_eq!(months_between("2026-09", "2027-13"), 0);
+    }
+
+    #[test]
+    fn mes_curto_com_ano() {
+        assert_eq!(month_short_year("2027-07"), "jul 2027");
+        assert_eq!(month_short_year("2026-11"), "nov 2026");
+        assert_eq!(month_short_year("2027-13"), "2027-13");
     }
 
     #[test]

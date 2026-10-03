@@ -9,7 +9,7 @@ use std::time::SystemTime;
 
 use base64::Engine;
 
-use super::contract::{self, ContractError, Kind};
+use super::contract::{self, ContractError, Kind, MovementKind, ReserveKind};
 
 /// Uma linha como a store guarda: `id` e `deleted_at` vem das colunas ja validadas pela
 /// fatia 1; `data` e o JSON opaco do app.
@@ -69,6 +69,37 @@ pub struct Recurrence {
     pub frequency: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reserve {
+    pub id: String,
+    pub deleted: bool,
+    pub kind: ReserveKind,
+    pub name: String,
+    pub icon: String,
+    pub color: String,
+    pub goal_minor: Option<i64>,
+    pub multiple: Option<u8>,
+    /// Nulo no JSON vira vazio: para a conta, "nenhuma categoria" e "nao configurado" sao o
+    /// mesmo.
+    pub essential_category_ids: Vec<String>,
+    pub due_month: Option<String>,
+    pub recurring_amount_minor: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReserveMovement {
+    pub id: String,
+    pub deleted: bool,
+    pub reserve_id: String,
+    pub kind: MovementKind,
+    pub amount_minor: i64,
+    pub occurred_on: String,
+    pub user_id: Option<String>,
+    pub description: Option<String>,
+    /// Nulo no JSON vira `false`: sem a tag "Mensal".
+    pub recurring: bool,
+}
+
 /// O que um `apply` fez: linhas aplicadas (validas ou nao) e total de ignoradas depois dele.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ApplyReport {
@@ -85,6 +116,8 @@ pub struct Dataset {
     pub users: HashMap<String, User>,
     pub payment_methods: HashMap<String, PaymentMethod>,
     pub recurrences: HashMap<String, Recurrence>,
+    pub reserves: HashMap<String, Reserve>,
+    pub reserve_movements: HashMap<String, ReserveMovement>,
     /// Tabela -> ids cuja versao mais nova esta fora do contrato. Conjunto, nao contador: uma
     /// versao valida depois tira a linha daqui.
     pub ignored: BTreeMap<String, BTreeSet<String>>,
@@ -100,6 +133,9 @@ pub const CATEGORIES: &str = "categories";
 pub const USERS: &str = "users";
 pub const PAYMENT_METHODS: &str = "paymentMethods";
 pub const RECURRENCES: &str = "recurrences";
+/// As duas de reservas tem o contrato fixado pelo hub (spec 2026-10-02); o app adota os nomes.
+pub const RESERVES: &str = "reserves";
+pub const RESERVE_MOVEMENTS: &str = "reserveMovements";
 
 impl Dataset {
     /// Aplica na ordem recebida (a store entrega por `seq`). Tabela fora do contrato e pulada
@@ -173,6 +209,40 @@ impl Dataset {
                         },
                     );
                 }),
+                RESERVES => contract::parse_reserve(&row.data).map(|f| {
+                    self.reserves.insert(
+                        id.clone(),
+                        Reserve {
+                            id: id.clone(),
+                            deleted,
+                            kind: f.kind,
+                            name: f.name,
+                            icon: f.icon,
+                            color: f.color,
+                            goal_minor: f.goal_minor,
+                            multiple: f.multiple,
+                            essential_category_ids: f.essential_category_ids.unwrap_or_default(),
+                            due_month: f.due_month,
+                            recurring_amount_minor: f.recurring_amount_minor,
+                        },
+                    );
+                }),
+                RESERVE_MOVEMENTS => contract::parse_reserve_movement(&row.data).map(|f| {
+                    self.reserve_movements.insert(
+                        id.clone(),
+                        ReserveMovement {
+                            id: id.clone(),
+                            deleted,
+                            reserve_id: f.reserve_id,
+                            kind: f.kind,
+                            amount_minor: f.amount_minor,
+                            occurred_on: f.occurred_on,
+                            user_id: f.user_id,
+                            description: f.description,
+                            recurring: f.recurring.unwrap_or(false),
+                        },
+                    );
+                }),
                 _ => continue,
             };
             applied += 1;
@@ -215,6 +285,12 @@ impl Dataset {
             }
             RECURRENCES => {
                 self.recurrences.remove(id);
+            }
+            RESERVES => {
+                self.reserves.remove(id);
+            }
+            RESERVE_MOVEMENTS => {
+                self.reserve_movements.remove(id);
             }
             _ => {}
         }
@@ -284,6 +360,29 @@ impl Dataset {
     /// Nenhuma transacao viva: o estado "Sem dados" das telas.
     pub fn is_empty(&self) -> bool {
         self.alive_transactions().next().is_none()
+    }
+
+    pub fn alive_reserves(&self) -> impl Iterator<Item = &Reserve> {
+        self.reserves.values().filter(|r| !r.deleted)
+    }
+
+    /// Vivas e de reserva viva: a regra unica de visibilidade das movimentacoes. A de reserva
+    /// apagada ou ausente some em vez de virar "Reserva removida" porque o total do app soma
+    /// reservas vivas: dinheiro sem destino num total que o app nao mostra faria o hub e o
+    /// celular discordarem.
+    pub fn alive_reserve_movements(&self) -> impl Iterator<Item = &ReserveMovement> {
+        self.reserve_movements
+            .values()
+            .filter(|m| !m.deleted && self.reserves.get(&m.reserve_id).is_some_and(|r| !r.deleted))
+    }
+
+    /// Reservas vivas: o contador da lateral.
+    pub fn reserve_count(&self) -> usize {
+        self.alive_reserves().count()
+    }
+
+    pub fn has_reserves(&self) -> bool {
+        self.alive_reserves().next().is_some()
     }
 
     /// Perfis vivos por nome e depois id. `to_lowercase` sem remover acento: "Érico" fica
@@ -554,6 +653,103 @@ mod tests {
             names,
             vec![("Ana", "P1"), ("Ana", "P2"), ("bia", "P3"), ("Luiz", "P4")]
         );
+    }
+
+    fn reserve(name: &str) -> Value {
+        json!({
+            "kind": "pot",
+            "name": name,
+            "icon": "plane",
+            "color": "sky",
+            "goalMinor": 500000,
+            "essentialCategoryIds": null
+        })
+    }
+
+    fn movement(reserve_id: &str) -> Value {
+        json!({
+            "reserveId": reserve_id,
+            "kind": "deposit",
+            "amountMinor": 50000,
+            "occurredOn": "2026-09-06",
+            "recurring": null
+        })
+    }
+
+    #[test]
+    fn aplica_reserva_e_movimentacao() {
+        let mut ds = Dataset::default();
+        let report = ds.apply([
+            raw(RESERVES, "RE1", None, 3, reserve("Viagem")),
+            raw(RESERVE_MOVEMENTS, "M01", None, 4, movement("RE1")),
+        ]);
+        assert_eq!(
+            report,
+            ApplyReport {
+                applied: 2,
+                ignored_total: 0
+            }
+        );
+        assert_eq!(ds.reserves.len(), 1);
+        assert_eq!(ds.reserve_movements.len(), 1);
+        assert_eq!(ds.loaded_seq, 4);
+        assert!(ds.reserves["RE1"].essential_category_ids.is_empty());
+        assert!(!ds.reserve_movements["M01"].recurring);
+        assert_eq!(ds.alive_reserve_movements().count(), 1);
+        // Reserva nao e lancamento: o estado vazio do Dashboard continua.
+        assert!(ds.is_empty());
+        assert!(ds.has_reserves());
+    }
+
+    #[test]
+    fn reserva_apagada_fica_marcada_e_fora_das_vivas() {
+        let mut ds = Dataset::default();
+        ds.apply([raw(RESERVES, "RE1", Some("x"), 1, reserve("Velha"))]);
+        assert_eq!(ds.reserves.len(), 1);
+        assert_eq!(ds.alive_reserves().count(), 0);
+        assert_eq!(ds.reserve_count(), 0);
+        assert!(!ds.has_reserves());
+        assert!(!Dataset::default().has_reserves());
+        ds.apply([raw(RESERVES, "RE2", None, 2, reserve("Nova"))]);
+        assert_eq!(ds.reserve_count(), 1);
+    }
+
+    #[test]
+    fn visibilidade_das_movimentacoes() {
+        let mut ds = Dataset::default();
+        ds.apply([
+            raw(RESERVES, "RV", None, 1, reserve("Viva")),
+            raw(RESERVES, "RD", Some("x"), 2, reserve("Apagada")),
+            raw(RESERVE_MOVEMENTS, "M1", None, 3, movement("RV")),
+            raw(RESERVE_MOVEMENTS, "M2", Some("x"), 4, movement("RV")),
+            raw(RESERVE_MOVEMENTS, "M3", None, 5, movement("RD")),
+            raw(RESERVE_MOVEMENTS, "M4", None, 6, movement("RX")),
+        ]);
+        let ids: Vec<&str> = ds
+            .alive_reserve_movements()
+            .map(|m| m.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["M1"]);
+        // Movimentacao sem destino e valida: nao conta como fora do contrato.
+        assert_eq!(ds.ignored_total(), 0);
+    }
+
+    #[test]
+    fn movimentacao_invalida_tira_a_valida_e_conta() {
+        let mut ds = Dataset::default();
+        ds.apply([
+            raw(RESERVES, "RE1", None, 1, reserve("Viagem")),
+            raw(RESERVE_MOVEMENTS, "M01", None, 2, movement("RE1")),
+        ]);
+        let mut bad = movement("RE1");
+        bad["amountMinor"] = json!("x");
+        let report = ds.apply([raw(RESERVE_MOVEMENTS, "M01", None, 3, bad)]);
+        assert!(!ds.reserve_movements.contains_key("M01"));
+        assert!(ds.ignored[RESERVE_MOVEMENTS].contains("M01"));
+        assert_eq!(report.ignored_total, 1);
+        ds.apply([raw(RESERVE_MOVEMENTS, "M01", None, 4, movement("RE1"))]);
+        assert!(ds.reserve_movements.contains_key("M01"));
+        assert!(ds.ignored.is_empty());
     }
 
     #[test]

@@ -19,7 +19,8 @@ use crate::dashboard::list::{Filters, NONE_KEY, TypeFilter};
 use crate::dashboard::people::{DeviceInfo, Person, people};
 use crate::dashboard::periods::month_window;
 use crate::dashboard::view::{
-    DashboardView, TransactionsView, build_dashboard, build_transactions,
+    DashboardView, ReservesView, TransactionsView, build_dashboard, build_reserves,
+    build_transactions,
 };
 use crate::hub::snapshot::{Snapshot, Status};
 use crate::hub::{Command, HubHandle};
@@ -67,6 +68,7 @@ pub enum Screen {
     #[default]
     Dashboard,
     Transactions,
+    Reserves,
     Connection,
 }
 
@@ -122,6 +124,8 @@ pub struct App {
     /// um quadro nunca percorre o dataset.
     pub(super) dashboard: DashboardView,
     pub(super) transactions: TransactionsView,
+    /// Tela Reservas: sem mes escolhido (saldos sao acumulados), so depende de dados e "hoje".
+    pub(super) reserves: ReservesView,
     /// Menu de categoria da tela Lancamentos aberto.
     pub(super) cat_menu_open: bool,
     /// Categoria sob o mouse na legenda da rosca.
@@ -130,6 +134,9 @@ pub struct App {
     pub(super) donut_cache: canvas::Cache,
     pub(super) bars_cache: canvas::Cache,
     pub(super) empty_cache: canvas::Cache,
+    /// Grafico empilhado e esqueleto vazio da tela Reservas.
+    pub(super) reserves_cache: canvas::Cache,
+    pub(super) reserves_empty_cache: canvas::Cache,
     /// `user_id` -> foto, para as linhas e os chips de autor (`avatars` e por aparelho).
     pub(super) user_avatars: HashMap<String, Avatar>,
     /// `open::that_detached` falhou: a linha da versao mostra a URL com "Copiar".
@@ -226,11 +233,14 @@ impl App {
             filters: Filters::default(),
             dashboard: DashboardView::default(),
             transactions: TransactionsView::default(),
+            reserves: ReservesView::default(),
             cat_menu_open: false,
             hover_category: None,
             donut_cache: canvas::Cache::new(),
             bars_cache: canvas::Cache::new(),
             empty_cache: canvas::Cache::new(),
+            reserves_cache: canvas::Cache::new(),
+            reserves_empty_cache: canvas::Cache::new(),
             user_avatars: HashMap::new(),
             releases_open_failed: false,
         };
@@ -262,12 +272,13 @@ impl App {
         self.rebuild();
     }
 
-    /// Recalcula as duas telas a partir do snapshot atual.
+    /// Recalcula as tres telas de dados a partir do snapshot atual.
     pub(super) fn rebuild(&mut self) {
         let dataset = &self.snapshot.dashboard;
         let month = self.month().to_string();
         self.dashboard = build_dashboard(dataset, &self.today, &month);
         self.transactions = build_transactions(dataset, &self.today, &month, &self.filters);
+        self.reserves = build_reserves(dataset, &self.today);
         // "N lançamentos sincronizados de K aparelhos": so aparelhos ativos que ja enviaram.
         self.transactions.synced_devices = self
             .snapshot
@@ -315,6 +326,8 @@ impl App {
         self.donut_cache.clear();
         self.bars_cache.clear();
         self.empty_cache.clear();
+        self.reserves_cache.clear();
+        self.reserves_empty_cache.clear();
     }
 
     /// Pessoas e fotos a partir do snapshot atual. A foto so e decodificada de novo quando o
@@ -1320,6 +1333,62 @@ pub(super) mod tests {
         assert_eq!(app.filters, Filters::default());
         assert!(!app.cat_menu_open);
         assert_eq!(app.transactions.list.count, 3);
+    }
+
+    /// App com `fixtures_with_reserves()` e "hoje" fixo em 24 de setembro de 2026.
+    pub(crate) fn app_with_reserves(
+        dir: &std::path::Path,
+    ) -> (
+        App,
+        mpsc::UnboundedReceiver<Command>,
+        watch::Sender<Snapshot>,
+    ) {
+        let snap = Snapshot {
+            dashboard: std::sync::Arc::new(crate::dashboard::fixtures_with_reserves()),
+            ..Snapshot::default()
+        };
+        let (mut app, rx, tx) = app_with(snap, dir.to_path_buf());
+        app.set_today("2026-09-24".into());
+        (app, rx, tx)
+    }
+
+    #[test]
+    fn tela_reservas_nasce_vazia_e_recalcula_com_o_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        assert!(app.reserves.is_empty);
+        let _ = update(&mut app, Message::SelectScreen(Screen::Reserves));
+        assert_eq!(app.screen, Screen::Reserves);
+        app.set_today("2026-09-24".into());
+        let snap = Snapshot {
+            dashboard: std::sync::Arc::new(crate::dashboard::fixtures_with_reserves()),
+            ..Snapshot::default()
+        };
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert_eq!(app.reserves.reserve_count, 6);
+        assert_eq!(app.reserves.current_month, "2026-09");
+    }
+
+    #[test]
+    fn app_nasce_com_reservas_padrao() {
+        let dir = tempfile::tempdir().unwrap();
+        let (cmd_tx, _rx) = mpsc::unbounded_channel();
+        let (_tx, snap_rx) = watch::channel(Snapshot::default());
+        let app = App::new(
+            HubHandle {
+                commands: cmd_tx,
+                snapshot: snap_rx,
+            },
+            UtcOffset::UTC,
+            UiPrefs::default(),
+            dir.path().to_path_buf(),
+        );
+        // `new` ja chama `set_today` (que recalcula): o modelo nao e o `default()`, e o de um
+        // hub sem reservas, com a janela de hoje.
+        assert!(app.reserves.is_empty);
+        assert_eq!(app.reserves.reserve_count, 0);
+        assert_eq!(app.reserves.months.len(), 12);
+        assert_eq!(app.reserves.emergency, None);
     }
 
     #[test]

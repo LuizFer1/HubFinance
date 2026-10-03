@@ -21,7 +21,16 @@
 #     hoje), exceto o 5o mes para tras, que so tem o salario (mes so de receita), e o 4o, que
 #     fica vazio (buraco no meio das seis barras e o vazio "Nada em <mes>" em Lancamentos);
 #     mais uma com a categoria apagada, uma sem categoria, uma APAGADA e uma FORA DO CONTRATO
-#     ("amountMinor": "muito").
+#     ("amountMinor": "muito");
+#   - reserves: a emergencia (multiplo 6, categorias essenciais Alimentacao, Moradia,
+#     Transporte e Saude, por id), as caixinhas "Viagem de julho" e "IPVA" (com meta e prazo)
+#     e "Sem meta", uma APAGADA e uma FORA DO CONTRATO ("kind": "box");
+#   - reserveMovements: depositos mensais recorrentes na emergencia, na viagem e no IPVA nos
+#     seis meses que terminam no corrente, uma retirada da emergencia, um deposito avulso na
+#     viagem, um sem autor nem descricao em "Sem meta", um na reserva apagada e um no mes que
+#     vem (os dois ficam fora de tudo), uma APAGADA e uma FORA DO CONTRATO ("kind":
+#     "transfer").
+#   Fora do contrato no total: 3 linhas (transactions: 1, reserves: 1, reserveMovements: 1).
 
 set -euo pipefail
 
@@ -47,6 +56,11 @@ PM_PIX=01HZZZZZZZZZZZZZZZZZZZZZM1
 PM_CARD=01HZZZZZZZZZZZZZZZZZZZZZM2
 PM_CASH=01HZZZZZZZZZZZZZZZZZZZZZM3
 REC_RENT=01HZZZZZZZZZZZZZZZZZZZZZR1
+R_EMERG=01HZZZZZZZZZZZZZZZZZZZZZE1
+R_TRIP=01HZZZZZZZZZZZZZZZZZZZZZB1
+R_IPVA=01HZZZZZZZZZZZZZZZZZZZZZB2
+R_FREE=01HZZZZZZZZZZZZZZZZZZZZZB3 # sem meta
+R_DEAD=01HZZZZZZZZZZZZZZZZZZZZZB4 # apagada
 
 # Foto da Ana: PNG 64x64 (rosto claro sobre gradiente magenta), so para provar a foto.
 AVATAR='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAC1ElEQVR42tXYZ3KbQACG4e90OUSu4PTq9N57EEh0cIrTe+89Tr9Bhg45QP5HAjETbCRLuyuxO/Md4Hn/wO7Ck3550k9P+uFJ3z3pW76vnvTFkxa81ud8n7zWR6/1wWu993t758tvffmNL7/O98qXX/ryC19+3pvyzFeeBsqTQHmc71GgPAyUB0G7u/tB+17Qvhu07+S7HbRvhZ2bYedGvuth51rYuRp2ruSbD9XLoXopVC/muxCpc5HqRqoTad3ZkWZFmtkdhNZHmgGh9ZGmQ2h9pGkQWh9pKoTWR3ovQGB9pHcgtD7W2xBaH+sKhNbHugyh9UWAwPpYb0FofaxLEFofG+chtD42zmES+r+/FwaNrb4IYKkfQq9msNHHxllMX1+MiT42zqARfb+BWh8bp9GUvmyg0sfGKTSoLxvI9UXABL85owWQ6xPzJJrVlw2E+sQ8Acq/FaMAQn1iHgflv5ZNAKk+MY+B8qTAKIBQnwfQnXOYBBDrE/MoKE9pjAII9Yl5BJRnTEYBhPrEPAzKEzK7ABJ9Yh4C5fmeUQChPrF6AbS3kwb1iXUQ9Hcr6gByfWIdAJObYVP6xNoPVvfaRvRFALNb+fT1qbUPbN8UpqxPrb2YxIvI5L45i/SptQdNvecw0af2bjDUr1wxO/qY6IsABvqx6NUMKn1q7wKNnti9dGT61N4JHvRlw9j61N4BAj1zejVjDH1qbwdX+n7DyPoigC992TCSPrW3gUN92bC8PrVnwae+2LL61NkKbvX9hqH61NkCnvVlw0B9lgdM+3s/fsBAfeZsBuf6sqFenzmbwL++bKjRZ85GDDmlcRZQo8+cDZjEGXMiAXX6IkAAfbGl+sxdDya3k2kFLNZn7jqIoi8bKvrMXYvaey3HARV95q5B7a2c64D/9EVAzZsCvwFVfeauRu2LCMcBFX3mrkLtew7HARV95s6g9jWK44CK/s/czD/AmaYN6BtqcwAAAABJRU5ErkJggg=='
@@ -112,6 +126,16 @@ tx() {
     "\"kind\":\"$3\",\"description\":\"$4\",\"amountMinor\":$5,\"currency\":\"BRL\",\"occurredOn\":\"$6\",\"categoryId\":$cat,\"paymentMethodId\":$pm,\"cashbackMinor\":null,\"userId\":$user,\"recurrenceId\":$rec,\"occurrenceKey\":null"
 }
 
+# <id> <apagada> <reserva> <deposit|withdrawal> <centavos> <data> <autor|null> <descricao|null> <recorrente:true|false>
+mv() {
+  local q='"'
+  local user=null desc=null
+  [[ $7 != null ]] && user="$q$7$q"
+  [[ $8 != null ]] && desc="$q$8$q"
+  add reserveMovements "$1" "$2" \
+    "\"reserveId\":\"$3\",\"kind\":\"$4\",\"amountMinor\":$5,\"occurredOn\":\"$6\",\"userId\":$user,\"description\":$desc,\"recurring\":$9,\"reason\":null"
+}
+
 # ---------------------------------------------------------------------------------------
 
 printf '== CA\n'
@@ -146,8 +170,19 @@ add paymentMethods "$PM_CARD" 0 '"name":"Crédito","icon":"credit-card","color":
 add paymentMethods "$PM_CASH" 0 '"name":"Dinheiro","icon":"banknote","color":"lime","kind":"cash"'
 add recurrences "$REC_RENT" 0 '"kind":"expense","description":"Aluguel","amountMinor":180000,"currency":"BRL","categoryId":"'"$C_HOME"'","paymentMethodId":"'"$PM_PIX"'","cashbackMinor":null,"frequency":"monthly","scheduleType":"dayOfMonth","scheduleN":10,"startOn":"2026-01-10","endOn":null,"active":true'
 
-# Lancamentos: seis por mes, do mes corrente (k=0) para tras. Ids T<k><n>.
 FIRST=$(date +%Y-%m-01)
+
+# Reservas: a emergencia aponta para as categorias essenciais por id (nunca por nome).
+add reserves "$R_EMERG" 0 '"kind":"emergency","name":"Reserva de emergência","icon":"piggy-bank","color":"slate","goalMinor":null,"multiple":6,"essentialCategoryIds":["'"$C_FOOD"'","'"$C_HOME"'","'"$C_CAR"'","'"$C_HEALTH"'"],"dueMonth":null,"recurringAmountMinor":50000,"recurringDay":6'
+add reserves "$R_TRIP" 0 '"kind":"pot","name":"Viagem de julho","icon":"plane","color":"sky","goalMinor":600000,"multiple":null,"essentialCategoryIds":null,"dueMonth":"'"$(date -d "$FIRST +10 month" +%Y-%m)"'","recurringAmountMinor":30000,"recurringDay":10'
+add reserves "$R_IPVA" 0 '"kind":"pot","name":"IPVA","icon":"car","color":"amber","goalMinor":240000,"multiple":null,"essentialCategoryIds":null,"dueMonth":"'"$(date -d "$FIRST +4 month" +%Y-%m)"'","recurringAmountMinor":20000,"recurringDay":5'
+add reserves "$R_FREE" 0 '"kind":"pot","name":"Sem meta","icon":"wallet","color":"teal","goalMinor":null,"multiple":null,"essentialCategoryIds":null,"dueMonth":null,"recurringAmountMinor":null,"recurringDay":null'
+add reserves "$R_DEAD" 1 '"kind":"pot","name":"Apagada","icon":"tag","color":"lime","goalMinor":100000,"multiple":null,"essentialCategoryIds":null,"dueMonth":null,"recurringAmountMinor":null,"recurringDay":null'
+# Fora do contrato: kind desconhecido. O hub aceita (JSON opaco), a tela ignora e conta.
+add reserves 01HZZZZZZZZZZZZZZZZZZZZZB9 0 '"kind":"box","name":"Fora do contrato","icon":"tag","color":"slate"'
+
+# Lancamentos: seis por mes, do mes corrente (k=0) para tras. Ids T<k><n>. Depositos mensais
+# das reservas nos seis meses que terminam no corrente (k <= 5). Ids V<k><n>.
 TODAY_DAY=$((10#$(date +%d)))
 for k in 0 1 2 3 4 5 6; do
   MONTH=$(date -d "$FIRST -$k month" +%Y-%m)
@@ -157,6 +192,11 @@ for k in 0 1 2 3 4 5 6; do
     printf '%s-%02d' "$MONTH" "$d"
   }
   v=$((k * 731 % 9000))
+  if [[ $k -le 5 ]]; then
+    mv "01HZZZZZZZZZZZZZZZZZZZZV${k}1" 0 "$R_EMERG" deposit 50000 "$(day 6)" "$LUIZ" "Guardado todo mês" true
+    mv "01HZZZZZZZZZZZZZZZZZZZZV${k}2" 0 "$R_TRIP" deposit 30000 "$(day 10)" "$ANA" "Guardado todo mês" true
+    mv "01HZZZZZZZZZZZZZZZZZZZZV${k}3" 0 "$R_IPVA" deposit 20000 "$(day 5)" "$LUIZ" null true
+  fi
   # Mes vazio no meio das barras.
   [[ $k == 4 ]] && continue
   tx "01HZZZZZZZZZZZZZZZZZZZZT${k}1" 0 income "Salário" 650000 "$(day 5)" "$C_PAY" "$PM_PIX" "$LUIZ" null
@@ -177,6 +217,20 @@ tx 01HZZZZZZZZZZZZZZZZZZZZZX3 1 expense "Lançamento apagado" 99999 "$M1-19" "$C
 add transactions 01HZZZZZZZZZZZZZZZZZZZZZX4 0 \
   "\"kind\":\"expense\",\"description\":\"Fora do contrato\",\"amountMinor\":\"muito\",\"currency\":\"BRL\",\"occurredOn\":\"$M1-20\",\"categoryId\":null,\"paymentMethodId\":null,\"cashbackMinor\":null,\"userId\":null,\"recurrenceId\":null,\"occurrenceKey\":null"
 
+
+# Movimentacoes avulsas das reservas.
+mv 01HZZZZZZZZZZZZZZZZZZZZZY1 0 "$R_EMERG" withdrawal 64000 "$M1-18" "$ANA" "Conserto da geladeira" false
+mv 01HZZZZZZZZZZZZZZZZZZZZZY2 0 "$R_TRIP" deposit 150000 "$(date -d "$FIRST -2 month" +%Y-%m)-15" "$ANA" "Parte do freela" false
+# Sem autor nem descricao: a lista mostra "Guardado" e o autor "—".
+mv 01HZZZZZZZZZZZZZZZZZZZZZY3 0 "$R_FREE" deposit 10000 "$M1-02" null null false
+# Reserva apagada e mes que vem: validas, mas fora de todos os totais.
+mv 01HZZZZZZZZZZZZZZZZZZZZZY4 0 "$R_DEAD" deposit 70000 "$M1-03" "$LUIZ" null false
+mv 01HZZZZZZZZZZZZZZZZZZZZZY5 0 "$R_EMERG" deposit 5000 "$(date -d "$FIRST +1 month" +%Y-%m)-05" "$LUIZ" "Agendado" false
+mv 01HZZZZZZZZZZZZZZZZZZZZZY6 1 "$R_EMERG" deposit 99999 "$M1-04" "$LUIZ" "Movimentação apagada" false
+# Fora do contrato: kind desconhecido.
+add reserveMovements 01HZZZZZZZZZZZZZZZZZZZZZY7 0 \
+  "\"reserveId\":\"$R_EMERG\",\"kind\":\"transfer\",\"amountMinor\":1000,\"occurredOn\":\"$M1-05\",\"userId\":null,\"description\":null,\"recurring\":null"
+
 printf '== Push de %d linhas\n' "${#ROWS[@]}"
 JOINED=$(IFS=,; printf '%s' "${ROWS[*]}")
 printf '{"epoch":"%s","rows":[%s]}' "$EPOCH" "$JOINED" >"$WORK/push.json"
@@ -185,4 +239,4 @@ call "$API/v1/push" -H "authorization: Bearer $KEY" -H 'content-type: applicatio
 [[ $STATUS == 200 ]] || fail "push: $STATUS $BODY"
 grep -q '"rejected":\[\]' <<<"$BODY" || fail "linhas rejeitadas: $BODY"
 printf '   seq final: %s\n' "$(number "$BODY" seq)"
-printf '\nPronto: veja a janela (Conexao: Ana com foto; atividade: 1 linha fora do contrato).\n'
+printf '\nPronto: veja a janela (Conexao: Ana com foto; Reservas: 4 vivas; atividade: 3 linhas fora do contrato).\n'

@@ -10,14 +10,15 @@ use iced::{Alignment, Element, Length, Padding, mouse, window};
 
 use super::app::{App, Message, Screen};
 use super::theme::{self, Tokens};
-use super::{connection_view, dashboard_view, fonts, icons, time, transactions_view, widgets};
+use super::{
+    connection_view, dashboard_view, fonts, icons, reserves_view, time, transactions_view, widgets,
+};
 use crate::config::ThemeMode;
 use crate::dashboard::money::group_thousands;
 use crate::hub::snapshot::Status;
 
 const TITLEBAR_HEIGHT: f32 = 36.0;
 const SIDEBAR_WIDTH: f32 = 232.0;
-const CONTENT_MAX: f32 = 1180.0;
 /// Espessura da borda que redimensiona; os cantos pegam 12 px ao longo de cada lado.
 const EDGE: f32 = 6.0;
 const CORNER: f32 = 12.0;
@@ -354,6 +355,13 @@ fn sidebar(app: &App) -> Element<'_, Message> {
             "Lançamentos",
             Some(transactions_count(app)),
         ),
+        nav_item(
+            app,
+            Screen::Reserves,
+            icons::VAULT,
+            "Reservas",
+            Some(reserves_count(app)),
+        ),
         group,
         nav_item(
             app,
@@ -388,6 +396,11 @@ fn sidebar(app: &App) -> Element<'_, Message> {
 /// Lancamentos vivos no total.
 pub(super) fn transactions_count(app: &App) -> usize {
     app.snapshot.dashboard.alive_transactions().count()
+}
+
+/// Reservas vivas no total.
+pub(super) fn reserves_count(app: &App) -> usize {
+    app.snapshot.dashboard.reserve_count()
 }
 
 /// Aparelhos ativos: e o numero de linhas da lista "Usuarios conectados" (sem a remocao
@@ -500,8 +513,13 @@ pub(super) fn status_lines(app: &App) -> StatusLines {
     }
 }
 
-/// Ha lancamento vivo no hub.
+/// Ha lancamento ou reserva viva no hub: uma casa que so sincronizou reservas tem dados.
 pub(super) fn has_data(app: &App) -> bool {
+    has_transactions(app) || app.snapshot.dashboard.has_reserves()
+}
+
+/// Ha lancamento vivo: o estado vazio do Dashboard e de Lancamentos e sobre lancamentos.
+pub(super) fn has_transactions(app: &App) -> bool {
     !app.snapshot.dashboard.is_empty()
 }
 
@@ -603,11 +621,12 @@ fn content(app: &App) -> Element<'_, Message> {
         match app.screen {
             Screen::Dashboard => dashboard_view::view(app),
             Screen::Transactions => transactions_view::view(app),
+            Screen::Reserves => reserves_view::view(app),
             Screen::Connection => connection_view::view(app),
         }
     };
     let page = column![header(app), body].spacing(14);
-    let inner = container(page).max_width(CONTENT_MAX).padding(Padding {
+    let inner = container(page).width(Length::Fill).padding(Padding {
         top: 28.0,
         right: 32.0,
         bottom: 40.0,
@@ -630,11 +649,11 @@ fn content(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-/// Largura util do conteudo (sem a lateral, a borda e o padding de 32 + 32), limitada pelo
-/// maximo de 1180. As telas usam para decidir colunas: o iced nao tem `auto-fit`.
+/// Largura util do conteudo (sem a lateral, a borda e o padding de 32 + 32). Sem teto: com o
+/// maximo de 1180 da 0.0.2 a janela maximizada deixava uma faixa vazia a direita. As telas usam
+/// para decidir colunas: o iced nao tem `auto-fit`.
 pub(super) fn content_width(app: &App) -> f32 {
-    let available = app.window_size.width - SIDEBAR_WIDTH - 1.0;
-    available.min(CONTENT_MAX) - 64.0
+    app.window_size.width - SIDEBAR_WIDTH - 1.0 - 64.0
 }
 
 fn header(app: &App) -> Element<'_, Message> {
@@ -643,7 +662,8 @@ fn header(app: &App) -> Element<'_, Message> {
     let mut line = row![container(widgets::page_title(t, title, &subtitle)).width(Length::Fill)]
         .spacing(24)
         .align_y(Alignment::End);
-    if app.screen != Screen::Connection {
+    // Reservas nao tem seletor de mes: saldos sao acumulados ate hoje.
+    if matches!(app.screen, Screen::Dashboard | Screen::Transactions) {
         line = line.push(month_controls(app));
     }
     container(line)
@@ -671,7 +691,7 @@ fn month_controls(app: &App) -> Element<'_, Message> {
 }
 
 pub(super) fn titles(app: &App) -> (&'static str, String) {
-    let empty = !has_data(app);
+    let empty = !has_transactions(app);
     match app.screen {
         Screen::Dashboard => (
             "Dashboard",
@@ -691,6 +711,14 @@ pub(super) fn titles(app: &App) -> (&'static str, String) {
                     plural(transactions_count(app), "lançamento", "lançamentos"),
                     plural(app.transactions.synced_devices, "aparelho", "aparelhos"),
                 )
+            },
+        ),
+        Screen::Reserves => (
+            "Reservas",
+            if app.reserves.is_empty {
+                "Nada sincronizado ainda".into()
+            } else {
+                "Dinheiro separado do saldo do mês · somente leitura".into()
             },
         ),
         Screen::Connection => (
@@ -837,6 +865,56 @@ mod tests {
         assert_eq!(titles(&app).1, "13 lançamentos sincronizados de 1 aparelho");
         app.screen = Screen::Dashboard;
         assert_eq!(titles(&app).1, "Somente leitura · dados do último sync");
+    }
+
+    #[test]
+    fn subtitulos_das_reservas() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        app.screen = Screen::Reserves;
+        assert_eq!(
+            titles(&app),
+            ("Reservas", "Nada sincronizado ainda".to_string())
+        );
+        let (mut app, _rx, _tx) = super::super::app::tests::app_with_reserves(dir.path());
+        app.screen = Screen::Reserves;
+        assert_eq!(
+            titles(&app),
+            (
+                "Reservas",
+                "Dinheiro separado do saldo do mês · somente leitura".to_string()
+            )
+        );
+        assert_eq!(reserves_count(&app), 6);
+    }
+
+    #[test]
+    fn so_reservas_liga_o_status_mas_nao_o_dashboard() {
+        use crate::dashboard::dataset::{Dataset, RESERVES, RawRow};
+        let dir = tempfile::tempdir().unwrap();
+        let mut ds = Dataset::default();
+        ds.apply([RawRow {
+            table: RESERVES.into(),
+            id: "RP1".into(),
+            deleted_at: None,
+            seq: 1,
+            data: serde_json::json!({ "kind": "pot", "name": "X", "icon": "tag", "color": "sky" })
+                .to_string(),
+        }]);
+        let snap = Snapshot {
+            status: Status::Running,
+            dashboard: std::sync::Arc::new(ds),
+            ..Snapshot::default()
+        };
+        let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
+        assert_eq!(status_lines(&app).title, "Hub ligado");
+        app.screen = Screen::Dashboard;
+        assert_eq!(titles(&app).1, "Nada sincronizado ainda");
+        app.screen = Screen::Reserves;
+        assert_eq!(
+            titles(&app).1,
+            "Dinheiro separado do saldo do mês · somente leitura"
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Modelos de tela: tudo o que Dashboard e Lancamentos mostram, derivado do `Dataset` por
+//! Modelos de tela: tudo o que Dashboard, Lancamentos e Reservas mostram, derivado do `Dataset` por
 //! funcoes puras. A UI chama `build_*` so quando dados, mes, filtros ou "hoje" mudam e guarda
 //! o resultado; desenhar um quadro nunca percorre o dataset.
 
@@ -6,12 +6,20 @@ use super::aggregate::{
     MonthSummary, MonthTotals, NO_CATEGORY_COLOR, Slice, average_surplus, axis_top,
     expense_by_category, month_summary, monthly_totals, recent,
 };
+use super::contract::ReserveKind;
 use super::dataset::Dataset;
 use super::list::{
     CategoryOption, Filters, ListRow, ListView, NONE_KEY, category_options, has_unauthored,
     list_month, to_row,
 };
-use super::periods::{last_months, month_label_capitalized, month_of, month_short, partial_label};
+use super::periods::{
+    last_months, month_label_capitalized, month_of, month_short, month_window, partial_label,
+};
+use super::reserves::{
+    EmergencyView, MovementRow, PotRow, ReserveSeries, ReserveShare, ReserveTotals, emergency_goal,
+    emergency_view, movements, ordered, pot_row, pots_note, reserve_axis_top, series, shares,
+    totals, withdrawals_note,
+};
 
 /// Meses das barras de "Receita × despesa": seis terminando no mes escolhido.
 pub const BAR_MONTHS: usize = 6;
@@ -141,6 +149,72 @@ pub fn build_transactions(
         unauthored_chip: has_unauthored(dataset, month) || filters.authors.contains(NONE_KEY),
         is_empty_hub: dataset.is_empty(),
         synced_devices: 0,
+    }
+}
+
+/// Tela Reservas. Sem mes escolhido: saldos sao acumulados e a janela e sempre a de `today`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ReservesView {
+    /// Nenhuma reserva viva: o estado vazio. Reservas vivas sem movimentacao mostram os cards
+    /// normais zerados.
+    pub is_empty: bool,
+    pub reserve_count: usize,
+    pub current_month: String,
+    /// 12, a janela, o mais antigo primeiro.
+    pub months: Vec<String>,
+    pub totals: ReserveTotals,
+    pub withdrawals_note: String,
+    /// Barra dividida do card Total: saldo > 0, ordem padrao.
+    pub shares: Vec<ReserveShare>,
+    pub emergency: Option<EmergencyView>,
+    pub pots: Vec<PotRow>,
+    pub pots_note: String,
+    pub series: Vec<ReserveSeries>,
+    pub axis_top: i64,
+    pub movements: Vec<MovementRow>,
+    pub movement_count: usize,
+}
+
+pub fn build_reserves(dataset: &Dataset, today: &str) -> ReservesView {
+    let current = month_of(today);
+    let months = month_window(today);
+    let (emergency, rest) = ordered(dataset);
+    let pots: Vec<PotRow> = rest
+        .iter()
+        .map(|r| {
+            // Emergencia extra (nao virou o card): meta derivada das proprias categorias.
+            let derived =
+                (r.kind == ReserveKind::Emergency).then(|| emergency_goal(dataset, r, &current));
+            pot_row(dataset, r, &current, derived)
+        })
+        .collect();
+    let series = series(dataset, &months);
+    let peak = (0..months.len())
+        .map(|i| {
+            series
+                .iter()
+                .filter_map(|s| s.balances.get(i))
+                .fold(0i64, |acc, v| acc.saturating_add(*v))
+        })
+        .max()
+        .unwrap_or(0);
+    let totals = totals(dataset, &months);
+    let (movements, movement_count) = movements(dataset, &months);
+    ReservesView {
+        is_empty: !dataset.has_reserves(),
+        reserve_count: dataset.reserve_count(),
+        withdrawals_note: withdrawals_note(&totals),
+        totals,
+        shares: shares(dataset, &current),
+        emergency: emergency.map(|r| emergency_view(dataset, r, &current)),
+        pots_note: pots_note(&pots),
+        pots,
+        axis_top: reserve_axis_top(peak),
+        series,
+        movements,
+        movement_count,
+        current_month: current,
+        months,
     }
 }
 
@@ -311,6 +385,124 @@ mod tests {
         assert!(
             !build_transactions(&ds, "2026-09-24", "2026-08", &Filters::default()).unauthored_chip
         );
+    }
+
+    /// Regra n. 1 do handoff ("guardar nao e gastar"): movimentacao de reserva nao e receita
+    /// nem despesa. Se alguem um dia somar `reserve_movements` em `aggregate.rs` ou `list.rs`,
+    /// e este teste que quebra.
+    #[test]
+    fn reservas_nao_entram_no_dashboard_nem_nos_lancamentos() {
+        use crate::dashboard::fixtures_with_reserves;
+        use crate::dashboard::periods::month_window;
+        let plain = fixtures();
+        let with = fixtures_with_reserves();
+        assert_eq!(
+            plain.alive_transactions().count(),
+            with.alive_transactions().count()
+        );
+        assert_eq!(plain.is_empty(), with.is_empty());
+        for month in month_window("2026-09-24") {
+            assert_eq!(
+                build_dashboard(&plain, "2026-09-24", &month),
+                build_dashboard(&with, "2026-09-24", &month),
+                "{month}"
+            );
+            assert_eq!(
+                build_transactions(&plain, "2026-09-24", &month, &Filters::default()),
+                build_transactions(&with, "2026-09-24", &month, &Filters::default()),
+                "{month}"
+            );
+        }
+        assert!(with.has_reserves() && !plain.has_reserves());
+    }
+
+    #[test]
+    fn reservas_da_fixture() {
+        use crate::dashboard::fixtures_with_reserves;
+        let v = build_reserves(&fixtures_with_reserves(), "2026-09-24");
+        assert!(!v.is_empty);
+        assert_eq!(v.reserve_count, 6);
+        assert_eq!(v.current_month, "2026-09");
+        assert_eq!(v.months.len(), 12);
+        assert_eq!(v.totals.total_minor, 603_000);
+        assert_eq!(v.withdrawals_note, "2 retiradas de 2 reservas");
+        assert_eq!(v.shares.len(), 6);
+        assert_eq!(v.emergency.as_ref().map(|e| e.goal_minor), Some(390_000));
+        let pots: Vec<&str> = v.pots.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(pots, vec!["RP1", "RP2", "RP3", "RP4", "RP6"]);
+        assert_eq!(v.pots_note, "4 com objetivo · 1 sem meta");
+        assert_eq!(v.series.len(), 6);
+        assert_eq!(v.axis_top, 1_200_000);
+        assert_eq!(v.movements.len(), 8);
+        assert_eq!(v.movement_count, 15);
+    }
+
+    #[test]
+    fn reservas_sem_reservas() {
+        for ds in [fixtures(), Dataset::default()] {
+            let v = build_reserves(&ds, "2026-09-24");
+            assert!(v.is_empty);
+            assert_eq!(v.reserve_count, 0);
+            assert_eq!(v.totals, ReserveTotals::default());
+            assert!(v.shares.is_empty() && v.pots.is_empty() && v.series.is_empty());
+            assert!(v.movements.is_empty());
+            assert_eq!(v.movement_count, 0);
+            assert_eq!(v.emergency, None);
+            assert_eq!(v.axis_top, 600_000);
+        }
+    }
+
+    #[test]
+    fn reservas_vivas_sem_movimentacao() {
+        use crate::dashboard::dataset::{RESERVES, RawRow};
+        let mut ds = fixtures();
+        ds.apply([RawRow {
+            table: RESERVES.into(),
+            id: "RP1".into(),
+            deleted_at: None,
+            seq: 500,
+            data: serde_json::json!({ "kind": "pot", "name": "X", "icon": "tag", "color": "sky" })
+                .to_string(),
+        }]);
+        let v = build_reserves(&ds, "2026-09-24");
+        assert!(!v.is_empty);
+        assert_eq!(v.totals.total_minor, 0);
+        assert!(v.shares.is_empty());
+        assert_eq!(v.pots.len(), 1);
+    }
+
+    #[test]
+    fn reservas_com_duas_emergencias() {
+        use crate::dashboard::dataset::{RESERVES, RawRow};
+        use crate::dashboard::fixtures_with_reserves;
+        use crate::dashboard::reserves::ReserveColor;
+        let mut ds = fixtures_with_reserves();
+        ds.apply([RawRow {
+            table: RESERVES.into(),
+            id: "RE0".into(),
+            deleted_at: None,
+            seq: 500,
+            data: serde_json::json!({ "kind": "emergency", "name": "Primeira", "icon": "x",
+                "color": "slate", "multiple": 3, "essentialCategoryIds": ["C2"] })
+            .to_string(),
+        }]);
+        let v = build_reserves(&ds, "2026-09-24");
+        assert_eq!(v.emergency.as_ref().map(|e| e.id.as_str()), Some("RE0"));
+        let extra = &v.pots[0];
+        assert_eq!(extra.id, "RE1");
+        assert_eq!(extra.color, ReserveColor::Accent);
+        // A meta da extra e a dela: 6 x 65.000.
+        assert_eq!(extra.goal_minor, Some(390_000));
+    }
+
+    #[test]
+    fn reservas_na_virada_de_ano() {
+        use crate::dashboard::fixtures_with_reserves;
+        let v = build_reserves(&fixtures_with_reserves(), "2027-01-03");
+        assert_eq!(v.months[0], "2026-02");
+        assert_eq!(v.current_month, "2027-01");
+        // `M06` (outubro de 2026) ja passou e entra.
+        assert_eq!(v.emergency.as_ref().map(|e| e.balance_minor), Some(240_000));
     }
 
     #[test]

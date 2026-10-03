@@ -315,6 +315,27 @@ pub fn month_picker<'a, M: Clone + 'a>(
     .into()
 }
 
+/// Tres cards de largura igual; abaixo de `3 x min + 2 x gap`, dois por linha e o terceiro
+/// embaixo (o `auto-fit` do prototipo, que o iced nao tem).
+pub fn three_up<'a, M: 'a>(
+    width: f32,
+    min: f32,
+    gap: f32,
+    cards: [Element<'a, M>; 3],
+) -> Element<'a, M> {
+    if width >= 3.0 * min + 2.0 * gap {
+        iced::widget::Row::with_children(cards).spacing(gap).into()
+    } else {
+        let [a, b, c] = cards;
+        iced::widget::column![
+            row![a, b].spacing(gap),
+            row![c, Space::new().width(Length::Fill)].spacing(gap),
+        ]
+        .spacing(gap)
+        .into()
+    }
+}
+
 /// Primeira letra em maiuscula, para o avatar sem foto. `chars().next()` e nao grafema: nome
 /// com acento combinante e raro e o pior caso e a inicial sem o acento.
 pub fn initial(name: &str) -> String {

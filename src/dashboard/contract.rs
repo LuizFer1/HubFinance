@@ -72,6 +72,64 @@ pub struct RecurrenceFields {
     pub frequency: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReserveKind {
+    Emergency,
+    Pot,
+}
+
+/// Linha de `reserves` (contrato fixado pela spec do hub de 2026-10-02; o app adota depois).
+/// Nao lidos: `recurringDay` (regra de materializacao do app), `createdAt`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReserveFields {
+    pub kind: ReserveKind,
+    pub name: String,
+    pub icon: String,
+    pub color: String,
+    /// Meta da caixinha. Nao e lida para `emergency`: a meta dela e derivada do custo essencial.
+    #[serde(default)]
+    pub goal_minor: Option<i64>,
+    /// `u8` de proposito: o serde recusa fracao, texto e fora de 0..=255, entao "tipo errado"
+    /// sai de graca, sem validacao a mais. Nulo vale o padrao (6) na tela.
+    #[serde(default)]
+    pub multiple: Option<u8>,
+    /// Anulavel porque e configuracao: nulo vale "nenhuma categoria essencial", e a tela diz
+    /// isso em vez de ignorar a reserva inteira.
+    #[serde(default)]
+    pub essential_category_ids: Option<Vec<String>>,
+    /// `YYYY-MM`; fora do formato e tipo errado (compara como string com `month_of`).
+    #[serde(default)]
+    pub due_month: Option<String>,
+    #[serde(default)]
+    pub recurring_amount_minor: Option<i64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MovementKind {
+    Deposit,
+    Withdrawal,
+}
+
+/// Linha de `reserveMovements`. Nao lido: `reason` (o motivo da retirada e regra do app).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReserveMovementFields {
+    pub reserve_id: String,
+    pub kind: MovementKind,
+    /// Positivo por convencao (o sinal vem de `kind`), mas nao validado: o hub nao julga.
+    pub amount_minor: i64,
+    pub occurred_on: String,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub recurring: Option<bool>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ContractError {
     /// Traz o motivo do serde ("missing field `kind`", "invalid type: ... amountMinor").
@@ -79,6 +137,8 @@ pub enum ContractError {
     Json(#[from] serde_json::Error),
     #[error("occurredOn fora do formato YYYY-MM-DD")]
     OccurredOnShape,
+    #[error("dueMonth fora do formato YYYY-MM")]
+    DueMonthShape,
 }
 
 pub fn parse_transaction(data: &str) -> Result<TransactionFields, ContractError> {
@@ -103,6 +163,44 @@ pub fn parse_payment_method(data: &str) -> Result<PaymentMethodFields, ContractE
 
 pub fn parse_recurrence(data: &str) -> Result<RecurrenceFields, ContractError> {
     Ok(serde_json::from_str(data)?)
+}
+
+pub fn parse_reserve(data: &str) -> Result<ReserveFields, ContractError> {
+    let fields: ReserveFields = serde_json::from_str(data)?;
+    if fields
+        .due_month
+        .as_deref()
+        .is_some_and(|m| !is_iso_month(m))
+    {
+        return Err(ContractError::DueMonthShape);
+    }
+    Ok(fields)
+}
+
+pub fn parse_reserve_movement(data: &str) -> Result<ReserveMovementFields, ContractError> {
+    let fields: ReserveMovementFields = serde_json::from_str(data)?;
+    if !is_iso_date(&fields.occurred_on) {
+        return Err(ContractError::OccurredOnShape);
+    }
+    Ok(fields)
+}
+
+/// 7 bytes, `-` em 4, digitos no resto, mes 01..=12: a mesma forma do comeco de `is_iso_date`,
+/// para `dueMonth` comparar como string com `month_of(occurredOn)` sem parsear.
+pub fn is_iso_month(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 7 || b[4] != b'-' {
+        return false;
+    }
+    if !b
+        .iter()
+        .enumerate()
+        .all(|(i, c)| i == 4 || c.is_ascii_digit())
+    {
+        return false;
+    }
+    let month = (b[5] - b'0') * 10 + (b[6] - b'0');
+    (1..=12).contains(&month)
 }
 
 /// 10 bytes, `-` em 4 e 7, digitos no resto, mes 01..=12. Dia nao e validado: o hub nao julga
@@ -283,5 +381,200 @@ mod tests {
         assert!(!is_iso_date("2026-09-2a"));
         assert!(!is_iso_date("2026-13-01"));
         assert!(!is_iso_date(""));
+    }
+
+    fn reserve() -> Value {
+        json!({
+            "kind": "pot",
+            "name": "Viagem",
+            "icon": "plane",
+            "color": "sky",
+            "goalMinor": 500000,
+            "multiple": null,
+            "essentialCategoryIds": null,
+            "dueMonth": "2027-07",
+            "recurringAmountMinor": 30000,
+            "recurringDay": 10,
+            "createdAt": "2026-09-01T00:00:00Z",
+            "foo": 1
+        })
+    }
+
+    fn movement() -> Value {
+        json!({
+            "reserveId": "RE1",
+            "kind": "deposit",
+            "amountMinor": 50000,
+            "occurredOn": "2026-09-06",
+            "userId": "U2",
+            "description": "Guardado todo mês",
+            "recurring": true,
+            "reason": null
+        })
+    }
+
+    #[test]
+    fn reserva_valida_com_campos_extras() {
+        let r = parse_reserve(&reserve().to_string()).unwrap();
+        assert_eq!(r.kind, ReserveKind::Pot);
+        assert_eq!(r.goal_minor, Some(500_000));
+        assert_eq!(r.due_month.as_deref(), Some("2027-07"));
+        assert_eq!(r.recurring_amount_minor, Some(30_000));
+        assert_eq!(r.multiple, None);
+        assert_eq!(r.essential_category_ids, None);
+    }
+
+    #[test]
+    fn reserva_kind_desconhecido_ou_ausente() {
+        let e = err_text(parse_reserve(&with(reserve(), "kind", json!("box"))));
+        assert!(e.contains("box") || e.contains("variant"), "{e}");
+        let e = err_text(parse_reserve(&without(reserve(), "kind")));
+        assert!(e.contains("kind"), "{e}");
+    }
+
+    #[test]
+    fn reserva_multiple_e_u8() {
+        let r = parse_reserve(&with(reserve(), "multiple", json!(6))).unwrap();
+        assert_eq!(r.multiple, Some(6));
+        for bad in [json!(6.5), json!("6"), json!(300), json!(-1)] {
+            assert!(
+                parse_reserve(&with(reserve(), "multiple", bad.clone())).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn reserva_categorias_essenciais() {
+        let r = parse_reserve(&with(
+            reserve(),
+            "essentialCategoryIds",
+            json!(["C1", "C2"]),
+        ))
+        .unwrap();
+        assert_eq!(
+            r.essential_category_ids,
+            Some(vec!["C1".to_string(), "C2".to_string()])
+        );
+        for bad in [json!("C1"), json!([1])] {
+            assert!(
+                parse_reserve(&with(reserve(), "essentialCategoryIds", bad.clone())).is_err(),
+                "{bad}"
+            );
+        }
+        let r = parse_reserve(&without(reserve(), "essentialCategoryIds")).unwrap();
+        assert_eq!(r.essential_category_ids, None);
+    }
+
+    #[test]
+    fn reserva_due_month_fora_do_formato() {
+        for bad in [json!("2027-7"), json!("2027-13"), json!("2027-07-01")] {
+            let e = err_text(parse_reserve(&with(reserve(), "dueMonth", bad)));
+            assert!(e.contains("dueMonth"), "{e}");
+        }
+        // Numero e tipo errado do serde, que tambem cita o campo.
+        let e = err_text(parse_reserve(&with(reserve(), "dueMonth", json!(202707))));
+        assert!(e.contains("invalid type"), "{e}");
+        let r = parse_reserve(&with(reserve(), "dueMonth", Value::Null)).unwrap();
+        assert_eq!(r.due_month, None);
+        let r = parse_reserve(&without(reserve(), "dueMonth")).unwrap();
+        assert_eq!(r.due_month, None);
+    }
+
+    #[test]
+    fn reserva_goal_fracionado_e_anulaveis_ausentes() {
+        assert!(parse_reserve(&with(reserve(), "goalMinor", json!(12.5))).is_err());
+        let r = parse_reserve(
+            &json!({ "kind": "pot", "name": "X", "icon": "tag", "color": "slate" }).to_string(),
+        )
+        .unwrap();
+        assert_eq!(r.goal_minor, None);
+        assert_eq!(r.multiple, None);
+        assert_eq!(r.essential_category_ids, None);
+        assert_eq!(r.due_month, None);
+        assert_eq!(r.recurring_amount_minor, None);
+    }
+
+    #[test]
+    fn reserva_de_emergencia() {
+        let ok = json!({
+            "kind": "emergency",
+            "name": "Reserva",
+            "icon": "x",
+            "color": "slate",
+            "multiple": 6,
+            "essentialCategoryIds": ["C1"]
+        });
+        let r = parse_reserve(&ok.to_string()).unwrap();
+        assert_eq!(r.kind, ReserveKind::Emergency);
+        assert_eq!(r.multiple, Some(6));
+    }
+
+    #[test]
+    fn movimentacao_valida() {
+        let m = parse_reserve_movement(&movement().to_string()).unwrap();
+        assert_eq!(m.reserve_id, "RE1");
+        assert_eq!(m.kind, MovementKind::Deposit);
+        assert_eq!(m.amount_minor, 50_000);
+        assert_eq!(m.recurring, Some(true));
+    }
+
+    #[test]
+    fn movimentacao_kind_e_valor() {
+        let e = err_text(parse_reserve_movement(&with(
+            movement(),
+            "kind",
+            json!("transfer"),
+        )));
+        assert!(e.contains("transfer") || e.contains("variant"), "{e}");
+        assert!(parse_reserve_movement(&without(movement(), "kind")).is_err());
+        for bad in [json!(12.5), json!("12")] {
+            assert!(parse_reserve_movement(&with(movement(), "amountMinor", bad)).is_err());
+        }
+        assert!(parse_reserve_movement(&without(movement(), "amountMinor")).is_err());
+        // Negativo passa: o hub nao julga.
+        assert!(parse_reserve_movement(&with(movement(), "amountMinor", json!(-5))).is_ok());
+    }
+
+    #[test]
+    fn movimentacao_data_e_campos() {
+        for bad in [
+            json!("2026-9-6"),
+            json!("2026-13-01"),
+            json!("2026-09-06T00:00"),
+        ] {
+            let e = err_text(parse_reserve_movement(&with(movement(), "occurredOn", bad)));
+            assert!(e.contains("occurredOn"), "{e}");
+        }
+        assert!(
+            parse_reserve_movement(&with(movement(), "occurredOn", json!("2026-02-31"))).is_ok()
+        );
+        assert!(parse_reserve_movement(&without(movement(), "reserveId")).is_err());
+        assert!(parse_reserve_movement(&with(movement(), "recurring", json!("sim"))).is_err());
+        let mut v = movement();
+        for key in ["userId", "description", "recurring"] {
+            v.as_object_mut().unwrap().remove(key);
+        }
+        let m = parse_reserve_movement(&v.to_string()).unwrap();
+        assert_eq!(m.user_id, None);
+        assert_eq!(m.description, None);
+        assert_eq!(m.recurring, None);
+    }
+
+    #[test]
+    fn mes_iso() {
+        assert!(is_iso_month("2027-07"));
+        assert!(is_iso_month("2027-12"));
+        for bad in ["2027-7", "2027-13", "2027-00", "2027/07", "2027-07-01", ""] {
+            assert!(!is_iso_month(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn reservas_json_que_nao_e_objeto() {
+        for bad in ["[]", "null", "{"] {
+            assert!(parse_reserve(bad).is_err(), "{bad}");
+            assert!(parse_reserve_movement(bad).is_err(), "{bad}");
+        }
     }
 }

@@ -1,5 +1,9 @@
 //! Interpretacao financeira das linhas: puro, sem rusqlite, iced, axum ou tokio.
 
+// Temporario: as funcoes puras das reservas nascem antes da tela que as usa (plano
+// 2026-10-02-hub-reservas, removido na Tarefa 12).
+#![allow(dead_code)]
+
 pub mod aggregate;
 pub mod colors;
 pub mod contract;

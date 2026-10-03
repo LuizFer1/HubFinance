@@ -6,6 +6,23 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+### Adicionado
+
+- Página **Reservas** na janela: total separado, emergência coberta (meses de custo essencial),
+  guardado e retirado nos últimos 12 meses, card da reserva de emergência com meta derivada
+  (múltiplo × custo essencial médio das categorias que o app indicar), caixinhas com ritmo,
+  evolução de 12 meses por reserva e as últimas movimentações. Só leitura, a partir das
+  tabelas `reserves` e `reserveMovements`; movimentação de reserva não é receita nem despesa
+  e não altera Dashboard nem Lançamentos. O app ainda não sincroniza essas tabelas: até lá a
+  página mostra o estado vazio.
+
+### Corrigido
+
+- O conteúdo das páginas ocupa a largura toda da janela: o teto de 1180 px deixava uma faixa
+  vazia à direita com a janela maximizada.
+- O rótulo de cima do eixo dos gráficos ("R$ 12 mil") não perde mais o "R": a coluna do eixo
+  passou de 52 para 68 px, o que cabe até "R$ 120 mil".
+
 ## [0.0.2] - 2026-10-02
 
 Versão para o primeiro teste de campo. Nenhuma mudança no protocolo `/v1` nem no banco:

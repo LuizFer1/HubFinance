@@ -10,13 +10,17 @@ use crate::store::Store;
 /// segura o `Arc` anterior). Meio segundo junta a rajada e ainda parece imediato.
 pub const REFRESH_DEBOUNCE: Duration = Duration::from_millis(500);
 
-/// As tabelas que o contrato de campos le; o resto nem sai do banco.
-pub const TABLES: [&str; 5] = [
+/// As tabelas que o contrato de campos le; o resto nem sai do banco. `reserves` e
+/// `reserveMovements` entram antes do app sincroniza-las: quando ele passar a enviar, a tela
+/// preenche sem versao nova do hub.
+pub const TABLES: [&str; 7] = [
     "transactions",
     "categories",
     "users",
     "paymentMethods",
     "recurrences",
+    "reserves",
+    "reserveMovements",
 ];
 
 #[derive(Default)]
@@ -235,5 +239,51 @@ pub(crate) mod tests {
         assert_eq!(state.dataset.alive_transactions().count(), 2);
         // O Arc antigo (o que a UI segurava) ficou como estava.
         assert_eq!(before.alive_transactions().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn refresh_le_reservas_e_movimentacoes() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let reserve =
+            |kind: &str| json!({ "kind": kind, "name": "Viagem", "icon": "plane", "color": "sky" });
+        store
+            .apply_batch(
+                ORIGIN,
+                &[
+                    push_entry(
+                        "reserves",
+                        "01HZZZZZZZZZZZZZZZZZZZZZB1",
+                        1000,
+                        false,
+                        reserve("pot"),
+                    ),
+                    push_entry(
+                        "reserveMovements",
+                        "01HZZZZZZZZZZZZZZZZZZZZZV1",
+                        1000,
+                        false,
+                        json!({
+                            "reserveId": "01HZZZZZZZZZZZZZZZZZZZZZB1",
+                            "kind": "deposit",
+                            "amountMinor": 5000,
+                            "occurredOn": "2026-09-06"
+                        }),
+                    ),
+                    push_entry(
+                        "reserves",
+                        "01HZZZZZZZZZZZZZZZZZZZZZB9",
+                        1000,
+                        false,
+                        reserve("box"),
+                    ),
+                ],
+            )
+            .unwrap();
+        let mut state = DashboardState::default();
+        state.refresh(&store, SystemTime::UNIX_EPOCH).await.unwrap();
+        assert_eq!(state.dataset.reserve_count(), 1);
+        assert_eq!(state.dataset.alive_reserve_movements().count(), 1);
+        assert_eq!(state.dataset.ignored_total(), 1);
+        assert!(state.dataset.ignored["reserves"].contains("01HZZZZZZZZZZZZZZZZZZZZZB9"));
     }
 }

@@ -494,7 +494,7 @@ fn table_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
         payment.into(),
         value_cell(t, r),
     ]);
-    hover_row(app, &r.id, content, [0, 20], 0.0)
+    hover_row(app, &r.id, content, [0, 20], 0.0, 52.0)
 }
 
 // ---- vazio ----

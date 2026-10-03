@@ -8,8 +8,9 @@
 use super::aggregate::js_round;
 use super::contract::{Kind, MovementKind, ReserveKind};
 use super::dataset::{Dataset, Reserve, ReserveMovement};
+use super::list::RowAuthor;
 use super::money::{format_brl, one_decimal, whole_brl};
-use super::periods::{last_months, month_of, month_short_year, shift_month};
+use super::periods::{last_months, month_of, month_short_year, months_between, shift_month};
 
 /// Passo do teto do eixo do grafico: R$ 6.000 (`Math.ceil(max / 6000) * 6000` do prototipo).
 pub const RESERVE_AXIS_STEP: i64 = 600_000;
@@ -413,6 +414,221 @@ pub fn emergency_view(dataset: &Dataset, r: &Reserve, current: &str) -> Emergenc
         eta,
         cost,
     }
+}
+
+/// Ritmo de uma caixinha.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pace {
+    NoGoal,
+    Reached,
+    Overdue { remaining: i64 },
+    NoDeadline { recurring: Option<i64> },
+    NoRecurring { needed: i64 },
+    OnTrack { recurring: i64, needed: i64 },
+    Behind { recurring: i64, needed: i64 },
+}
+
+/// A ordem das condicoes e a da tabela da spec e importa: meta alcancada vence prazo vencido
+/// (quem fechou a meta tarde fechou), e prazo vencido vence ritmo (nao ha "por mes" sem mes
+/// pela frente). Recorrencia `<= 0` vale como ausente.
+pub fn pace(
+    balance: i64,
+    goal: Option<i64>,
+    due: Option<&str>,
+    recurring: Option<i64>,
+    current: &str,
+) -> Pace {
+    let Some(goal) = goal else {
+        return Pace::NoGoal;
+    };
+    if balance >= goal {
+        return Pace::Reached;
+    }
+    let remaining = goal.saturating_sub(balance);
+    let recurring = recurring.filter(|r| *r > 0);
+    let Some(due) = due else {
+        return Pace::NoDeadline { recurring };
+    };
+    let months_left = months_between(current, due);
+    if months_left <= 0 {
+        return Pace::Overdue { remaining };
+    }
+    let needed = div_ceil(remaining, i64::from(months_left));
+    match recurring {
+        None => Pace::NoRecurring { needed },
+        Some(r) if r >= needed => Pace::OnTrack {
+            recurring: r,
+            needed,
+        },
+        Some(r) => Pace::Behind {
+            recurring: r,
+            needed,
+        },
+    }
+}
+
+/// Texto da linha de ritmo; `None` = sem linha.
+pub fn pace_label(p: &Pace) -> Option<String> {
+    Some(match p {
+        Pace::NoGoal | Pace::NoDeadline { recurring: None } => return None,
+        Pace::Reached => "Meta alcançada".to_string(),
+        Pace::Overdue { remaining } => {
+            format!("Prazo encerrado · faltam {}", whole_brl(*remaining))
+        }
+        Pace::NoDeadline { recurring: Some(r) } => format!("Guarda {}/mês", whole_brl(*r)),
+        Pace::NoRecurring { needed } => format!(
+            "Sem depósito mensal · precisa de {}/mês",
+            whole_brl(*needed)
+        ),
+        Pace::OnTrack { recurring, needed } => format!(
+            "No ritmo · guarda {}/mês, precisa de {}",
+            whole_brl(*recurring),
+            whole_brl(*needed)
+        ),
+        Pace::Behind { recurring, needed } => format!(
+            "Abaixo do ritmo · precisa de {}/mês, guarda {}",
+            whole_brl(*needed),
+            whole_brl(*recurring)
+        ),
+    })
+}
+
+/// Uma linha do card Caixinhas.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PotRow {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+    pub color: ReserveColor,
+    pub balance_minor: i64,
+    pub goal_minor: Option<i64>,
+    pub due_month: Option<String>,
+    /// Preenchimento da barra (0..=1); `None` sem meta (sem barra).
+    pub progress: Option<f32>,
+    /// "até jul 2027 · faltam R$ 2.650", "faltam R$ 300", "até nov 2026" ou "sem meta".
+    pub meta_left: String,
+    /// "de R$ 5.000,00 · 47%"; so com meta.
+    pub meta_right: Option<String>,
+    pub pace: Pace,
+}
+
+/// `derived_goal` e a meta de uma emergencia extra (as que nao viraram o card): ela entra aqui
+/// com a meta derivada, sem prazo, `lifebuoy` e a cor do acento. Para caixinha, `None`. Meta
+/// `<= 0` vale como sem meta: uma barra sobre zero nao diz nada e dividiria por zero.
+pub fn pot_row(dataset: &Dataset, r: &Reserve, current: &str, derived_goal: Option<i64>) -> PotRow {
+    let balance = balance_until(dataset, &r.id, current);
+    let (goal, due) = match r.kind {
+        ReserveKind::Emergency => (derived_goal, None),
+        ReserveKind::Pot => (r.goal_minor, r.due_month.clone()),
+    };
+    let goal = goal.filter(|g| *g > 0);
+    let remaining = goal.map(|g| g.saturating_sub(balance)).filter(|v| *v > 0);
+    let faltam = remaining.map(|v| format!("faltam {}", whole_brl(v)));
+    let meta_left = match (due.as_deref(), faltam) {
+        (Some(d), Some(f)) => format!("até {} · {f}", month_short_year(d)),
+        (Some(d), None) => format!("até {}", month_short_year(d)),
+        (None, Some(f)) => f,
+        (None, None) if goal.is_some() => "sem prazo".to_string(),
+        (None, None) => "sem meta".to_string(),
+    };
+    PotRow {
+        id: r.id.clone(),
+        name: r.name.clone(),
+        icon: reserve_icon(r).to_string(),
+        color: reserve_color(r),
+        balance_minor: balance,
+        goal_minor: goal,
+        progress: goal.map(|g| (balance as f64 / g as f64).clamp(0.0, 1.0) as f32),
+        meta_right: goal.map(|g| {
+            format!(
+                "de {} · {}%",
+                format_brl(g),
+                js_round(balance as f64 / g as f64 * 100.0) as i64
+            )
+        }),
+        meta_left,
+        pace: pace(
+            balance,
+            goal,
+            due.as_deref(),
+            r.recurring_amount_minor,
+            current,
+        ),
+        due_month: due,
+    }
+}
+
+/// "3 com objetivo" ou "3 com objetivo · 1 sem meta".
+pub fn pots_note(pots: &[PotRow]) -> String {
+    let with = pots.iter().filter(|p| p.goal_minor.is_some()).count();
+    let without = pots.len() - with;
+    if without == 0 {
+        format!("{with} com objetivo")
+    } else {
+        format!("{with} com objetivo · {without} sem meta")
+    }
+}
+
+/// Linhas mostradas em "Movimentações".
+pub const MOVEMENT_ROWS: usize = 8;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MovementRow {
+    pub id: String,
+    pub occurred_on: String,
+    /// A da linha, ou "Guardado" / "Retirado".
+    pub description: String,
+    pub kind: MovementKind,
+    pub amount_minor: i64,
+    pub reserve_name: String,
+    pub reserve_color: ReserveColor,
+    pub author: Option<RowAuthor>,
+    pub recurring: bool,
+}
+
+/// As `MOVEMENT_ROWS` mais recentes da janela (data desc, id desc, a ordem de `sort_desc`) e o
+/// total da janela.
+pub fn movements(dataset: &Dataset, months: &[String]) -> (Vec<MovementRow>, usize) {
+    let mut items: Vec<&ReserveMovement> = dataset
+        .alive_reserve_movements()
+        .filter(|m| months.contains(&month_of(&m.occurred_on)))
+        .collect();
+    let total = items.len();
+    items.sort_by(|a, b| {
+        b.occurred_on
+            .cmp(&a.occurred_on)
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    let rows = items
+        .into_iter()
+        .take(MOVEMENT_ROWS)
+        .filter_map(|m| {
+            // `alive_reserve_movements` ja garante a reserva viva.
+            let r = dataset.reserves.get(&m.reserve_id)?;
+            Some(MovementRow {
+                id: m.id.clone(),
+                occurred_on: m.occurred_on.clone(),
+                description: m.description.clone().unwrap_or_else(|| {
+                    match m.kind {
+                        MovementKind::Deposit => "Guardado",
+                        MovementKind::Withdrawal => "Retirado",
+                    }
+                    .to_string()
+                }),
+                kind: m.kind,
+                amount_minor: m.amount_minor,
+                reserve_name: r.name.clone(),
+                reserve_color: reserve_color(r),
+                author: dataset.find_user(m.user_id.as_deref()).map(|u| RowAuthor {
+                    id: u.id.clone(),
+                    name: u.name.clone(),
+                    color: u.color.clone(),
+                }),
+                recurring: m.recurring,
+            })
+        })
+        .collect();
+    (rows, total)
 }
 
 #[cfg(test)]
@@ -819,5 +1035,225 @@ mod tests {
         assert_eq!(e.segments, vec![0.0; 6]);
         assert_eq!(e.eta, EmergencyEta::NoGoal);
         assert_eq!(e.eta_label, "Sem custo essencial para projetar a meta.");
+    }
+
+    const NOW: &str = "2026-09";
+
+    #[test]
+    fn ritmo_nas_sete_variantes() {
+        assert_eq!(
+            pace(235_000, Some(500_000), Some("2027-07"), Some(30_000), NOW),
+            Pace::OnTrack {
+                recurring: 30_000,
+                needed: 26_500
+            }
+        );
+        assert_eq!(
+            pace(40_000, Some(240_000), Some("2027-01"), Some(20_000), NOW),
+            Pace::Behind {
+                recurring: 20_000,
+                needed: 50_000
+            }
+        );
+        assert_eq!(
+            pace(38_000, Some(80_000), Some("2026-12"), None, NOW),
+            Pace::NoRecurring { needed: 14_000 }
+        );
+        assert_eq!(pace(10_000, None, None, None, NOW), Pace::NoGoal);
+        assert_eq!(
+            pace(50_000, Some(50_000), Some("2026-11"), Some(10_000), NOW),
+            Pace::Reached
+        );
+        for due in ["2026-09", "2026-08"] {
+            assert_eq!(
+                pace(10_000, Some(50_000), Some(due), Some(10_000), NOW),
+                Pace::Overdue { remaining: 40_000 }
+            );
+        }
+        assert_eq!(
+            pace(10_000, Some(50_000), None, Some(30_000), NOW),
+            Pace::NoDeadline {
+                recurring: Some(30_000)
+            }
+        );
+        assert_eq!(
+            pace(10_000, Some(50_000), None, None, NOW),
+            Pace::NoDeadline { recurring: None }
+        );
+        // Igual ao necessario esta no ritmo; zero vale como ausente.
+        assert_eq!(
+            pace(0, Some(30_000), Some("2026-12"), Some(10_000), NOW),
+            Pace::OnTrack {
+                recurring: 10_000,
+                needed: 10_000
+            }
+        );
+        assert_eq!(
+            pace(0, Some(30_000), Some("2026-12"), Some(0), NOW),
+            Pace::NoRecurring { needed: 10_000 }
+        );
+    }
+
+    #[test]
+    fn textos_do_ritmo() {
+        let label = |p: Pace| pace_label(&p);
+        assert_eq!(
+            label(Pace::OnTrack {
+                recurring: 30_000,
+                needed: 26_500
+            })
+            .as_deref(),
+            Some("No ritmo · guarda R$ 300/mês, precisa de R$ 265")
+        );
+        assert_eq!(
+            label(Pace::Behind {
+                recurring: 20_000,
+                needed: 50_000
+            })
+            .as_deref(),
+            Some("Abaixo do ritmo · precisa de R$ 500/mês, guarda R$ 200")
+        );
+        assert_eq!(
+            label(Pace::NoRecurring { needed: 14_000 }).as_deref(),
+            Some("Sem depósito mensal · precisa de R$ 140/mês")
+        );
+        assert_eq!(label(Pace::Reached).as_deref(), Some("Meta alcançada"));
+        assert_eq!(
+            label(Pace::Overdue { remaining: 40_000 }).as_deref(),
+            Some("Prazo encerrado · faltam R$ 400")
+        );
+        assert_eq!(
+            label(Pace::NoDeadline {
+                recurring: Some(30_000)
+            })
+            .as_deref(),
+            Some("Guarda R$ 300/mês")
+        );
+        assert_eq!(label(Pace::NoDeadline { recurring: None }), None);
+        assert_eq!(label(Pace::NoGoal), None);
+    }
+
+    #[test]
+    fn linhas_das_caixinhas() {
+        let ds = fixtures_with_reserves();
+        let row = |id: &str| pot_row(&ds, &ds.reserves[id], NOW, None);
+        let p1 = row("RP1");
+        assert_eq!(p1.balance_minor, 235_000);
+        assert!((p1.progress.unwrap() - 0.47).abs() < 1e-6);
+        assert_eq!(p1.meta_left, "até jul 2027 · faltam R$ 2.650");
+        assert_eq!(p1.meta_right.as_deref(), Some("de R$ 5.000,00 · 47%"));
+        assert_eq!(p1.icon, "plane");
+        assert_eq!(p1.color, ReserveColor::Token("sky".into()));
+        assert_eq!(
+            row("RP2").meta_right.as_deref(),
+            Some("de R$ 2.400,00 · 17%")
+        );
+        assert_eq!(row("RP3").meta_right.as_deref(), Some("de R$ 800,00 · 48%"));
+        let p4 = row("RP4");
+        assert_eq!(p4.meta_left, "sem meta");
+        assert_eq!(p4.meta_right, None);
+        assert_eq!(p4.progress, None);
+        assert_eq!(pace_label(&p4.pace), None);
+        let p6 = row("RP6");
+        assert_eq!(p6.meta_left, "até nov 2026");
+        assert_eq!(p6.progress, Some(1.0));
+        assert_eq!(p6.meta_right.as_deref(), Some("de R$ 500,00 · 100%"));
+        assert_eq!(pace_label(&p6.pace).as_deref(), Some("Meta alcançada"));
+    }
+
+    #[test]
+    fn caixinha_so_com_meta_ou_so_com_prazo() {
+        let mut ds = fixtures_with_reserves();
+        let pot = |goal: serde_json::Value, due: serde_json::Value| {
+            json!({ "kind": "pot", "name": "X", "icon": "tag", "color": "teal",
+                "goalMinor": goal, "dueMonth": due })
+        };
+        add_reserve(&mut ds, "RP7", pot(json!(30_000), json!(null)));
+        add_reserve(&mut ds, "RP8", pot(json!(null), json!("2027-03")));
+        let only_goal = pot_row(&ds, &ds.reserves["RP7"], NOW, None);
+        assert_eq!(only_goal.meta_left, "faltam R$ 300");
+        assert_eq!(only_goal.meta_right.as_deref(), Some("de R$ 300,00 · 0%"));
+        let only_due = pot_row(&ds, &ds.reserves["RP8"], NOW, None);
+        assert_eq!(only_due.meta_left, "até mar 2027");
+        assert_eq!(only_due.meta_right, None);
+        assert_eq!(only_due.progress, None);
+    }
+
+    #[test]
+    fn emergencia_extra_como_caixinha() {
+        let mut ds = fixtures_with_reserves();
+        add_reserve(
+            &mut ds,
+            "RE9",
+            json!({ "kind": "emergency", "name": "Outra", "icon": "x", "color": "slate",
+                "essentialCategoryIds": ["C1", "C2"], "dueMonth": "2027-01", "goalMinor": 1 }),
+        );
+        let r = &ds.reserves["RE9"];
+        let goal = emergency_goal(&ds, r, NOW);
+        assert_eq!(goal, 390_000);
+        let p = pot_row(&ds, r, NOW, Some(goal));
+        assert_eq!(p.goal_minor, Some(390_000));
+        assert_eq!(p.icon, "lifebuoy");
+        assert_eq!(p.color, ReserveColor::Accent);
+        assert_eq!(p.due_month, None);
+        assert_eq!(p.meta_left, "faltam R$ 3.900");
+    }
+
+    #[test]
+    fn nota_das_caixinhas() {
+        let ds = fixtures_with_reserves();
+        let (_, rest) = ordered(&ds);
+        let rows: Vec<PotRow> = rest.iter().map(|r| pot_row(&ds, r, NOW, None)).collect();
+        assert_eq!(pots_note(&rows), "4 com objetivo · 1 sem meta");
+        let with_goal: Vec<PotRow> = rows
+            .iter()
+            .filter(|p| p.goal_minor.is_some())
+            .take(3)
+            .cloned()
+            .collect();
+        assert_eq!(pots_note(&with_goal), "3 com objetivo");
+        assert_eq!(pots_note(&[]), "0 com objetivo");
+    }
+
+    #[test]
+    fn lista_de_movimentacoes() {
+        let ds = fixtures_with_reserves();
+        let (rows, total) = movements(&ds, &months());
+        assert_eq!(total, 15);
+        let got: Vec<&str> = rows.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            got,
+            vec!["M12", "M15", "M11", "M04", "M14", "M05", "M03", "M10"]
+        );
+        let m12 = &rows[0];
+        assert_eq!(m12.kind, MovementKind::Withdrawal);
+        assert_eq!(m12.reserve_name, "Viagem de julho");
+        assert_eq!(m12.reserve_color, ReserveColor::Token("sky".into()));
+        assert!(rows[3].recurring);
+        assert!(!rows[5].recurring);
+        assert_eq!(
+            rows[6].author.as_ref().map(|a| a.name.as_str()),
+            Some("Ana")
+        );
+
+        let early = vec!["2026-05".to_string(), "2026-06".to_string()];
+        let (rows, total) = movements(&ds, &early);
+        assert_eq!(total, 2);
+        let m16 = rows.iter().find(|m| m.id == "M16").unwrap();
+        assert_eq!(m16.author, None);
+        assert_eq!(m16.description, "Guardado");
+    }
+
+    #[test]
+    fn retirada_sem_descricao() {
+        let mut ds = fixtures_with_reserves();
+        add_movement(
+            &mut ds,
+            "MZ",
+            json!({ "reserveId": "RP1", "kind": "withdrawal", "amountMinor": 100, "occurredOn": "2026-09-23" }),
+        );
+        let (rows, _) = movements(&ds, &months());
+        assert_eq!(rows[0].id, "MZ");
+        assert_eq!(rows[0].description, "Retirado");
     }
 }

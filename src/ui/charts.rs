@@ -537,6 +537,60 @@ impl canvas::Program<Message> for EmptyChartProgram<'_> {
     }
 }
 
+// ---- esqueleto vazio das reservas ----
+
+/// Seis retangulos de 16 px de altura em 240 de largura, 6 entre eles (o medidor de seis meses
+/// do prototipo, tracejado).
+pub const EMPTY_RESERVES_WIDTH: f32 = 240.0;
+pub const EMPTY_RESERVES_HEIGHT: f32 = 16.0;
+const EMPTY_RESERVES_GAP: f32 = 6.0;
+
+/// O `container` do iced nao tem borda tracejada: o esqueleto e desenhado em canvas.
+pub struct EmptyReservesProgram<'a> {
+    pub tokens: &'static Tokens,
+    pub cache: &'a canvas::Cache,
+}
+
+impl canvas::Program<Message> for EmptyReservesProgram<'_> {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let t = self.tokens;
+        vec![self.cache.draw(renderer, bounds.size(), |frame| {
+            // Tudo a 70 %, como o `opacity: .7` do prototipo.
+            let color = alpha(t.neutral_700, 0.7);
+            let w = (EMPTY_RESERVES_WIDTH - 5.0 * EMPTY_RESERVES_GAP) / 6.0;
+            // Traco de 1,5 centrado na borda: recua meio traco para caber na caixa.
+            let inset = 0.75;
+            for k in 0..6 {
+                let x = k as f32 * (w + EMPTY_RESERVES_GAP) + inset;
+                let rect = Path::rounded_rectangle(
+                    Point::new(x, inset),
+                    Size::new(w - 2.0 * inset, EMPTY_RESERVES_HEIGHT - 2.0 * inset),
+                    3.0.into(),
+                );
+                frame.stroke(
+                    &rect,
+                    Stroke {
+                        line_dash: LineDash {
+                            segments: &[4.0, 3.0],
+                            offset: 0,
+                        },
+                        ..Stroke::default().with_color(color).with_width(1.5)
+                    },
+                );
+            }
+        })]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use iced::widget::canvas::Program;

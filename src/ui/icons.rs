@@ -40,6 +40,8 @@ pub const CHECK_CIRCLE: &str = "\u{E184}";
 pub const WARNING_CIRCLE: &str = "\u{E4E2}";
 pub const CERTIFICATE: &str = "\u{E766}";
 pub const CIRCLE_DASHED: &str = "\u{E602}";
+/// Item "Reservas" da lateral.
+pub const VAULT: &str = "\u{E76E}";
 
 // Alvos das chaves do app (`icon-set.ts`).
 pub const BABY: &str = "\u{E774}";
@@ -81,7 +83,7 @@ pub const ARROW_SQUARE_OUT: &str = "\u{E5DE}";
 
 /// Todas as constantes, para o teste garantir que nenhuma ficou vazia.
 #[cfg(test)]
-pub const ALL: [&str; 66] = [
+pub const ALL: [&str; 67] = [
     HOUSE_LINE,
     CHART_PIE_SLICE,
     LIST_BULLETS,
@@ -112,6 +114,7 @@ pub const ALL: [&str; 66] = [
     WARNING_CIRCLE,
     CERTIFICATE,
     CIRCLE_DASHED,
+    VAULT,
     BABY,
     MONEY,
     BOOK_OPEN,

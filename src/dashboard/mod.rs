@@ -255,3 +255,309 @@ pub(crate) fn fixtures() -> dataset::Dataset {
     ds.apply(rows);
     ds
 }
+
+/// `fixtures()` mais reservas e movimentacoes (plano 2026-10-02-hub-reservas, "Fixture de
+/// referencia"). Com `today = "2026-09-24"`: total separado 603.000; custo essencial da
+/// emergencia 65.000/mes (Moradia 60.000 + Alimentacao 5.000, janela 2026-03..2026-08, 6 meses
+/// de historico); meta 390.000; saldo da emergencia 230.000. Ficam fora de tudo: `M06` (mes
+/// futuro), `M07` (apagada), `M17` (reserva apagada) e `M18` (reserva ausente).
+#[cfg(test)]
+pub(crate) fn fixtures_with_reserves() -> dataset::Dataset {
+    use serde_json::{Value, json};
+
+    use dataset::{RESERVE_MOVEMENTS, RESERVES, RawRow};
+
+    let mut ds = fixtures();
+    let mut seq = 99;
+    let mut rows = Vec::new();
+    let mut push = |table: &str, id: &str, deleted: bool, data: Value| {
+        seq += 1;
+        rows.push(RawRow {
+            table: table.into(),
+            id: id.into(),
+            deleted_at: deleted.then(|| "2026-09-30T00:00:00Z".to_string()),
+            seq,
+            data: data.to_string(),
+        });
+    };
+    push(
+        RESERVES,
+        "RE1",
+        false,
+        json!({
+            "kind": "emergency",
+            "name": "Reserva de emergência",
+            "icon": "piggy-bank",
+            "color": "slate",
+            "goalMinor": null,
+            "multiple": 6,
+            "essentialCategoryIds": ["C1", "C2", "C3", "C9"],
+            "dueMonth": null,
+            "recurringAmountMinor": 50000
+        }),
+    );
+    let pot = |name: &str, icon: &str, color: &str, goal: Value, due: Value, recurring: Value| {
+        json!({
+            "kind": "pot",
+            "name": name,
+            "icon": icon,
+            "color": color,
+            "goalMinor": goal,
+            "multiple": null,
+            "essentialCategoryIds": null,
+            "dueMonth": due,
+            "recurringAmountMinor": recurring
+        })
+    };
+    push(
+        RESERVES,
+        "RP1",
+        false,
+        pot(
+            "Viagem de julho",
+            "plane",
+            "sky",
+            json!(500000),
+            json!("2027-07"),
+            json!(30000),
+        ),
+    );
+    push(
+        RESERVES,
+        "RP2",
+        false,
+        pot(
+            "IPVA 2027",
+            "car",
+            "amber",
+            json!(240000),
+            json!("2027-01"),
+            json!(20000),
+        ),
+    );
+    push(
+        RESERVES,
+        "RP3",
+        false,
+        pot(
+            "Presentes de Natal",
+            "gift",
+            "rose",
+            json!(80000),
+            json!("2026-12"),
+            Value::Null,
+        ),
+    );
+    push(
+        RESERVES,
+        "RP4",
+        false,
+        pot(
+            "Sem meta",
+            "wallet",
+            "teal",
+            Value::Null,
+            Value::Null,
+            Value::Null,
+        ),
+    );
+    push(
+        RESERVES,
+        "RP5",
+        true,
+        pot(
+            "Apagada",
+            "tag",
+            "lime",
+            json!(100000),
+            Value::Null,
+            Value::Null,
+        ),
+    );
+    push(
+        RESERVES,
+        "RP6",
+        false,
+        pot(
+            "Notebook",
+            "tag",
+            "violet",
+            json!(50000),
+            json!("2026-11"),
+            json!(10000),
+        ),
+    );
+
+    let mv = |reserve: &str,
+              kind: &str,
+              amount: i64,
+              on: &str,
+              user: &str,
+              description: Value,
+              recurring: Value| {
+        json!({
+            "reserveId": reserve,
+            "kind": kind,
+            "amountMinor": amount,
+            "occurredOn": on,
+            "userId": user,
+            "description": description,
+            "recurring": recurring
+        })
+    };
+    let monthly = || json!("Guardado todo mês");
+    let t = || json!(true);
+    let f = || json!(false);
+    let null = || Value::Null;
+    let movements = [
+        (
+            "M01",
+            false,
+            mv("RE1", "deposit", 50_000, "2026-07-06", "U2", monthly(), t()),
+        ),
+        (
+            "M02",
+            false,
+            mv("RE1", "deposit", 50_000, "2026-08-06", "U2", monthly(), t()),
+        ),
+        (
+            "M03",
+            false,
+            mv(
+                "RE1",
+                "withdrawal",
+                20_000,
+                "2026-08-18",
+                "U1",
+                json!("Conserto da geladeira"),
+                f(),
+            ),
+        ),
+        (
+            "M04",
+            false,
+            mv("RE1", "deposit", 50_000, "2026-09-06", "U2", monthly(), t()),
+        ),
+        (
+            "M05",
+            false,
+            mv(
+                "RE1",
+                "deposit",
+                100_000,
+                "2026-09-01",
+                "U2",
+                json!("Sobra de agosto"),
+                null(),
+            ),
+        ),
+        (
+            "M06",
+            false,
+            mv("RE1", "deposit", 10_000, "2026-10-05", "U2", null(), null()),
+        ),
+        (
+            "M07",
+            true,
+            mv("RE1", "deposit", 999, "2026-09-03", "U2", null(), null()),
+        ),
+        (
+            "M08",
+            false,
+            mv("RP1", "deposit", 30_000, "2026-07-10", "U1", monthly(), t()),
+        ),
+        (
+            "M09",
+            false,
+            mv(
+                "RP1",
+                "deposit",
+                150_000,
+                "2026-07-15",
+                "U1",
+                json!("Parte do freela"),
+                f(),
+            ),
+        ),
+        (
+            "M10",
+            false,
+            mv("RP1", "deposit", 30_000, "2026-08-10", "U1", null(), t()),
+        ),
+        (
+            "M11",
+            false,
+            mv("RP1", "deposit", 30_000, "2026-09-10", "U1", null(), t()),
+        ),
+        (
+            "M12",
+            false,
+            mv(
+                "RP1",
+                "withdrawal",
+                5_000,
+                "2026-09-20",
+                "U1",
+                json!("Passagem"),
+                f(),
+            ),
+        ),
+        (
+            "M13",
+            false,
+            mv("RP2", "deposit", 20_000, "2026-08-05", "U2", null(), t()),
+        ),
+        (
+            "M14",
+            false,
+            mv("RP2", "deposit", 20_000, "2026-09-05", "U2", null(), t()),
+        ),
+        (
+            "M15",
+            false,
+            mv(
+                "RP3",
+                "deposit",
+                38_000,
+                "2026-09-12",
+                "U1",
+                json!("Venda de roupas usadas"),
+                f(),
+            ),
+        ),
+        // Autor com perfil apagado e sem descricao.
+        (
+            "M16",
+            false,
+            mv("RP4", "deposit", 10_000, "2026-06-01", "U3", null(), null()),
+        ),
+        (
+            "M17",
+            false,
+            mv("RP5", "deposit", 70_000, "2026-09-02", "U1", null(), null()),
+        ),
+        (
+            "M18",
+            false,
+            mv("RX", "deposit", 1_000, "2026-09-02", "U1", null(), null()),
+        ),
+        (
+            "M19",
+            false,
+            mv(
+                "RP6",
+                "deposit",
+                50_000,
+                "2026-05-03",
+                "U2",
+                json!("Bônus"),
+                f(),
+            ),
+        ),
+    ];
+    for (id, deleted, data) in movements {
+        push(RESERVE_MOVEMENTS, id, deleted, data);
+    }
+    ds.apply(rows);
+    ds
+}

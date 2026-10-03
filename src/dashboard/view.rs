@@ -313,6 +313,35 @@ mod tests {
         );
     }
 
+    /// Regra n. 1 do handoff ("guardar nao e gastar"): movimentacao de reserva nao e receita
+    /// nem despesa. Se alguem um dia somar `reserve_movements` em `aggregate.rs` ou `list.rs`,
+    /// e este teste que quebra.
+    #[test]
+    fn reservas_nao_entram_no_dashboard_nem_nos_lancamentos() {
+        use crate::dashboard::fixtures_with_reserves;
+        use crate::dashboard::periods::month_window;
+        let plain = fixtures();
+        let with = fixtures_with_reserves();
+        assert_eq!(
+            plain.alive_transactions().count(),
+            with.alive_transactions().count()
+        );
+        assert_eq!(plain.is_empty(), with.is_empty());
+        for month in month_window("2026-09-24") {
+            assert_eq!(
+                build_dashboard(&plain, "2026-09-24", &month),
+                build_dashboard(&with, "2026-09-24", &month),
+                "{month}"
+            );
+            assert_eq!(
+                build_transactions(&plain, "2026-09-24", &month, &Filters::default()),
+                build_transactions(&with, "2026-09-24", &month, &Filters::default()),
+                "{month}"
+            );
+        }
+        assert!(with.has_reserves() && !plain.has_reserves());
+    }
+
     #[test]
     fn lancamentos_com_hub_vazio() {
         let v = build_transactions(

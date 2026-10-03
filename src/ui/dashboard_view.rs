@@ -17,7 +17,7 @@ use super::charts::{
 use super::theme::{self, Tokens, alpha};
 use super::{fonts, icons, shell, time, widgets};
 use crate::dashboard::contract::Kind;
-use crate::dashboard::list::ListRow;
+use crate::dashboard::list::{ListRow, RowAuthor};
 use crate::dashboard::money::{format_brl, group_thousands, money_parts, signed_brl_plus};
 use crate::dashboard::periods::{month_long, month_short, shift_month, short_date};
 use crate::dashboard::view::DashboardView;
@@ -566,10 +566,19 @@ pub(super) fn category_tile<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, 
     }
 }
 
-/// Avatar de 22 + nome; sem autor visivel, `circle-dashed` em `neutral_600` e "—".
+/// Celula de autor de uma linha de lancamento.
 pub(super) fn author_cell<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
+    author_cell_of(app, r.author.as_ref())
+}
+
+/// Avatar de 22 + nome; sem autor visivel, `circle-dashed` em `neutral_600` e "—". Serve as
+/// linhas de lancamento e as de movimentacao de reserva.
+pub(super) fn author_cell_of<'a>(
+    app: &'a App,
+    author: Option<&'a RowAuthor>,
+) -> Element<'a, Message> {
     let t = app.tokens;
-    let (avatar, name): (Element<'a, Message>, String) = match &r.author {
+    let (avatar, name): (Element<'a, Message>, String) = match author {
         Some(author) => (
             widgets::avatar(
                 t,
@@ -617,18 +626,20 @@ pub(super) fn value_cell<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Mes
     .into()
 }
 
-/// Linha com hover de 4 % (o mesmo `hover_row` da tela Conexao: so uma tela por vez).
+/// Linha com hover de 4 % (o mesmo `hover_row` da tela Conexao: so uma tela por vez). Altura
+/// por parametro: 52 nos lancamentos, 56 nas movimentacoes de reserva.
 pub(super) fn hover_row<'a>(
     app: &'a App,
     id: &str,
     content: impl Into<Element<'a, Message>>,
     padding: [u16; 2],
     radius: f32,
+    height: f32,
 ) -> Element<'a, Message> {
     let t = app.tokens;
     let hovered = app.hover_row.as_deref() == Some(id);
     let body = container(content)
-        .height(52)
+        .height(height)
         .padding(padding)
         .width(Length::Fill)
         .align_y(Alignment::Center)
@@ -681,7 +692,7 @@ fn recent_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
     ]
     .spacing(16)
     .align_y(Alignment::Center);
-    hover_row(app, &r.id, content, [0, 8], 8.0)
+    hover_row(app, &r.id, content, [0, 8], 8.0, 52.0)
 }
 
 // ---- sem dados ----

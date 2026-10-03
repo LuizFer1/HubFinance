@@ -12,13 +12,15 @@ use super::app::{App, Message};
 use super::charts::{
     EMPTY_RESERVES_HEIGHT, EMPTY_RESERVES_WIDTH, EmptyReservesProgram, StackedBarsProgram,
 };
-use super::dashboard_view::kicker_with_icon;
+use super::dashboard_view::{author_cell_of, hover_row, kicker_with_icon};
 use super::theme::{self, Tokens, mix};
 use super::{fonts, icons, shell, widgets};
+use crate::dashboard::contract::MovementKind;
 use crate::dashboard::money::{format_brl, money_parts, whole_brl};
-use crate::dashboard::periods::month_long;
+use crate::dashboard::periods::{month_long, short_date};
 use crate::dashboard::reserves::{
-    DEFAULT_MULTIPLE, EmergencyView, EssentialCost, Pace, PotRow, ReserveColor, pace_label,
+    DEFAULT_MULTIPLE, EmergencyView, EssentialCost, EssentialPart, MovementRow, Pace, PotRow,
+    ReserveColor, pace_label,
 };
 
 const GAP: f32 = 14.0;
@@ -41,10 +43,15 @@ pub fn view(app: &App) -> Element<'_, Message> {
     if v.is_empty {
         return empty_card(app);
     }
-    column![kpi_row(app), cards_row(app), evolution_card(app)]
-        .spacing(GAP)
-        .width(Length::Fill)
-        .into()
+    column![
+        kpi_row(app),
+        cards_row(app),
+        evolution_card(app),
+        movements_card(app)
+    ]
+    .spacing(GAP)
+    .width(Length::Fill)
+    .into()
 }
 
 /// Card de superficie, raio 8, sem borda.
@@ -580,7 +587,7 @@ fn essential_section<'a>(
     } else {
         1
     };
-    let cell = |p: &'a crate::dashboard::reserves::EssentialPart| -> Element<'a, Message> {
+    let cell = |p: &'a EssentialPart| -> Element<'a, Message> {
         row![
             widgets::dot(t.token(&p.color), 8.0),
             container(
@@ -795,6 +802,153 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
     )
 }
 
+// ---- linha 4: movimentacoes ----
+
+/// Colunas `2.4fr 1.6fr 0.9fr 116px` do prototipo.
+const MOVEMENT_COLUMNS: [u16; 3] = [24, 16, 9];
+const MOVEMENT_VALUE_WIDTH: f32 = 116.0;
+const MOVEMENT_ROW_HEIGHT: f32 = 56.0;
+
+fn movements_card(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let v = &app.reserves;
+    // Padding lateral 12 (e nao 20): o hover da linha passa 8 px do conteudo, como o
+    // `margin: 0 -8px` do prototipo.
+    let title = container(widgets::card_title(
+        t,
+        "Movimentações",
+        Some(format!("{} nos últimos 12 meses", v.movement_count)),
+    ))
+    .padding([0, 8]);
+    let mut col = column![title, Space::new().height(8)];
+    if v.movements.is_empty() {
+        col = col.push(widgets::hdivider(t)).push(
+            container(
+                text("Nenhuma movimentação nos últimos 12 meses.")
+                    .size(13)
+                    .color(t.text_alpha(0.55)),
+            )
+            .height(MOVEMENT_ROW_HEIGHT)
+            .padding([0, 8])
+            .align_y(Alignment::Center),
+        );
+    }
+    for m in &v.movements {
+        col = col.push(widgets::hdivider(t)).push(movement_row(app, m));
+    }
+    card(t, pad(18.0, 12.0, 8.0), col)
+}
+
+/// Tile de 32: guardar e seta para baixo no acento; retirar e seta para cima na cor de despesa.
+fn movement_tile<'a>(t: &'static Tokens, kind: MovementKind) -> Element<'a, Message> {
+    let (glyph, color, tint) = match kind {
+        MovementKind::Deposit => (
+            icons::ARROW_DOWN,
+            t.accent_300,
+            mix(t.surface, t.accent, 0.16),
+        ),
+        MovementKind::Withdrawal => (
+            icons::ARROW_UP,
+            t.expense_fg,
+            mix(t.surface, t.expense, 0.16),
+        ),
+    };
+    container(icons::icon(glyph, 16.0, color))
+        .center(32)
+        .style(theme::fill(tint, 8.0))
+        .into()
+}
+
+/// Tag "Mensal" de 18 px do deposito recorrente.
+fn recurring_tag<'a>(t: &'static Tokens) -> Element<'a, Message> {
+    container(
+        row![
+            icons::icon(icons::REPEAT, 10.0, t.accent_300),
+            text("Mensal")
+                .size(10)
+                .font(fonts::INTER_MEDIUM)
+                .line_height(1.0)
+                .color(t.accent_300),
+        ]
+        .spacing(3)
+        .align_y(Alignment::Center),
+    )
+    .height(18)
+    .padding([0, 6])
+    .align_y(Alignment::Center)
+    .style(theme::fill(t.accent_900, 999.0))
+    .into()
+}
+
+fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
+    let t = app.tokens;
+    let [desc_w, reserve_w, author_w] = MOVEMENT_COLUMNS;
+    let mut meta = row![
+        text(short_date(&m.occurred_on))
+            .size(12)
+            .wrapping(Wrapping::None)
+            .color(t.text_alpha(0.55))
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+    if m.recurring {
+        meta = meta.push(recurring_tag(t));
+    }
+    let description = row![
+        movement_tile(t, m.kind),
+        column![
+            text(m.description.clone())
+                .size(14)
+                .font(fonts::INTER_MEDIUM)
+                .wrapping(Wrapping::None)
+                .color(t.text),
+            meta,
+        ]
+        .spacing(2),
+    ]
+    .spacing(12)
+    .align_y(Alignment::Center);
+    let reserve = row![
+        widgets::dot(reserve_color(t, &m.reserve_color), 8.0),
+        text(m.reserve_name.clone())
+            .size(13)
+            .wrapping(Wrapping::None)
+            .color(t.text_alpha(0.80)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    let (value, value_color) = match m.kind {
+        MovementKind::Deposit => (format!("+{}", format_brl(m.amount_minor)), t.text),
+        MovementKind::Withdrawal => (
+            format!("\u{2212}{}", format_brl(m.amount_minor)),
+            t.expense_fg,
+        ),
+    };
+    let content = row![
+        container(description)
+            .width(Length::FillPortion(desc_w))
+            .clip(true),
+        container(reserve)
+            .width(Length::FillPortion(reserve_w))
+            .clip(true),
+        container(author_cell_of(app, m.author.as_ref()))
+            .width(Length::FillPortion(author_w))
+            .clip(true),
+        container(
+            text(value)
+                .size(14)
+                .font(fonts::INTER_MEDIUM)
+                .wrapping(Wrapping::None)
+                .color(value_color),
+        )
+        .width(MOVEMENT_VALUE_WIDTH)
+        .align_x(Alignment::End),
+    ]
+    .spacing(14)
+    .align_y(Alignment::Center);
+    hover_row(app, &m.id, content, [0, 8], 8.0, MOVEMENT_ROW_HEIGHT)
+}
+
 // ---- estado vazio ----
 
 /// Um card so: o medidor tracejado e o texto. O `flex-wrap` do prototipo vira uma quebra manual
@@ -867,6 +1021,8 @@ mod tests {
         let (mut app, _rx, _tx) = app_with_reserves(dir.path());
         app.reserves.emergency = None;
         app.reserves.pots.clear();
+        app.reserves.movements.clear();
+        app.reserves.series.clear();
         let _ = view(&app);
     }
 

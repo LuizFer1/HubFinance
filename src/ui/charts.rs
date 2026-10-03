@@ -198,7 +198,11 @@ pub fn percent(share: f64) -> i64 {
 // ---- barras ----
 
 /// Coluna do eixo Y, faixa dos rotulos dos meses e respiro no topo para o rotulo de cima.
-const AXIS_W: f32 = 52.0;
+/// Mais larga que os 52 do design: no HTML o rotulo transborda para o padding do card, no
+/// canvas ele e cortado na borda. 68 cabe ate "R$ 120 mil" com o respiro.
+const AXIS_W: f32 = 68.0;
+/// Respiro entre o fim do rotulo do eixo e a area das barras.
+const AXIS_PAD: f32 = 8.0;
 const LABELS_H: f32 = 24.0;
 const TOP: f32 = 6.0;
 const BAR_W: f32 = 14.0;
@@ -299,7 +303,7 @@ impl canvas::Program<Message> for BarsProgram<'_> {
                 );
                 frame.fill_text(Text {
                     align_x: TextAlign::Right,
-                    ..label(text, Point::new(AXIS_W - 8.0, y), 11.0, muted)
+                    ..label(text, Point::new(AXIS_W - AXIS_PAD, y), 11.0, muted)
                 });
             }
             for (i, bar) in self.bars.iter().enumerate() {
@@ -663,7 +667,7 @@ impl canvas::Program<Message> for StackedBarsProgram<'_> {
                 );
                 frame.fill_text(Text {
                     align_x: TextAlign::Right,
-                    ..label(text, Point::new(AXIS_W - 8.0, y), 11.0, muted)
+                    ..label(text, Point::new(AXIS_W - AXIS_PAD, y), 11.0, muted)
                 });
             }
             for (i, month) in self.months.iter().enumerate() {
@@ -976,15 +980,27 @@ mod tests {
     }
 
     #[test]
+    fn rotulo_mais_longo_do_eixo_cabe_na_coluna() {
+        // Sem medir texto no canvas: Inter 11 px fica perto de 5,8 px por caractere com os
+        // espacos. O rotulo e alinhado a direita e o canvas corta o que passa da borda
+        // esquerda, entao "R$ 12 mil" numa coluna de 52 perdia o "R".
+        for minor in [1_200_000, 2_400_000, 12_000_000, 250_000] {
+            let text = axis_label(minor);
+            let width = text.chars().count() as f32 * 5.8;
+            assert!(width <= AXIS_W - AXIS_PAD, "{text}: {width}");
+        }
+    }
+
+    #[test]
     fn coluna_sob_o_cursor() {
-        let size = Size::new(652.0, 210.0);
-        // Area util: x de 52 a 652, seis colunas de 100.
+        let size = Size::new(668.0, 210.0);
+        // Area util: x de 68 a 668, seis colunas de 100.
         assert_eq!(bar_column(Point::new(10.0, 100.0), size, 6), None, "eixo");
-        assert_eq!(bar_column(Point::new(52.0, 100.0), size, 6), Some(0));
-        assert_eq!(bar_column(Point::new(151.9, 100.0), size, 6), Some(0));
-        assert_eq!(bar_column(Point::new(152.0, 100.0), size, 6), Some(1));
-        assert_eq!(bar_column(Point::new(651.0, 205.0), size, 6), Some(5));
-        assert_eq!(bar_column(Point::new(652.0, 100.0), size, 6), None);
+        assert_eq!(bar_column(Point::new(68.0, 100.0), size, 6), Some(0));
+        assert_eq!(bar_column(Point::new(167.9, 100.0), size, 6), Some(0));
+        assert_eq!(bar_column(Point::new(168.0, 100.0), size, 6), Some(1));
+        assert_eq!(bar_column(Point::new(667.0, 205.0), size, 6), Some(5));
+        assert_eq!(bar_column(Point::new(668.0, 100.0), size, 6), None);
         assert_eq!(bar_column(Point::new(300.0, 100.0), size, 0), None);
     }
 
@@ -1005,7 +1021,7 @@ mod tests {
             tokens: &DARK,
             cache: &cache,
         };
-        let bounds = Rectangle::new(Point::new(100.0, 300.0), Size::new(652.0, 210.0));
+        let bounds = Rectangle::new(Point::new(100.0, 300.0), Size::new(668.0, 210.0));
         let moved = |x: f32, y: f32| {
             (
                 Event::Mouse(mouse::Event::CursorMoved {
@@ -1015,11 +1031,11 @@ mod tests {
             )
         };
         let mut state = None;
-        let (event, cursor) = moved(100.0 + 160.0, 400.0);
+        let (event, cursor) = moved(100.0 + 176.0, 400.0);
         assert!(program.update(&mut state, &event, bounds, cursor).is_some());
         assert_eq!(state, Some(1));
         // Mesma coluna: nada a redesenhar.
-        let (event, cursor) = moved(100.0 + 170.0, 410.0);
+        let (event, cursor) = moved(100.0 + 186.0, 410.0);
         assert!(program.update(&mut state, &event, bounds, cursor).is_none());
         // Saiu do canvas: some o tooltip.
         let (event, cursor) = moved(10.0, 10.0);
@@ -1082,12 +1098,12 @@ mod tests {
 
     #[test]
     fn doze_colunas() {
-        let size = Size::new(652.0, 230.0);
+        let size = Size::new(668.0, 230.0);
         // Area util de 600: colunas de 50.
-        assert_eq!(bar_column(Point::new(52.0, 100.0), size, 12), Some(0));
-        assert_eq!(bar_column(Point::new(101.9, 100.0), size, 12), Some(0));
-        assert_eq!(bar_column(Point::new(102.0, 100.0), size, 12), Some(1));
-        assert_eq!(bar_column(Point::new(651.0, 100.0), size, 12), Some(11));
+        assert_eq!(bar_column(Point::new(68.0, 100.0), size, 12), Some(0));
+        assert_eq!(bar_column(Point::new(117.9, 100.0), size, 12), Some(0));
+        assert_eq!(bar_column(Point::new(118.0, 100.0), size, 12), Some(1));
+        assert_eq!(bar_column(Point::new(667.0, 100.0), size, 12), Some(11));
     }
 
     #[test]
@@ -1108,7 +1124,7 @@ mod tests {
             tokens: &DARK,
             cache: &cache,
         };
-        let bounds = Rectangle::new(Point::ORIGIN, Size::new(652.0, 230.0));
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(668.0, 230.0));
         let at = |x: f32| {
             (
                 Event::Mouse(mouse::Event::CursorMoved {
@@ -1118,10 +1134,10 @@ mod tests {
             )
         };
         let mut state = None;
-        let (event, cursor) = at(110.0);
+        let (event, cursor) = at(126.0);
         assert!(program.update(&mut state, &event, bounds, cursor).is_some());
         assert_eq!(state, Some(1));
-        let (event, cursor) = at(120.0);
+        let (event, cursor) = at(136.0);
         assert!(program.update(&mut state, &event, bounds, cursor).is_none());
     }
 

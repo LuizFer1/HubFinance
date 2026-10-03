@@ -6,6 +6,11 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [0.0.3] - 2026-10-03
+
+Nenhuma mudança no protocolo `/v1` nem no banco: instalar por cima da 0.0.2 preserva `epoch`,
+certificado e aparelhos pareados.
+
 ### Adicionado
 
 - Página **Reservas** na janela: total separado, emergência coberta (meses de custo essencial),
@@ -78,6 +83,7 @@ campo da 0.0.2 acontece.
 - Scripts `scripts/e2e.sh` (roteiro curl de pareamento e sync) e `scripts/seed-dashboard.sh`
   (carga de exemplo do dashboard).
 
-[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v0.0.2...HEAD
+[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/LuizFer1/HubFinance/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/LuizFer1/HubFinance/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/LuizFer1/HubFinance/releases/tag/v0.0.1

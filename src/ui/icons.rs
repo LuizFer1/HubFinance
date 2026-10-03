@@ -42,6 +42,12 @@ pub const CERTIFICATE: &str = "\u{E766}";
 pub const CIRCLE_DASHED: &str = "\u{E602}";
 /// Item "Reservas" da lateral.
 pub const VAULT: &str = "\u{E76E}";
+/// Reserva de emergencia (sempre este, nao uma chave do app).
+pub const LIFEBUOY: &str = "\u{E63A}";
+pub const CALENDAR_CHECK: &str = "\u{E712}";
+/// Deposito (guardar) e retirada nas reservas.
+pub const ARROW_DOWN: &str = "\u{E03E}";
+pub const ARROW_UP: &str = "\u{E08E}";
 
 // Alvos das chaves do app (`icon-set.ts`).
 pub const BABY: &str = "\u{E774}";
@@ -83,7 +89,7 @@ pub const ARROW_SQUARE_OUT: &str = "\u{E5DE}";
 
 /// Todas as constantes, para o teste garantir que nenhuma ficou vazia.
 #[cfg(test)]
-pub const ALL: [&str; 67] = [
+pub const ALL: [&str; 71] = [
     HOUSE_LINE,
     CHART_PIE_SLICE,
     LIST_BULLETS,
@@ -115,6 +121,10 @@ pub const ALL: [&str; 67] = [
     CERTIFICATE,
     CIRCLE_DASHED,
     VAULT,
+    LIFEBUOY,
+    CALENDAR_CHECK,
+    ARROW_DOWN,
+    ARROW_UP,
     BABY,
     MONEY,
     BOOK_OPEN,

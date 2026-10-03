@@ -57,19 +57,12 @@ fn card<'a>(t: &'static Tokens, content: impl Into<Element<'a, Message>>) -> Ele
 /// Tres cards de largura igual; abaixo de 3 x 240 + gaps, dois por linha e o terceiro embaixo
 /// (o `auto-fit` do prototipo).
 fn summary_row(app: &App) -> Element<'_, Message> {
-    let width = shell::content_width(app);
-    let cards = [balance_card(app), income_card(app), expense_card(app)];
-    if width >= 3.0 * SUMMARY_MIN + 2.0 * GAP {
-        row(cards).spacing(GAP).into()
-    } else {
-        let [a, b, c] = cards;
-        column![
-            row![a, b].spacing(GAP),
-            row![c, Space::new().width(Length::Fill)].spacing(GAP),
-        ]
-        .spacing(GAP)
-        .into()
-    }
+    widgets::three_up(
+        shell::content_width(app),
+        SUMMARY_MIN,
+        GAP,
+        [balance_card(app), income_card(app), expense_card(app)],
+    )
 }
 
 /// Variacao do saldo contra o mes anterior.
@@ -188,7 +181,7 @@ fn balance_card(app: &App) -> Element<'_, Message> {
     )
 }
 
-fn kicker_with_icon<'a>(
+pub(super) fn kicker_with_icon<'a>(
     t: &'static Tokens,
     glyph: &'static str,
     color: Color,

@@ -9,7 +9,9 @@ use iced::widget::{Space, canvas, column, container, row, text};
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{App, Message};
-use super::charts::{EMPTY_RESERVES_HEIGHT, EMPTY_RESERVES_WIDTH, EmptyReservesProgram};
+use super::charts::{
+    EMPTY_RESERVES_HEIGHT, EMPTY_RESERVES_WIDTH, EmptyReservesProgram, StackedBarsProgram,
+};
 use super::dashboard_view::kicker_with_icon;
 use super::theme::{self, Tokens, mix};
 use super::{fonts, icons, shell, widgets};
@@ -39,7 +41,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     if v.is_empty {
         return empty_card(app);
     }
-    column![kpi_row(app), cards_row(app)]
+    column![kpi_row(app), cards_row(app), evolution_card(app)]
         .spacing(GAP)
         .width(Length::Fill)
         .into()
@@ -727,6 +729,70 @@ fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
         .padding([14, 0])
         .width(Length::Fill)
         .into()
+}
+
+// ---- linha 3: evolucao ----
+
+/// Abaixo disto a legenda vai para baixo do titulo (o `flex-wrap` do cabecalho).
+const EVOLUTION_LEGEND_INLINE: f32 = 760.0;
+const EVOLUTION_HEIGHT: f32 = 230.0;
+
+fn evolution_card(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let v = &app.reserves;
+    let muted = t.text_alpha(0.60);
+    let title = text("Evolução do dinheiro separado")
+        .size(15)
+        .font(fonts::INTER_MEDIUM)
+        .color(t.text);
+    let mut keys = row![].spacing(14).align_y(Alignment::Center);
+    for s in &v.series {
+        keys = keys.push(
+            row![
+                container(Space::new())
+                    .width(8)
+                    .height(8)
+                    .style(theme::fill(reserve_color(t, &s.color), 2.0)),
+                text(s.name.clone()).size(12).color(muted),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        );
+    }
+    keys = keys.push(text("saldo no fim de cada mês").size(12).color(muted));
+    let legend = keys.wrap().vertical_spacing(6);
+    let header: Element<'_, Message> = if shell::content_width(app) >= EVOLUTION_LEGEND_INLINE {
+        row![container(title).width(Length::Fill), legend]
+            .spacing(16)
+            .align_y(Alignment::Center)
+            .into()
+    } else {
+        column![title, legend].spacing(8).into()
+    };
+    let quiet = v.series.iter().all(|s| s.balances.iter().all(|b| *b <= 0));
+    let body: Element<'_, Message> = if quiet {
+        text("Nenhum saldo nos últimos 12 meses.")
+            .size(13)
+            .color(t.text_alpha(0.55))
+            .into()
+    } else {
+        canvas(StackedBarsProgram {
+            series: &v.series,
+            months: &v.months,
+            axis_top: v.axis_top,
+            current: v.months.len().saturating_sub(1),
+            tokens: t,
+            cache: &app.reserves_cache,
+        })
+        .width(Length::Fill)
+        .height(EVOLUTION_HEIGHT)
+        .into()
+    };
+    card(
+        t,
+        pad(18.0, 20.0, 20.0),
+        column![header, Space::new().height(18), body],
+    )
 }
 
 // ---- estado vazio ----

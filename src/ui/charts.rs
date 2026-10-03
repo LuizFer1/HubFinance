@@ -1,5 +1,6 @@
-//! Graficos do Dashboard em `canvas`: rosca de gastos por categoria, barras de receita x
-//! despesa e o esqueleto tracejado do estado "Sem dados".
+//! Graficos em `canvas`: rosca de gastos por categoria, barras de receita x despesa e o
+//! esqueleto tracejado do estado "Sem dados" (Dashboard); barras empilhadas da evolucao e o
+//! medidor tracejado do estado vazio (Reservas).
 //!
 //! A geometria fica num `canvas::Cache` que a `App` limpa quando dados, mes, hover da legenda
 //! ou tema mudam; o hover das barras e estado do proprio `Program` e e desenhado num segundo
@@ -21,7 +22,8 @@ use super::fonts;
 use super::theme::{Tokens, alpha};
 use crate::dashboard::aggregate::{MonthTotals, Slice};
 use crate::dashboard::money::{axis_label, format_brl, signed_brl};
-use crate::dashboard::periods::{month_label, month_short};
+use crate::dashboard::periods::{month_label, month_label_capitalized, month_short};
+use crate::dashboard::reserves::{ReserveColor, ReserveSeries};
 
 /// Texto de canvas na Inter Hub (o canvas nao herda a fonte padrao da aplicacao).
 fn label(content: String, position: Point, size: f32, color: Color) -> Text {
@@ -537,6 +539,329 @@ impl canvas::Program<Message> for EmptyChartProgram<'_> {
     }
 }
 
+// ---- barras empilhadas das reservas ----
+
+/// Espaco entre segmentos de uma pilha.
+pub const STACK_GAP: f32 = 2.0;
+/// Area util abaixo desta largura: barras finas (a janela de 1024 px).
+const STACKED_NARROW: f32 = 640.0;
+
+/// Largura das barras: 22 px, 14 quando a area util tem menos de 640.
+pub fn stacked_bar_width(plot_width: f32) -> f32 {
+    if plot_width >= STACKED_NARROW {
+        22.0
+    } else {
+        14.0
+    }
+}
+
+/// `(y0, h)` de cada valor, de baixo para cima: `y0` e a distancia da base ate o pe do segmento.
+/// Mesmo comprimento de `values` para quem desenha casar com as series; valor `<= 0` vira
+/// altura 0 e nao abre gap. Teto `<= 0` -> vazio.
+pub fn stack_segments(values: &[i64], top: i64, plot_h: f32) -> Vec<(f32, f32)> {
+    if top <= 0 {
+        return Vec::new();
+    }
+    let mut y = 0.0;
+    let mut first = true;
+    values
+        .iter()
+        .map(|v| {
+            let h = bar_height(*v, top, plot_h);
+            if h <= 0.0 {
+                return (y, 0.0);
+            }
+            if !first {
+                y += STACK_GAP;
+            }
+            first = false;
+            let seg = (y, h);
+            y += h;
+            seg
+        })
+        .collect()
+}
+
+pub struct StackedBarsProgram<'a> {
+    pub series: &'a [ReserveSeries],
+    pub months: &'a [String],
+    pub axis_top: i64,
+    /// Coluna do mes corrente (a ultima).
+    pub current: usize,
+    pub tokens: &'static Tokens,
+    pub cache: &'a canvas::Cache,
+}
+
+impl StackedBarsProgram<'_> {
+    fn column_values(&self, i: usize) -> Vec<i64> {
+        self.series
+            .iter()
+            .map(|s| s.balances.get(i).copied().unwrap_or(0))
+            .collect()
+    }
+}
+
+fn series_color(t: &'static Tokens, c: &ReserveColor) -> Color {
+    match c {
+        ReserveColor::Accent => t.accent,
+        ReserveColor::Token(k) => t.token(k),
+    }
+}
+
+impl canvas::Program<Message> for StackedBarsProgram<'_> {
+    /// Coluna sob o cursor.
+    type State = Option<usize>;
+
+    fn update(
+        &self,
+        state: &mut Option<usize>,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<Action<Message>> {
+        if !matches!(event, Event::Mouse(_)) {
+            return None;
+        }
+        let hovered = cursor
+            .position_in(bounds)
+            .and_then(|p| bar_column(p, bounds.size(), self.months.len()));
+        if hovered == *state {
+            return None;
+        }
+        *state = hovered;
+        Some(Action::request_redraw())
+    }
+
+    fn draw(
+        &self,
+        state: &Option<usize>,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let t = self.tokens;
+        let size = bounds.size();
+        let plot = plot_area(size);
+        let columns = self.months.len().max(1);
+        let col_w = plot.width / columns as f32;
+        // Grade, eixo e meses no cache; as barras nao, porque o hover escurece as outras colunas
+        // e redesenhar 12 pilhas por quadro e barato.
+        let chart = self.cache.draw(renderer, size, |frame| {
+            let grid = t.divider();
+            let muted = t.text_alpha(0.50);
+            let marks = [
+                (plot.y, axis_label(self.axis_top)),
+                (plot.y + plot.height / 2.0, axis_label(self.axis_top / 2)),
+                (plot.y + plot.height, axis_label(0)),
+            ];
+            for (y, text) in marks {
+                frame.fill_rectangle(
+                    Point::new(plot.x, y.round() - 0.5),
+                    Size::new(plot.width, 1.0),
+                    grid,
+                );
+                frame.fill_text(Text {
+                    align_x: TextAlign::Right,
+                    ..label(text, Point::new(AXIS_W - 8.0, y), 11.0, muted)
+                });
+            }
+            for (i, month) in self.months.iter().enumerate() {
+                let current = i == self.current;
+                frame.fill_text(Text {
+                    font: if current {
+                        fonts::INTER_MEDIUM
+                    } else {
+                        fonts::INTER
+                    },
+                    ..label(
+                        month_short(month).to_string(),
+                        Point::new(plot.x + (i as f32 + 0.5) * col_w, size.height - 8.0),
+                        12.0,
+                        if current { t.text } else { t.text_alpha(0.55) },
+                    )
+                });
+            }
+        });
+        let mut bars = Frame::new(renderer, size);
+        let bar_w = stacked_bar_width(plot.width);
+        let base = plot.y + plot.height;
+        if let Some(i) = *state {
+            draw_column_highlight(&mut bars, t, plot.x + i as f32 * col_w, col_w, plot);
+        }
+        let mut tops = vec![base; self.months.len()];
+        for (i, top) in tops.iter_mut().enumerate() {
+            let x = plot.x + i as f32 * col_w + (col_w - bar_w) / 2.0;
+            let faded = state.is_some_and(|j| j != i);
+            let values = self.column_values(i);
+            for (serie, (y0, h)) in
+                self.series
+                    .iter()
+                    .zip(stack_segments(&values, self.axis_top, plot.height))
+            {
+                if h <= 0.0 {
+                    continue;
+                }
+                let color = series_color(t, &serie.color);
+                let color = if faded { alpha(color, 0.45) } else { color };
+                bars.fill(
+                    &Path::rounded_rectangle(
+                        Point::new(x, base - y0 - h),
+                        Size::new(bar_w, h),
+                        2.0.into(),
+                    ),
+                    color,
+                );
+                *top = top.min(base - y0 - h);
+            }
+        }
+        if let Some(i) = *state
+            && let Some(month) = self.months.get(i)
+        {
+            let bar_top = tops.get(i).copied().unwrap_or(base);
+            draw_stack_tooltip(
+                &mut bars,
+                t,
+                self.series,
+                month,
+                i,
+                (plot.x + i as f32 * col_w, col_w),
+                bar_top,
+                plot,
+                size,
+            );
+        }
+        vec![chart, bars.into_geometry()]
+    }
+}
+
+/// Fundo a 5 % na coluna sob o mouse, raio 6 em cima.
+fn draw_column_highlight(
+    frame: &mut Frame,
+    t: &'static Tokens,
+    col_x: f32,
+    col_w: f32,
+    plot: Rectangle,
+) {
+    frame.fill(
+        &Path::rounded_rectangle(
+            Point::new(col_x, plot.y),
+            Size::new(col_w, plot.height),
+            Radius {
+                top_left: 6.0,
+                top_right: 6.0,
+                bottom_right: 0.0,
+                bottom_left: 0.0,
+            },
+        ),
+        t.text_alpha(0.05),
+    );
+}
+
+/// Tooltip do mes: titulo, uma linha por reserva com saldo, divisor e "Total".
+#[allow(clippy::too_many_arguments)]
+fn draw_stack_tooltip(
+    frame: &mut Frame,
+    t: &'static Tokens,
+    series: &[ReserveSeries],
+    month: &str,
+    i: usize,
+    (col_x, col_w): (f32, f32),
+    bar_top: f32,
+    plot: Rectangle,
+    size: Size,
+) {
+    let rows: Vec<(String, String, Color)> = series
+        .iter()
+        .filter_map(|s| {
+            let v = s.balances.get(i).copied().unwrap_or(0);
+            (v > 0).then(|| {
+                (
+                    clip_chars(&s.name, 24),
+                    format_brl(v),
+                    series_color(t, &s.color),
+                )
+            })
+        })
+        .collect();
+    let total: i64 = series
+        .iter()
+        .filter_map(|s| s.balances.get(i).copied())
+        .filter(|v| *v > 0)
+        .fold(0i64, i64::saturating_add);
+    let total_label = format_brl(total);
+    // Largura estimada (o canvas nao mede texto): ~7 px por caractere em 12 px tabular, mais o
+    // ponto, os respiros e o padding.
+    let longest = rows
+        .iter()
+        .map(|(n, v, _)| n.chars().count() + v.chars().count())
+        .chain(std::iter::once(5 + total_label.chars().count()))
+        .max()
+        .unwrap_or(0);
+    let line_h = 15.0;
+    let gap = 4.0;
+    let lines = rows.len() + 2;
+    let box_w = (longest as f32 * 7.0 + 40.0).max(210.0);
+    let box_h = 8.0 + lines as f32 * line_h + (lines - 1) as f32 * gap + 8.0 + 5.0;
+    let (x, y) = tooltip_origin(
+        Size::new(box_w, box_h),
+        col_x,
+        col_w,
+        bar_top,
+        plot.y,
+        size.width,
+    );
+    let rect = Path::rounded_rectangle(Point::new(x, y), Size::new(box_w, box_h), 8.0.into());
+    frame.fill(&rect, t.bg);
+    frame.stroke(
+        &rect,
+        Stroke::default()
+            .with_color(t.shadow_md_ring())
+            .with_width(1.0),
+    );
+    let center_of = |k: usize| y + 8.0 + k as f32 * (line_h + gap) + line_h / 2.0;
+    let left = |content: String, ly: f32, color: Color, font| Text {
+        align_x: TextAlign::Left,
+        font,
+        ..label(content, Point::new(x + 10.0, ly), 12.0, color)
+    };
+    let right = |content: String, ly: f32, font| Text {
+        align_x: TextAlign::Right,
+        font,
+        ..label(content, Point::new(x + box_w - 10.0, ly), 12.0, t.text)
+    };
+    frame.fill_text(left(
+        month_label_capitalized(month),
+        center_of(0),
+        t.text,
+        fonts::INTER_MEDIUM,
+    ));
+    for (k, (name, value, color)) in rows.into_iter().enumerate() {
+        let ly = center_of(k + 1);
+        frame.fill(&Path::circle(Point::new(x + 13.0, ly), 3.0), color);
+        frame.fill_text(Text {
+            align_x: TextAlign::Left,
+            ..label(name, Point::new(x + 10.0 + 12.0, ly), 12.0, t.text)
+        });
+        frame.fill_text(right(value, ly, fonts::INTER));
+    }
+    // Borda de 1 px e 4 de respiro antes do "Total" (o `border-top` + `padding-top` do prototipo).
+    let divider_y = y + 8.0 + (lines - 1) as f32 * (line_h + gap);
+    frame.fill_rectangle(
+        Point::new(x + 10.0, divider_y),
+        Size::new(box_w - 20.0, 1.0),
+        t.divider(),
+    );
+    let total_y = divider_y + 5.0 + line_h / 2.0;
+    frame.fill_text(left(
+        "Total".to_string(),
+        total_y,
+        t.text,
+        fonts::INTER_MEDIUM,
+    ));
+    frame.fill_text(right(total_label, total_y, fonts::INTER_MEDIUM));
+}
+
 // ---- esqueleto vazio das reservas ----
 
 /// Seis retangulos de 16 px de altura em 240 de largura, 6 entre eles (o medidor de seis meses
@@ -734,6 +1059,70 @@ mod tests {
         assert_eq!(bar_height(500, 200, 180.0), 180.0);
         assert_eq!(bar_height(-5, 200, 180.0), 0.0);
         assert_eq!(bar_height(5, 0, 180.0), 0.0);
+    }
+
+    #[test]
+    fn largura_das_barras_empilhadas() {
+        assert_eq!(stacked_bar_width(640.0), 22.0);
+        assert_eq!(stacked_bar_width(900.0), 22.0);
+        assert_eq!(stacked_bar_width(639.0), 14.0);
+    }
+
+    #[test]
+    fn segmentos_da_pilha() {
+        let segs = stack_segments(&[100, 200], 400, 200.0);
+        assert_eq!(segs, vec![(0.0, 50.0), (52.0, 100.0)]);
+        // Zero nao abre gap.
+        let segs = stack_segments(&[100, 0, 200], 400, 200.0);
+        assert_eq!(segs, vec![(0.0, 50.0), (50.0, 0.0), (52.0, 100.0)]);
+        let segs = stack_segments(&[0, 200], 400, 200.0);
+        assert_eq!(segs, vec![(0.0, 0.0), (0.0, 100.0)]);
+        assert!(stack_segments(&[100], 0, 200.0).is_empty());
+    }
+
+    #[test]
+    fn doze_colunas() {
+        let size = Size::new(652.0, 230.0);
+        // Area util de 600: colunas de 50.
+        assert_eq!(bar_column(Point::new(52.0, 100.0), size, 12), Some(0));
+        assert_eq!(bar_column(Point::new(101.9, 100.0), size, 12), Some(0));
+        assert_eq!(bar_column(Point::new(102.0, 100.0), size, 12), Some(1));
+        assert_eq!(bar_column(Point::new(651.0, 100.0), size, 12), Some(11));
+    }
+
+    #[test]
+    fn hover_das_pilhas_so_redesenha_quando_muda() {
+        let cache = canvas::Cache::new();
+        let months: Vec<String> = (1..=12).map(|m| format!("2026-{m:02}")).collect();
+        let series = vec![ReserveSeries {
+            id: "R".into(),
+            name: "Reserva".into(),
+            color: ReserveColor::Accent,
+            balances: vec![100_000; 12],
+        }];
+        let program = StackedBarsProgram {
+            series: &series,
+            months: &months,
+            axis_top: 600_000,
+            current: 11,
+            tokens: &DARK,
+            cache: &cache,
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(652.0, 230.0));
+        let at = |x: f32| {
+            (
+                Event::Mouse(mouse::Event::CursorMoved {
+                    position: Point::new(x, 100.0),
+                }),
+                mouse::Cursor::Available(Point::new(x, 100.0)),
+            )
+        };
+        let mut state = None;
+        let (event, cursor) = at(110.0);
+        assert!(program.update(&mut state, &event, bounds, cursor).is_some());
+        assert_eq!(state, Some(1));
+        let (event, cursor) = at(120.0);
+        assert!(program.update(&mut state, &event, bounds, cursor).is_none());
     }
 
     #[test]

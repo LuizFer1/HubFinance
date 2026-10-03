@@ -17,7 +17,6 @@ use crate::hub::snapshot::Status;
 
 const TITLEBAR_HEIGHT: f32 = 36.0;
 const SIDEBAR_WIDTH: f32 = 232.0;
-const CONTENT_MAX: f32 = 1180.0;
 /// Espessura da borda que redimensiona; os cantos pegam 12 px ao longo de cada lado.
 const EDGE: f32 = 6.0;
 const CORNER: f32 = 12.0;
@@ -607,7 +606,7 @@ fn content(app: &App) -> Element<'_, Message> {
         }
     };
     let page = column![header(app), body].spacing(14);
-    let inner = container(page).max_width(CONTENT_MAX).padding(Padding {
+    let inner = container(page).width(Length::Fill).padding(Padding {
         top: 28.0,
         right: 32.0,
         bottom: 40.0,
@@ -630,11 +629,11 @@ fn content(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-/// Largura util do conteudo (sem a lateral, a borda e o padding de 32 + 32), limitada pelo
-/// maximo de 1180. As telas usam para decidir colunas: o iced nao tem `auto-fit`.
+/// Largura util do conteudo (sem a lateral, a borda e o padding de 32 + 32). Sem teto: com o
+/// maximo de 1180 da 0.0.2 a janela maximizada deixava uma faixa vazia a direita. As telas usam
+/// para decidir colunas: o iced nao tem `auto-fit`.
 pub(super) fn content_width(app: &App) -> f32 {
-    let available = app.window_size.width - SIDEBAR_WIDTH - 1.0;
-    available.min(CONTENT_MAX) - 64.0
+    app.window_size.width - SIDEBAR_WIDTH - 1.0 - 64.0
 }
 
 fn header(app: &App) -> Element<'_, Message> {

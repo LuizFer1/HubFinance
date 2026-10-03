@@ -12,6 +12,7 @@ pub mod list;
 pub mod money;
 pub mod people;
 pub mod periods;
+pub mod reserves;
 pub mod view;
 
 /// Dataset de exemplo das tarefas de agregacao, lista e telas: duas pessoas vivas e uma

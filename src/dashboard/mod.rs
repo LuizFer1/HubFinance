@@ -558,3 +558,54 @@ pub(crate) fn fixtures_with_reserves() -> dataset::Dataset {
     ds.apply(rows);
     ds
 }
+
+/// `fixtures()` mais o que a fusao dos padroes do app deixa: `C6` tombstone fundida em `C1`,
+/// `P6` tombstone fundida em `P2` e `T20` (despesa de setembro, 100,00) apontando para as
+/// copias. Separado da fixture para nao mexer nos totais que os outros testes afirmam.
+#[cfg(test)]
+pub(crate) fn fixtures_with_merged() -> dataset::Dataset {
+    use serde_json::json;
+
+    use dataset::{CATEGORIES, PAYMENT_METHODS, RawRow, TRANSACTIONS};
+
+    let mut ds = fixtures();
+    let row = |table: &str, id: &str, deleted: bool, seq: i64, data: serde_json::Value| RawRow {
+        table: table.into(),
+        id: id.into(),
+        deleted_at: deleted.then(|| "2026-10-05T00:00:00Z".to_string()),
+        seq,
+        data: data.to_string(),
+    };
+    ds.apply([
+        row(
+            CATEGORIES,
+            "C6",
+            true,
+            1001,
+            json!({ "name": "Alimentação", "color": "red", "icon": "tag", "mergedInto": "C1" }),
+        ),
+        row(
+            PAYMENT_METHODS,
+            "P6",
+            true,
+            1002,
+            json!({ "name": "Crédito", "icon": "tag", "mergedInto": "P2" }),
+        ),
+        row(
+            TRANSACTIONS,
+            "T20",
+            false,
+            1003,
+            json!({
+                "kind": "expense",
+                "description": "Feira",
+                "amountMinor": 10_000,
+                "occurredOn": "2026-09-20",
+                "categoryId": "C6",
+                "paymentMethodId": "P6",
+                "userId": "U1",
+            }),
+        ),
+    ]);
+    ds
+}

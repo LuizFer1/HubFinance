@@ -246,8 +246,8 @@ pub struct EssentialCost {
 /// lancamento vivo do hub — uma casa com 2 meses de historico dividiria por 6 e teria meta
 /// irreal. Sem lancamento vivo antes do mes corrente -> `None` (sem base).
 ///
-/// Casa pelo id cru, viva ou apagada: o gasto passado foi essencial mesmo que a categoria tenha
-/// sido apagada depois.
+/// Casa pelo id resolvido (`mergedInto` seguido so em tombstone), viva ou apagada: o gasto
+/// passado foi essencial mesmo que a categoria tenha sido apagada depois.
 pub fn essential_cost(
     dataset: &Dataset,
     category_ids: &[String],
@@ -265,16 +265,24 @@ pub fn essential_cost(
     let den = i64::try_from(months).unwrap_or(i64::MAX);
     let mut seen: Vec<&str> = Vec::new();
     let mut parts: Vec<EssentialPart> = Vec::new();
-    for id in category_ids {
-        if seen.contains(&id.as_str()) {
+    for raw in category_ids {
+        // Copia fundida e padrao na mesma lista sao a mesma categoria: deduplicar pelo id
+        // resolvido, senao ela contaria duas vezes. Categoria apagada sem `mergedInto` resolve
+        // para ela mesma e continua casando pelo id cru.
+        let Some(id) = dataset.resolve_category_id(Some(raw.as_str())) else {
+            continue;
+        };
+        if seen.contains(&id) {
             continue;
         }
         seen.push(id);
+        // Lancamento antigo ainda aponta para a copia (o app nao regrava): resolve dos dois
+        // lados.
         let sum = dataset
             .alive_transactions()
             .filter(|t| {
                 t.kind == Kind::Expense
-                    && t.category_id.as_deref() == Some(id.as_str())
+                    && dataset.resolve_category_id(t.category_id.as_deref()) == Some(id)
                     && window.contains(&month_of(&t.occurred_on))
             })
             .fold(0i64, |acc, t| acc.saturating_add(t.amount_minor));
@@ -283,7 +291,7 @@ pub fn essential_cost(
             None => ("Categoria removida".to_string(), "slate".to_string()),
         };
         parts.push(EssentialPart {
-            category_id: id.clone(),
+            category_id: id.to_string(),
             name,
             color,
             average_minor: div_round(sum, den),
@@ -905,6 +913,42 @@ mod tests {
         assert_eq!(c.months, 1);
         assert_eq!(c.total_minor, 30_000);
         assert_eq!(c.parts[0].name, "Categoria removida");
+    }
+
+    #[test]
+    fn copia_fundida_e_padrao_sao_uma_parte_so() {
+        let mut ds = with_transactions(&[
+            ("T1", "expense", 30_000, "2026-08-01", "C6"),
+            ("T2", "expense", 20_000, "2026-08-02", "C1"),
+        ]);
+        ds.apply([
+            RawRow {
+                table: crate::dashboard::dataset::CATEGORIES.into(),
+                id: "C1".into(),
+                deleted_at: None,
+                seq: 100,
+                data: json!({ "name": "Alimentação", "color": "orange", "icon": "utensils" })
+                    .to_string(),
+            },
+            RawRow {
+                table: crate::dashboard::dataset::CATEGORIES.into(),
+                id: "C6".into(),
+                deleted_at: Some("x".into()),
+                seq: 101,
+                data: json!({ "name": "Alimentação", "color": "red", "icon": "tag",
+                    "mergedInto": "C1" })
+                .to_string(),
+            },
+        ]);
+        let c = essential_cost(&ds, &strings(&["C6", "C1"]), "2026-09").unwrap();
+        assert_eq!(c.parts.len(), 1);
+        assert_eq!(c.parts[0].category_id, "C1");
+        assert_eq!(c.parts[0].name, "Alimentação");
+        assert_eq!(c.parts[0].color, "orange");
+        assert_eq!(c.total_minor, 50_000);
+        // So a copia na lista tambem pega os lancamentos do padrao.
+        let c = essential_cost(&ds, &strings(&["C6"]), "2026-09").unwrap();
+        assert_eq!(c.total_minor, 50_000);
     }
 
     #[test]

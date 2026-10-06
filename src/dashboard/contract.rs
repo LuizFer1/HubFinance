@@ -45,6 +45,11 @@ pub struct CategoryFields {
     pub name: String,
     pub color: String,
     pub icon: String,
+    /// So em tombstone: a fusao dos padroes do app (spec mobile `padroes-estaveis`) apaga cada
+    /// copia apontando para a linha estavel, sem regravar os lancamentos antigos. O dashboard
+    /// segue o campo ao resolver referencias; o sync nao o conhece.
+    #[serde(default)]
+    pub merged_into: Option<String>,
 }
 
 /// `src/domain/model/user.ts`. `avatar` e um data URI; decodificar e problema da tela.
@@ -63,6 +68,11 @@ pub struct UserFields {
 pub struct PaymentMethodFields {
     pub name: String,
     pub icon: String,
+    /// Como em `CategoryFields`; so em tombstone: a fusao dos padroes do app (spec mobile `padroes-estaveis`) apaga cada
+    /// copia apontando para a linha estavel, sem regravar os lancamentos antigos. O dashboard
+    /// segue o campo ao resolver referencias; o sync nao o conhece.
+    #[serde(default)]
+    pub merged_into: Option<String>,
 }
 
 /// `src/domain/model/recurrence.ts`: so a frequencia, para o rotulo da tag ("Mensal").
@@ -332,7 +342,19 @@ mod tests {
         let neon = with(ok.clone(), "color", json!("neon"));
         assert_eq!(parse_category(&neon).unwrap().color, "neon");
         assert!(err_text(parse_category(&without(ok.clone(), "color"))).contains("color"));
-        assert!(err_text(parse_category(&without(ok, "icon"))).contains("icon"));
+        assert!(err_text(parse_category(&without(ok.clone(), "icon"))).contains("icon"));
+        assert_eq!(parse_category(&ok.to_string()).unwrap().merged_into, None);
+        let nulo = with(ok.clone(), "mergedInto", Value::Null);
+        assert_eq!(parse_category(&nulo).unwrap().merged_into, None);
+        let fundida = with(ok.clone(), "mergedInto", json!("C1"));
+        assert_eq!(
+            parse_category(&fundida).unwrap().merged_into.as_deref(),
+            Some("C1")
+        );
+        // O serde_json nao cita o campo em tipo errado de valor ("invalid type: integer `5`,
+        // expected a string"); a linha cai em `ignored` do mesmo jeito.
+        let e = err_text(parse_category(&with(ok, "mergedInto", json!(5))));
+        assert!(e.contains("invalid type"), "{e}");
     }
 
     #[test]
@@ -350,7 +372,23 @@ mod tests {
         let ok = json!({ "name": "Pix", "icon": "zap", "color": "teal", "kind": "pix" });
         assert!(parse_payment_method(&ok.to_string()).is_ok());
         assert!(err_text(parse_payment_method(&without(ok.clone(), "name"))).contains("name"));
-        assert!(err_text(parse_payment_method(&without(ok, "icon"))).contains("icon"));
+        assert!(err_text(parse_payment_method(&without(ok.clone(), "icon"))).contains("icon"));
+        assert_eq!(
+            parse_payment_method(&ok.to_string()).unwrap().merged_into,
+            None
+        );
+        let nulo = with(ok.clone(), "mergedInto", Value::Null);
+        assert_eq!(parse_payment_method(&nulo).unwrap().merged_into, None);
+        let fundida = with(ok.clone(), "mergedInto", json!("M1"));
+        assert_eq!(
+            parse_payment_method(&fundida)
+                .unwrap()
+                .merged_into
+                .as_deref(),
+            Some("M1")
+        );
+        let e = err_text(parse_payment_method(&with(ok, "mergedInto", json!(5))));
+        assert!(e.contains("invalid type"), "{e}");
     }
 
     #[test]

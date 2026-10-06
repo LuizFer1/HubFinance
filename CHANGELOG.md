@@ -6,6 +6,14 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+### Corrigido
+
+- Lançamentos que apontam para uma cópia de categoria ou forma de pagamento fundida pelo app
+  (`mergedInto`) aparecem sob o padrão estável — rosca, lista, filtro de categoria e custo
+  essencial da reserva de emergência — em vez de "Categoria removida", "Forma removida" ou
+  "Sem categoria". Categoria apagada sem `mergedInto` continua como antes. Nenhuma mudança no
+  protocolo `/v1` nem no banco.
+
 ## [0.0.3] - 2026-10-03
 
 Nenhuma mudança no protocolo `/v1` nem no banco: instalar por cima da 0.0.2 preserva `epoch`,

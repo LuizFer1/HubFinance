@@ -43,6 +43,8 @@ pub struct Category {
     pub name: String,
     pub color: String,
     pub icon: String,
+    /// So vale em tombstone; ver `resolve_category_id`.
+    pub merged_into: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +62,8 @@ pub struct PaymentMethod {
     pub deleted: bool,
     pub name: String,
     pub icon: String,
+    /// So vale em tombstone; ver `resolve_payment_method_id`.
+    pub merged_into: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,6 +141,23 @@ pub const RECURRENCES: &str = "recurrences";
 pub const RESERVES: &str = "reserves";
 pub const RESERVE_MOVEMENTS: &str = "reserveMovements";
 
+/// Teto da cadeia de `mergedInto` (o mesmo de `resolve.ts` do app). Nenhuma fusao produz ciclo,
+/// mas as linhas sao eternas e podem trazer um; sem o teto, a janela travaria num laco.
+const MAX_HOPS: usize = 8;
+
+/// Segue `merged_into` so em tombstone, ate `MAX_HOPS`; devolve o id onde parou. Em linha viva
+/// o campo e dado inconsistente: segui-lo esconderia uma linha que a pessoa ve no celular.
+fn follow<'a>(id: Option<&'a str>, redirect: impl Fn(&str) -> Option<&'a str>) -> Option<&'a str> {
+    let mut cur = id?;
+    for _ in 0..MAX_HOPS {
+        match redirect(cur) {
+            Some(next) => cur = next,
+            None => break,
+        }
+    }
+    Some(cur)
+}
+
 impl Dataset {
     /// Aplica na ordem recebida (a store entrega por `seq`). Tabela fora do contrato e pulada
     /// sem contar: o app sincroniza tabelas que o dashboard nao le (`recurrenceAdjustments`...).
@@ -173,6 +194,7 @@ impl Dataset {
                             name: f.name,
                             color: f.color,
                             icon: f.icon,
+                            merged_into: f.merged_into,
                         },
                     );
                 }),
@@ -196,6 +218,7 @@ impl Dataset {
                             deleted,
                             name: f.name,
                             icon: f.icon,
+                            merged_into: f.merged_into,
                         },
                     );
                 }),
@@ -301,10 +324,33 @@ impl Dataset {
         self.transactions.values().filter(|t| !t.deleted)
     }
 
-    /// Categoria visivel ou `None` (`findCategory`): cor e icone de registro apagado nao
-    /// voltam a tela.
+    /// A unica porta de resolucao de categoria. O app funde as copias dos padroes em tombstones
+    /// com `mergedInto` e nao regrava os lancamentos antigos (resolve na leitura); sem seguir o
+    /// campo aqui, eles cairiam em "Categoria removida" enquanto o celular mostra o nome.
+    pub fn resolve_category_id<'a>(&'a self, id: Option<&'a str>) -> Option<&'a str> {
+        follow(id, |cur| {
+            self.categories
+                .get(cur)
+                .filter(|c| c.deleted)
+                .and_then(|c| c.merged_into.as_deref())
+        })
+    }
+
+    /// Como `resolve_category_id`, para formas de pagamento.
+    pub fn resolve_payment_method_id<'a>(&'a self, id: Option<&'a str>) -> Option<&'a str> {
+        follow(id, |cur| {
+            self.payment_methods
+                .get(cur)
+                .filter(|p| p.deleted)
+                .and_then(|p| p.merged_into.as_deref())
+        })
+    }
+
+    /// Categoria visivel ou `None` (`findCategory`), depois de seguir `mergedInto`: cor e
+    /// icone de registro apagado nao voltam a tela.
     pub fn find_category(&self, id: Option<&str>) -> Option<&Category> {
-        id.and_then(|id| self.categories.get(id))
+        self.resolve_category_id(id)
+            .and_then(|id| self.categories.get(id))
             .filter(|c| !c.deleted)
     }
 
@@ -315,7 +361,8 @@ impl Dataset {
     }
 
     pub fn find_payment_method(&self, id: Option<&str>) -> Option<&PaymentMethod> {
-        id.and_then(|id| self.payment_methods.get(id))
+        self.resolve_payment_method_id(id)
+            .and_then(|id| self.payment_methods.get(id))
             .filter(|p| !p.deleted)
     }
 
@@ -750,6 +797,128 @@ mod tests {
         ds.apply([raw(RESERVE_MOVEMENTS, "M01", None, 4, movement("RE1"))]);
         assert!(ds.reserve_movements.contains_key("M01"));
         assert!(ds.ignored.is_empty());
+    }
+
+    /// `C1` viva; `C6` fundida em `C1`; `C7 -> C6 -> C1`; `C8 <-> C9` em ciclo; `C10` viva com
+    /// `mergedInto` (inconsistente); `C11` fundida numa apagada sem destino (`C12`).
+    fn merged() -> Dataset {
+        let mut ds = Dataset::default();
+        let fused = |name: &str, into: &str| json!({ "name": name, "color": "red", "icon": "tag", "mergedInto": into });
+        ds.apply([
+            raw(CATEGORIES, "C1", None, 1, category("Alimentação")),
+            raw(CATEGORIES, "C6", Some("x"), 2, fused("Copia", "C1")),
+            raw(CATEGORIES, "C7", Some("x"), 3, fused("Copia velha", "C6")),
+            raw(CATEGORIES, "C8", Some("x"), 4, fused("Ciclo A", "C9")),
+            raw(CATEGORIES, "C9", Some("x"), 5, fused("Ciclo B", "C8")),
+            raw(CATEGORIES, "C10", None, 6, fused("Viva", "C1")),
+            raw(CATEGORIES, "C11", Some("x"), 7, fused("Copia", "C12")),
+            raw(CATEGORIES, "C12", Some("x"), 8, category("Apagada")),
+            raw(
+                PAYMENT_METHODS,
+                "M1",
+                None,
+                9,
+                json!({ "name": "Pix", "icon": "zap" }),
+            ),
+            raw(
+                PAYMENT_METHODS,
+                "M6",
+                Some("x"),
+                10,
+                json!({ "name": "Pix", "icon": "zap", "mergedInto": "M1" }),
+            ),
+            raw(
+                PAYMENT_METHODS,
+                "M7",
+                Some("x"),
+                11,
+                json!({ "name": "Cheque", "icon": "receipt", "mergedInto": "M8" }),
+            ),
+            raw(
+                PAYMENT_METHODS,
+                "M8",
+                Some("x"),
+                12,
+                json!({ "name": "Cheque", "icon": "receipt" }),
+            ),
+        ]);
+        ds
+    }
+
+    #[test]
+    fn tombstone_fundida_resolve_para_o_destino() {
+        let ds = merged();
+        assert_eq!(ds.resolve_category_id(Some("C6")), Some("C1"));
+        assert_eq!(
+            ds.find_category(Some("C6")).map(|c| c.id.as_str()),
+            Some("C1")
+        );
+        assert_eq!(ds.category_name(Some("C6")), "Alimentação");
+    }
+
+    #[test]
+    fn cadeia_de_dois_saltos() {
+        let ds = merged();
+        assert_eq!(ds.resolve_category_id(Some("C7")), Some("C1"));
+        assert_eq!(ds.category_name(Some("C7")), "Alimentação");
+    }
+
+    #[test]
+    fn ciclo_termina_no_teto_de_saltos() {
+        let ds = merged();
+        // MAX_HOPS par: oito saltos a partir de C8 voltam para C8.
+        assert_eq!(ds.resolve_category_id(Some("C8")), Some("C8"));
+        assert_eq!(ds.find_category(Some("C8")), None);
+        assert_eq!(ds.category_name(Some("C9")), "Categoria removida");
+    }
+
+    #[test]
+    fn merged_into_em_linha_viva_e_ignorado() {
+        let ds = merged();
+        assert_eq!(ds.resolve_category_id(Some("C10")), Some("C10"));
+        assert_eq!(ds.category_name(Some("C10")), "Viva");
+    }
+
+    #[test]
+    fn destino_apagado_e_categoria_removida() {
+        let ds = merged();
+        assert_eq!(ds.resolve_category_id(Some("C11")), Some("C12"));
+        assert_eq!(ds.find_category(Some("C11")), None);
+        assert_eq!(ds.category_name(Some("C11")), "Categoria removida");
+        assert_eq!(ds.resolve_category_id(None), None);
+        assert_eq!(ds.category_name(None), "Sem categoria");
+        // Id que nao existe fica como esta.
+        assert_eq!(ds.resolve_category_id(Some("ausente")), Some("ausente"));
+    }
+
+    #[test]
+    fn forma_de_pagamento_fundida() {
+        let ds = merged();
+        assert_eq!(ds.resolve_payment_method_id(Some("M6")), Some("M1"));
+        assert_eq!(
+            ds.find_payment_method(Some("M6")).map(|p| p.id.as_str()),
+            Some("M1")
+        );
+        assert_eq!(ds.payment_method_name(Some("M6")), "Pix");
+        assert_eq!(ds.find_payment_method(Some("M7")), None);
+        assert_eq!(ds.payment_method_name(Some("M7")), "Forma removida");
+        assert_eq!(ds.resolve_payment_method_id(None), None);
+        assert_eq!(ds.payment_method_name(None), "Sem forma de pagamento");
+    }
+
+    #[test]
+    fn merged_into_com_tipo_errado_e_ignorada() {
+        let mut ds = Dataset::default();
+        let report = ds.apply([raw(
+            CATEGORIES,
+            "C6",
+            Some("x"),
+            1,
+            json!({ "name": "Copia", "color": "red", "icon": "tag", "mergedInto": 5 }),
+        )]);
+        assert_eq!(report.ignored_total, 1);
+        assert!(ds.ignored[CATEGORIES].contains("C6"));
+        assert!(!ds.categories.contains_key("C6"));
     }
 
     #[test]

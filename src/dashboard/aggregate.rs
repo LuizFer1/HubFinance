@@ -307,6 +307,26 @@ mod tests {
     }
 
     #[test]
+    fn rosca_soma_a_copia_fundida_no_padrao() {
+        let ds = crate::dashboard::fixtures_with_merged();
+        let slices = expense_by_category(&ds, "2026-09");
+        let names: Vec<(&str, &str, i64)> = slices
+            .iter()
+            .map(|s| (s.key.as_str(), s.name.as_str(), s.amount_minor))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                ("C2", "Moradia", 180_000),
+                ("C1", "Alimentação", 50_000),
+                ("C3", "Transporte", 6_000),
+                ("sem-categoria", "Sem categoria", 5_000),
+            ]
+        );
+        assert_eq!(slices[1].color, "orange");
+    }
+
+    #[test]
     fn rosca_por_categoria() {
         let ds = fixtures();
         let slices = expense_by_category(&ds, "2026-09");

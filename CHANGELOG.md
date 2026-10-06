@@ -6,6 +6,20 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [0.0.4] - 2026-10-05
+
+Nenhuma mudança no protocolo `/v1` nem no banco: instalar por cima da 0.0.3 preserva `epoch`,
+certificado e aparelhos pareados. Acompanha a fusão das categorias e formas de pagamento
+padrão do app (homefinance#33).
+
+### Corrigido
+
+- Lançamentos que apontam para uma cópia de categoria ou forma de pagamento fundida pelo app
+  (`mergedInto`) aparecem sob o padrão estável — rosca, lista, filtro de categoria e custo
+  essencial da reserva de emergência — em vez de "Categoria removida", "Forma removida" ou
+  "Sem categoria". Categoria apagada sem `mergedInto` continua como antes. Nenhuma mudança no
+  protocolo `/v1` nem no banco.
+
 ## [0.0.3] - 2026-10-03
 
 Nenhuma mudança no protocolo `/v1` nem no banco: instalar por cima da 0.0.2 preserva `epoch`,
@@ -83,7 +97,8 @@ campo da 0.0.2 acontece.
 - Scripts `scripts/e2e.sh` (roteiro curl de pareamento e sync) e `scripts/seed-dashboard.sh`
   (carga de exemplo do dashboard).
 
-[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v0.0.3...HEAD
+[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/LuizFer1/HubFinance/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/LuizFer1/HubFinance/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/LuizFer1/HubFinance/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/LuizFer1/HubFinance/releases/tag/v0.0.1

@@ -447,6 +447,43 @@ mod tests {
     }
 
     #[test]
+    fn filtro_de_categoria_inclui_a_copia_fundida() {
+        let ds = crate::dashboard::fixtures_with_merged();
+        let view = list_month(&ds, "2026-09", &filters(Some("C1"), &[], TypeFilter::All));
+        assert_eq!(ids(&view), vec!["T08", "T20"]);
+        let none = list_month(&ds, "2026-09", &filters(Some(""), &[], TypeFilter::All));
+        assert!(!ids(&none).contains(&"T20"));
+    }
+
+    #[test]
+    fn opcoes_somam_a_copia_no_padrao() {
+        let ds = crate::dashboard::fixtures_with_merged();
+        let options = category_options(&ds, "2026-09");
+        let c1 = options
+            .iter()
+            .find(|o| o.key.as_deref() == Some("C1"))
+            .unwrap();
+        assert_eq!(c1.count, 2);
+        assert!(options.iter().all(|o| o.key.as_deref() != Some("C6")));
+        let none = options
+            .iter()
+            .find(|o| o.key.as_deref() == Some(""))
+            .unwrap();
+        assert_eq!(none.count, 2, "a copia nao vai para Sem categoria");
+    }
+
+    #[test]
+    fn linha_da_copia_mostra_o_padrao() {
+        let ds = crate::dashboard::fixtures_with_merged();
+        let row = to_row(&ds, &ds.transactions["T20"]);
+        assert_eq!(row.category_name, "Alimentação");
+        assert_eq!(row.category_color.as_deref(), Some("orange"));
+        assert_eq!(row.category_icon.as_deref(), Some("utensils"));
+        assert_eq!(row.payment_name, "Crédito");
+        assert_eq!(row.payment_icon, "credit-card");
+    }
+
+    #[test]
     fn mes_com_lancamento_sem_autor() {
         let ds = fixtures();
         assert!(has_unauthored(&ds, "2026-09"));

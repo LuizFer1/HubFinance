@@ -840,6 +840,44 @@ mod tests {
     }
 
     #[test]
+    fn saldo_de_caixinha_com_deposito_e_retirada() {
+        // A retirada chega com sinal negativo do app e precisa SUBTRAIR do saldo;
+        // antes do conserto do contrato o movimento caia fora e o saldo ficava errado.
+        let mut ds = Dataset::default();
+        add_reserve(
+            &mut ds,
+            "RG1",
+            json!({ "kind": "goal", "name": "Viagem", "icon": "gift", "color": "rose",
+                    "targetMinor": 100000, "deadline": null, "recurring": null }),
+        );
+        add_movement(
+            &mut ds,
+            "MG1",
+            json!({ "reserveId": "RG1", "amountMinor": 50000, "occurredOn": "2026-09-05",
+                    "userId": null, "description": null, "reason": null, "recurring": false }),
+        );
+        add_movement(
+            &mut ds,
+            "MG2",
+            json!({ "reserveId": "RG1", "amountMinor": -15000, "occurredOn": "2026-09-10",
+                    "userId": null, "description": null, "reason": "health", "recurring": false }),
+        );
+        assert_eq!(ds.ignored_total(), 0);
+        assert_eq!(balance_until(&ds, "RG1", "2026-09"), 35_000);
+        let t = totals(&ds, &months());
+        assert_eq!(t.total_minor, 35_000);
+        assert_eq!(t.deposits_minor, 50_000);
+        assert_eq!(t.withdrawals_minor, 15_000);
+        assert_eq!(t.withdrawal_count, 1);
+        assert_eq!(t.saved_this_month_minor, 50_000);
+        assert_eq!(t.withdrawal_reserves, vec!["Viagem"]);
+        assert_eq!(
+            pot_row(&ds, &ds.reserves["RG1"], "2026-09", None).balance_minor,
+            35_000
+        );
+    }
+
+    #[test]
     fn nota_das_retiradas() {
         let ds = fixtures_with_reserves();
         assert_eq!(

@@ -760,9 +760,15 @@ mod tests {
         assert!(ds.has_reserves());
     }
 
-    #[test]
-    fn reserva_do_app_chega_inteira_no_dataset() {
-        let goal = json!({
+    // Linha exata que o app grava (fixtures.fake.ts): colunas base `id`, `createdAt`,
+    // `updatedAt` (HLC) e `deletedAt` junto dos campos da entidade. Foi este formato que
+    // antes caia inteiro fora do contrato e sumia do dashboard.
+    fn app_goal() -> Value {
+        json!({
+            "id": "01JZ0000000000000000000RE1",
+            "createdAt": "2026-08-07T12:00:00.000Z",
+            "updatedAt": "1754568000000-0000-01J9F3K2M7QX8YB4TVWZ0DCEHZ",
+            "deletedAt": null,
             "kind": "goal",
             "name": "Viagem",
             "icon": "gift",
@@ -773,8 +779,16 @@ mod tests {
             "essentialOverrideMinor": null,
             "deadline": "2027-07",
             "recurring": { "amountMinor": 30000, "day": 10, "since": "2026-11" }
-        });
+        })
+    }
+
+    #[test]
+    fn reserva_como_o_app_grava_passa_inteira() {
         let emergency = json!({
+            "id": "01JZ0000000000000000000RE2",
+            "createdAt": "2026-08-07T12:00:00.000Z",
+            "updatedAt": "1754568000000-0001-01J9F3K2M7QX8YB4TVWZ0DCEHZ",
+            "deletedAt": null,
             "kind": "emergency",
             "name": "Reserva de emergência",
             "icon": "lifebuoy",
@@ -786,23 +800,133 @@ mod tests {
             "deadline": null,
             "recurring": null
         });
+        let re1 = "01JZ0000000000000000000RE1";
+        let re2 = "01JZ0000000000000000000RE2";
         let mut ds = Dataset::default();
         let report = ds.apply([
-            raw(RESERVES, "RE1", None, 1, goal),
-            raw(RESERVES, "RE2", None, 2, emergency),
+            raw(RESERVES, re1, None, 1, app_goal()),
+            raw(RESERVES, re2, None, 2, emergency),
         ]);
         assert_eq!(report.ignored_total, 0);
         assert_eq!(report.applied, 2);
-        let g = &ds.reserves["RE1"];
+        assert!(ds.ignored.is_empty());
+        assert_eq!(ds.alive_reserves().count(), 2);
+        let g = &ds.reserves[re1];
+        assert_eq!(g.name, "Viagem");
+        assert_eq!(g.icon, "gift");
+        assert_eq!(g.color, "rose");
         assert_eq!(g.goal_minor, Some(500_000));
         assert_eq!(g.due_month.as_deref(), Some("2027-07"));
         assert_eq!(g.recurring_amount_minor, Some(30_000));
         assert_eq!(g.recurring_since.as_deref(), Some("2026-11"));
         assert_eq!(g.essential_override_minor, None);
-        let e = &ds.reserves["RE2"];
+        let e = &ds.reserves[re2];
+        assert_eq!(e.name, "Reserva de emergência");
+        assert_eq!(e.icon, "lifebuoy");
+        assert_eq!(e.color, "violet");
         assert_eq!(e.essential_override_minor, Some(350_000));
         assert_eq!(e.multiple, Some(6));
+        assert_eq!(e.essential_category_ids, vec!["C1", "C2"]);
         assert_eq!(e.recurring_amount_minor, None);
+    }
+
+    #[test]
+    fn movimentacao_como_o_app_grava_passa_inteira() {
+        // `reason` nao e lido pelo hub, mas tem de passar sem derrubar a linha. Nao ha
+        // `kind`: o sinal de `amountMinor` e que diz deposito ou retirada.
+        let mv = |id: &str,
+                  hlc: &str,
+                  amount: i64,
+                  on: &str,
+                  user: Value,
+                  desc: Value,
+                  reason: Value,
+                  rec: bool| {
+            json!({
+                "id": id,
+                "createdAt": "2026-09-06T12:00:00.000Z",
+                "updatedAt": hlc,
+                "deletedAt": null,
+                "reserveId": "01JZ0000000000000000000RE1",
+                "amountMinor": amount,
+                "occurredOn": on,
+                "userId": user,
+                "description": desc,
+                "reason": reason,
+                "recurring": rec
+            })
+        };
+        let us1 = "01JZ0000000000000000000US1";
+        let hlc = "1757160000000-0000-01J9F3K2M7QX8YB4TVWZ0DCEHZ";
+        let mut ds = Dataset::default();
+        let report = ds.apply([
+            raw(RESERVES, "01JZ0000000000000000000RE1", None, 1, app_goal()),
+            raw(
+                RESERVE_MOVEMENTS,
+                "01JZ0000000000000000000MV1",
+                None,
+                2,
+                mv(
+                    "01JZ0000000000000000000MV1",
+                    hlc,
+                    50_000,
+                    "2026-09-06",
+                    json!(us1),
+                    Value::Null,
+                    Value::Null,
+                    true,
+                ),
+            ),
+            raw(
+                RESERVE_MOVEMENTS,
+                "01JZ0000000000000000000MV2",
+                None,
+                3,
+                mv(
+                    "01JZ0000000000000000000MV2",
+                    hlc,
+                    -15_000,
+                    "2026-10-05",
+                    Value::Null,
+                    Value::Null,
+                    json!("health"),
+                    false,
+                ),
+            ),
+            raw(
+                RESERVE_MOVEMENTS,
+                "01JZ0000000000000000000MV3",
+                None,
+                4,
+                mv(
+                    "01JZ0000000000000000000MV3",
+                    hlc,
+                    -35_000,
+                    "2026-10-06",
+                    Value::Null,
+                    json!("Reserva excluída"),
+                    json!("other"),
+                    false,
+                ),
+            ),
+        ]);
+        assert_eq!(report.ignored_total, 0);
+        assert_eq!(report.applied, 4);
+        assert!(ds.ignored.is_empty());
+        assert_eq!(ds.alive_reserve_movements().count(), 3);
+        let m1 = &ds.reserve_movements["01JZ0000000000000000000MV1"];
+        assert_eq!(m1.kind, MovementKind::Deposit);
+        assert_eq!(m1.amount_minor, 50_000);
+        assert!(m1.recurring);
+        assert_eq!(m1.user_id.as_deref(), Some(us1));
+        let m2 = &ds.reserve_movements["01JZ0000000000000000000MV2"];
+        assert_eq!(m2.kind, MovementKind::Withdrawal);
+        assert_eq!(m2.amount_minor, 15_000);
+        assert!(!m2.recurring);
+        let m3 = &ds.reserve_movements["01JZ0000000000000000000MV3"];
+        assert_eq!(m3.kind, MovementKind::Withdrawal);
+        assert_eq!(m3.amount_minor, 35_000);
+        assert_eq!(m3.description.as_deref(), Some("Reserva excluída"));
     }
 
     #[test]

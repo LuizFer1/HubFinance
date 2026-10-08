@@ -89,6 +89,8 @@ pub struct Reserve {
     pub due_month: Option<String>,
     pub recurring_amount_minor: Option<i64>,
     /// Primeiro mes em que o deposito mensal vale; o app so materializa a partir dele.
+    /// Nao entra em ritmo/ETA: o app tambem nao o usa na projecao, so na materializacao do
+    /// deposito (`planDeposits` em deposits.ts).
     pub recurring_since: Option<String>,
     /// Custo essencial digitado no app quando nao havia historico.
     pub essential_override_minor: Option<i64>,

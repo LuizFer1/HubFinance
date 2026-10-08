@@ -69,14 +69,6 @@ pub fn whole_brl(minor: i64) -> String {
     )
 }
 
-/// "3,5": meses cobertos, uma casa decimal, virgula pt-BR. `(x * 10).round()`: o `round` do
-/// Rust leva o meio para longe do zero, igual ao `toLocaleString` para positivos.
-pub fn one_decimal(x: f64) -> String {
-    let tenths = (x.abs() * 10.0).round() as u64;
-    let sign = if x < 0.0 && tenths > 0 { MINUS } else { "" };
-    format!("{sign}{},{}", group_thousands(tenths / 10), tenths % 10)
-}
-
 /// Rotulo do eixo do grafico: "R$ 8 mil", "R$ 7,5 mil", "R$ 500". Uma casa decimal, sem zero a
 /// direita, como o `toLocaleString('pt-BR')` do prototipo faz com os tetos que ele gera.
 pub fn axis_label(minor: i64) -> String {
@@ -159,15 +151,6 @@ mod tests {
         assert_eq!(whole_brl(14_049), "R$ 140");
         assert_eq!(whole_brl(-26_500), "R$ 265");
         assert_eq!(whole_brl(0), "R$ 0");
-    }
-
-    #[test]
-    fn uma_casa_decimal() {
-        assert_eq!(one_decimal(3.538), "3,5");
-        assert_eq!(one_decimal(4.0), "4,0");
-        assert_eq!(one_decimal(0.04), "0,0");
-        assert_eq!(one_decimal(3.95), "4,0");
-        assert_eq!(one_decimal(12.0), "12,0");
     }
 
     #[test]

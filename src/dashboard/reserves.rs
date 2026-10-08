@@ -5,11 +5,10 @@
 //! leem `transactions`, e o teste `reservas_nao_entram_no_dashboard_nem_nos_lancamentos` de
 //! `view.rs` prova isso. A unica leitura de `transactions` aqui e o custo essencial.
 
-use super::aggregate::js_round;
 use super::contract::{Kind, MovementKind, ReserveKind};
 use super::dataset::{Dataset, Reserve, ReserveMovement};
 use super::list::RowAuthor;
-use super::money::{format_brl, one_decimal, whole_brl};
+use super::money::{format_brl, group_thousands, whole_brl};
 use super::periods::{last_months, month_of, month_short_year, months_between, shift_month};
 
 /// Passo do teto do eixo do grafico: R$ 6.000 (`Math.ceil(max / 6000) * 6000` do prototipo).
@@ -68,7 +67,9 @@ fn signed(m: &ReserveMovement) -> i64 {
 /// Saldo no fim de `month`: movimentacoes visiveis da reserva com mes `<= month` (comparacao
 /// de string `YYYY-MM`). Mes futuro fica fora porque saldo atual e "saldo no fim do mes
 /// corrente" — a ultima coluna do grafico e o card Total contam a mesma coisa; uma linha
-/// agendada entra quando o mes chegar.
+/// agendada entra quando o mes chegar. Diferenca intencional: o app (`reserveBalance`,
+/// `balances.ts`) soma tambem movimentos datados no futuro; o hub os deixa de fora ate o mes
+/// chegar (decisao 14 da spec).
 pub fn balance_until(dataset: &Dataset, reserve_id: &str, month: &str) -> i64 {
     dataset
         .alive_reserve_movements()
@@ -117,6 +118,16 @@ pub struct ReserveTotals {
     /// Soma dos saldos atuais das reservas vivas.
     pub total_minor: i64,
     /// Depositos no mes corrente.
+    ///
+    /// Diferenca INTENCIONAL com `savedInMonth` do app (`HomeFinance_Mobile/src/domain/reserves/
+    /// balances.ts`), nao um bug a "corrigir": (a) o app conta movimentos de reservas
+    /// apagadas e o hub nao, porque `Dataset::alive_reserve_movements` tira movimento de reserva
+    /// apagada de tudo (decisao 13 da spec de 2026-10-02): o total do app soma so reservas
+    /// vivas, e dinheiro sem destino num total que o app nao mostra faria os dois discordarem;
+    /// (b) o app mostra o liquido (depositos menos retiradas, "retirados" quando negativo, em
+    /// `reserves-page.tsx`) e o hub soma so depositos, como a spec define ("R$ X
+    /// guardados em {mes}" = soma dos depositos do mes corrente). As retiradas aparecem no card
+    /// dos ultimos 12 meses.
     pub saved_this_month_minor: i64,
     /// Depositos e retiradas na janela de 12 meses.
     pub deposits_minor: i64,
@@ -234,7 +245,10 @@ pub struct EssentialPart {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EssentialCost {
-    /// Soma das medias arredondadas: assim a legenda fecha no total que o card mostra.
+    /// `Math.round(soma / meses)` como `essentialCost` do app (essential.ts): a meta da
+    /// emergencia e multiplo x total, e app e hub tem de chegar no mesmo centavo. A legenda
+    /// arredonda cada categoria, entao pode somar alguns centavos diferente do total; a
+    /// diferenca e intencional e so de exibicao (a tela mostra reais inteiros).
     pub total_minor: i64,
     /// Denominador da media: meses da janela com historico.
     pub months: usize,
@@ -249,6 +263,9 @@ pub struct EssentialCost {
 /// corrente e parcial e derrubaria a media). Denominador: meses da janela a partir do primeiro
 /// lancamento vivo do hub — uma casa com 2 meses de historico dividiria por 6 e teria meta
 /// irreal. Sem lancamento vivo antes do mes corrente -> `None` (sem base).
+///
+/// O total e `Math.round(soma de todas as categorias / meses)`, arredondado uma unica vez como
+/// no app; as partes arredondam cada categoria (so legenda).
 ///
 /// Casa pelo id resolvido (`mergedInto` seguido so em tombstone), viva ou apagada: o gasto
 /// passado foi essencial mesmo que a categoria tenha sido apagada depois.
@@ -269,6 +286,8 @@ pub fn essential_cost(
     let den = i64::try_from(months).unwrap_or(i64::MAX);
     let mut seen: Vec<&str> = Vec::new();
     let mut parts: Vec<EssentialPart> = Vec::new();
+    // Soma bruta de todas as categorias: o total arredonda uma vez so, como o app.
+    let mut gross = 0i64;
     for raw in category_ids {
         // Copia fundida e padrao na mesma lista sao a mesma categoria: deduplicar pelo id
         // resolvido, senao ela contaria duas vezes. Categoria apagada sem `mergedInto` resolve
@@ -294,6 +313,7 @@ pub fn essential_cost(
             Some(c) => (c.name.clone(), c.color.clone()),
             None => ("Categoria removida".to_string(), "slate".to_string()),
         };
+        gross = gross.saturating_add(sum);
         parts.push(EssentialPart {
             category_id: id.to_string(),
             name,
@@ -308,9 +328,7 @@ pub fn essential_cost(
             .then_with(|| a.category_id.cmp(&b.category_id))
     });
     Some(EssentialCost {
-        total_minor: parts
-            .iter()
-            .fold(0i64, |acc, p| acc.saturating_add(p.average_minor)),
+        total_minor: div_round(gross, den),
         months,
         parts,
         informed: false,
@@ -390,6 +408,13 @@ pub struct EmergencyView {
     pub eta_label: String,
 }
 
+/// Meses cobertos com uma casa, TRUNCADOS como `formatMonths` (goals.ts): arredondar
+/// 3,96 para "4,0" diria que a familia aguenta quatro meses quando nao aguenta.
+fn months_label(x: f64) -> String {
+    let tenths = (x.max(0.0) * 10.0 + 1e-9).floor() as u64;
+    format!("{},{}", group_thousands(tenths / 10), tenths % 10)
+}
+
 pub fn emergency_view(dataset: &Dataset, r: &Reserve, current: &str) -> EmergencyView {
     let balance = balance_until(dataset, &r.id, current);
     let multiple = r.multiple.unwrap_or(DEFAULT_MULTIPLE);
@@ -398,13 +423,19 @@ pub fn emergency_view(dataset: &Dataset, r: &Reserve, current: &str) -> Emergenc
     let coverage = cost
         .as_ref()
         .filter(|c| c.total_minor > 0)
-        .map(|c| balance as f64 / c.total_minor as f64);
+        // Espelha `monthsCovered` (goals.ts): saldo negativo cobre 0 meses, nao
+        // "-1,2"; sem o piso o rotulo e o medidor mostrariam cobertura negativa.
+        .map(|c| balance.max(0) as f64 / c.total_minor as f64);
     let recurring = r.recurring_amount_minor.filter(|v| *v > 0);
     let eta = if goal <= 0 {
         EmergencyEta::NoGoal
     } else if balance >= goal {
         EmergencyEta::Reached
     } else if let Some(rec) = recurring {
+        // Espelha `projectedCompletion` do app (goals.ts): mes corrente + ceil(falta /
+        // deposito). `recurring.since` nao entra de proposito, como no app: ele nasce como o
+        // mes seguinte (ou o corrente, se ligado com um deposito do mes), entao "corrente + n"
+        // ja conta o primeiro deposito no mes certo.
         let n = div_ceil(goal.saturating_sub(balance), rec);
         EmergencyEta::Projected {
             month: shift_month(current, i32::try_from(n).unwrap_or(i32::MAX)),
@@ -419,11 +450,13 @@ pub fn emergency_view(dataset: &Dataset, r: &Reserve, current: &str) -> Emergenc
         multiple,
         goal_minor: goal,
         coverage,
-        coverage_label: coverage.map_or_else(|| "—".to_string(), one_decimal),
+        coverage_label: coverage.map_or_else(|| "—".to_string(), months_label),
         pct_label: if goal > 0 {
+            // Piso, como o `percent` de reserve-detail.tsx: arredondar mostraria 100% (ou 59% em
+            // vez de 58%) antes de a meta fechar de fato.
             format!(
                 "{}% da meta",
-                js_round(balance as f64 / goal as f64 * 100.0) as i64
+                (balance as f64 / goal as f64 * 100.0).floor() as i64
             )
         } else {
             "Sem meta".to_string()
@@ -484,7 +517,14 @@ pub fn pace(
     if months_left <= 0 {
         return Pace::Overdue { remaining };
     }
-    let needed = div_ceil(remaining, i64::from(months_left));
+    // Espelha `suggestedMonthly` do app (goals.ts): reais inteiros PARA CIMA, porque a
+    // tela mostra sem centavos e quem guarda o que le precisa chegar na meta. Arredondar em
+    // centavos e exibir "meio para cima" mostraria R$ 265 onde o app sugere R$ 266.
+    // Diferenca intencional: prazo vencido vira `Overdue` aqui, enquanto o app divide por 1
+    // (`Math.max(1, ...)`); o app so mostra a sugestao no formulario, o hub mostra estado no
+    // dashboard, e "Prazo encerrado · faltam X" e o rotulo certo para o card.
+    let needed =
+        div_ceil(remaining, i64::from(months_left).saturating_mul(100)).saturating_mul(100);
     match recurring {
         None => Pace::NoRecurring { needed },
         Some(r) if r >= needed => Pace::OnTrack {
@@ -574,7 +614,9 @@ pub fn pot_row(dataset: &Dataset, r: &Reserve, current: &str, derived_goal: Opti
             format!(
                 "de {} · {}%",
                 format_brl(g),
-                js_round(balance as f64 / g as f64 * 100.0) as i64
+                // Piso, como o `percent` de reserve-detail.tsx: 100% so quando a meta fecha de
+                // fato.
+                (balance as f64 / g as f64 * 100.0).floor() as i64
             )
         }),
         meta_left,
@@ -919,6 +961,21 @@ mod tests {
     }
 
     #[test]
+    fn total_arredonda_uma_vez_como_o_app() {
+        let ds = with_transactions(&[
+            ("T1", "expense", 15_000, "2026-07-05", "C1"),
+            ("T2", "expense", 15_001, "2026-08-05", "C1"),
+            ("T3", "expense", 15_000, "2026-07-06", "C2"),
+            ("T4", "expense", 15_001, "2026-08-06", "C2"),
+        ]);
+        let c = essential_cost(&ds, &strings(&["C1", "C2"]), "2026-09").unwrap();
+        assert_eq!(c.months, 2);
+        // round(60_002 / 2) = 30_001; somar as partes arredondadas daria 30_002.
+        assert_eq!(c.total_minor, 30_001);
+        assert!(c.parts.iter().all(|p| p.average_minor == 15_001));
+    }
+
+    #[test]
     fn denominador_e_meses_com_historico() {
         let ds = with_transactions(&[
             ("T1", "expense", 180_000, "2026-07-10", "C2"),
@@ -1022,7 +1079,8 @@ mod tests {
         assert_eq!(e.goal_minor, 390_000);
         assert!((e.coverage.unwrap() - 3.538).abs() < 1e-3);
         assert_eq!(e.coverage_label, "3,5");
-        assert_eq!(e.pct_label, "59% da meta");
+        // Piso: 230.000 / 390.000 = 58,97% (o app mostra 58%).
+        assert_eq!(e.pct_label, "58% da meta");
         assert_eq!(e.remaining_label, "Faltam R$ 1.600,00 para a meta");
         let expected = [1.0, 1.0, 1.0, 0.538, 0.0, 0.0];
         assert_eq!(e.segments.len(), 6);
@@ -1109,6 +1167,28 @@ mod tests {
     }
 
     const NOW: &str = "2026-09";
+
+    #[test]
+    fn ritmo_em_reais_inteiros_como_o_app() {
+        assert_eq!(
+            pace(0, Some(265_010), Some("2027-07"), None, NOW),
+            Pace::NoRecurring { needed: 26_600 }
+        );
+        assert_eq!(
+            pace(0, Some(100_001), Some("2026-10"), Some(100_050), NOW),
+            Pace::Behind {
+                recurring: 100_050,
+                needed: 100_100
+            }
+        );
+        assert_eq!(
+            pace(0, Some(100_001), Some("2026-10"), Some(100_100), NOW),
+            Pace::OnTrack {
+                recurring: 100_100,
+                needed: 100_100
+            }
+        );
+    }
 
     #[test]
     fn ritmo_nas_sete_variantes() {
@@ -1217,9 +1297,9 @@ mod tests {
         assert_eq!(p1.color, ReserveColor::Token("sky".into()));
         assert_eq!(
             row("RP2").meta_right.as_deref(),
-            Some("de R$ 2.400,00 · 17%")
+            Some("de R$ 2.400,00 · 16%")
         );
-        assert_eq!(row("RP3").meta_right.as_deref(), Some("de R$ 800,00 · 48%"));
+        assert_eq!(row("RP3").meta_right.as_deref(), Some("de R$ 800,00 · 47%"));
         let p4 = row("RP4");
         assert_eq!(p4.meta_left, "sem meta");
         assert_eq!(p4.meta_right, None);
@@ -1305,6 +1385,28 @@ mod tests {
             informed_json(json!([]), json!(null), 250_000),
         );
         assert_eq!(emergency_goal(&ds, &ds.reserves["RE1"], NOW), 1_500_000);
+    }
+
+    #[test]
+    fn rotulos_como_o_app() {
+        assert_eq!(months_label(3.96), "3,9");
+        assert_eq!(months_label(4.0), "4,0");
+        assert_eq!(months_label(0.04), "0,0");
+        assert_eq!(months_label(-1.2), "0,0");
+        assert_eq!(months_label(12.0), "12,0");
+
+        // Retirada maior que os depositos: saldo negativo cobre 0 meses, sem sinal.
+        let mut ds = Dataset::default();
+        add_reserve(&mut ds, "RE1", informed_json(json!([]), json!(3), 250_000));
+        add_movement(
+            &mut ds,
+            "M1",
+            json!({ "reserveId": "RE1", "amountMinor": -50_000, "occurredOn": "2026-09-02" }),
+        );
+        let e = emergency_view(&ds, &ds.reserves["RE1"], NOW);
+        assert!(e.balance_minor < 0);
+        assert_eq!(e.coverage_label, "0,0");
+        assert!(e.segments.iter().all(|s| *s == 0.0));
     }
 
     #[test]

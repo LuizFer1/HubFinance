@@ -6,6 +6,26 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+Nenhuma mudança no protocolo `/v1` nem no banco: as linhas de reservas já guardadas no hub
+passam a aparecer sem ressincronizar.
+
+### Corrigido
+
+- A página Reservas lê `reserves` e `reserveMovements` no formato que o app grava (caixinha
+  `kind: "goal"`, `targetMinor`, `deadline`, `recurring { amountMinor, day, since }`, movimento
+  com `amountMinor` com sinal e sem `kind`): antes toda caixinha e todo movimento ficavam fora
+  do contrato e os saldos apareciam zerados.
+- Paridade de regras com o app: custo essencial arredonda o total uma única vez (como
+  `Math.round` do app), ritmo sugere reais inteiros para cima, meses cobertos são truncados,
+  saldo negativo cobre 0 meses e o percentual da meta usa piso.
+- Movimento com `amountMinor` 0 é contado como fora do contrato (o app nunca grava zero).
+
+### Adicionado
+
+- A reserva de emergência usa o custo essencial informado no app (`essentialOverrideMinor`)
+  quando existe: a meta vira múltiplo × custo informado, e a tela mostra o total como "custo
+  informado no app", sem a lista de categorias.
+
 ## [0.0.4] - 2026-10-05
 
 Nenhuma mudança no protocolo `/v1` nem no banco: instalar por cima da 0.0.3 preserva `epoch`,

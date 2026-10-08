@@ -11,8 +11,7 @@ use crate::store::Store;
 pub const REFRESH_DEBOUNCE: Duration = Duration::from_millis(500);
 
 /// As tabelas que o contrato de campos le; o resto nem sai do banco. `reserves` e
-/// `reserveMovements` entram antes do app sincroniza-las: quando ele passar a enviar, a tela
-/// preenche sem versao nova do hub.
+/// `reserveMovements` sao lidas no formato que o app grava.
 pub const TABLES: [&str; 7] = [
     "transactions",
     "categories",
@@ -255,7 +254,7 @@ pub(crate) mod tests {
                         "01HZZZZZZZZZZZZZZZZZZZZZB1",
                         1000,
                         false,
-                        reserve("pot"),
+                        reserve("goal"),
                     ),
                     push_entry(
                         "reserveMovements",
@@ -264,7 +263,6 @@ pub(crate) mod tests {
                         false,
                         json!({
                             "reserveId": "01HZZZZZZZZZZZZZZZZZZZZZB1",
-                            "kind": "deposit",
                             "amountMinor": 5000,
                             "occurredOn": "2026-09-06"
                         }),

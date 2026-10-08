@@ -22,14 +22,15 @@
 #     fica vazio (buraco no meio das seis barras e o vazio "Nada em <mes>" em Lancamentos);
 #     mais uma com a categoria apagada, uma sem categoria, uma APAGADA e uma FORA DO CONTRATO
 #     ("amountMinor": "muito");
-#   - reserves: a emergencia (multiplo 6, categorias essenciais Alimentacao, Moradia,
-#     Transporte e Saude, por id), as caixinhas "Viagem de julho" e "IPVA" (com meta e prazo)
-#     e "Sem meta", uma APAGADA e uma FORA DO CONTRATO ("kind": "box");
-#   - reserveMovements: depositos mensais recorrentes na emergencia, na viagem e no IPVA nos
-#     seis meses que terminam no corrente, uma retirada da emergencia, um deposito avulso na
-#     viagem, um sem autor nem descricao em "Sem meta", um na reserva apagada e um no mes que
-#     vem (os dois ficam fora de tudo), uma APAGADA e uma FORA DO CONTRATO ("kind":
-#     "transfer").
+#   - reserves (formato do app): a emergencia (multiplo 6, categorias essenciais Alimentacao,
+#     Moradia, Transporte e Saude, por id), as caixinhas kind "goal" "Viagem de julho" e
+#     "IPVA" (com meta, prazo e aporte recorrente) e "Sem meta", uma APAGADA e uma FORA DO
+#     CONTRATO ("kind": "box");
+#   - reserveMovements: amountMinor com sinal (>0 guardar, <0 retirar) e reason na retirada;
+#     depositos mensais recorrentes na emergencia, na viagem e no IPVA nos seis meses que
+#     terminam no corrente, uma retirada da emergencia, um deposito avulso na viagem, um sem
+#     autor nem descricao em "Sem meta", um na reserva apagada e um no mes que vem (os dois
+#     ficam fora de tudo), uma APAGADA e uma FORA DO CONTRATO ("amountMinor": 0).
 #   Fora do contrato no total: 3 linhas (transactions: 1, reserves: 1, reserveMovements: 1).
 
 set -euo pipefail
@@ -126,14 +127,20 @@ tx() {
     "\"kind\":\"$3\",\"description\":\"$4\",\"amountMinor\":$5,\"currency\":\"BRL\",\"occurredOn\":\"$6\",\"categoryId\":$cat,\"paymentMethodId\":$pm,\"cashbackMinor\":null,\"userId\":$user,\"recurrenceId\":$rec,\"occurrenceKey\":null"
 }
 
-# <id> <apagada> <reserva> <deposit|withdrawal> <centavos> <data> <autor|null> <descricao|null> <recorrente:true|false>
+# <id> <apagada> <reserva> <deposit|withdrawal> <centavos> <data> <autor|null> <descricao|null> <recorrente:true|false> [reason]
+# O app guarda o sinal no proprio amountMinor (retirada < 0) e exige reason na retirada.
 mv() {
   local q='"'
-  local user=null desc=null
+  local user=null desc=null reason=null amount=$5
   [[ $7 != null ]] && user="$q$7$q"
   [[ $8 != null ]] && desc="$q$8$q"
+  if [[ $4 == withdrawal ]]; then
+    amount=-$5
+    [[ -n ${10:-} ]] || fail "retirada $1 sem reason"
+    reason="$q${10}$q"
+  fi
   add reserveMovements "$1" "$2" \
-    "\"reserveId\":\"$3\",\"kind\":\"$4\",\"amountMinor\":$5,\"occurredOn\":\"$6\",\"userId\":$user,\"description\":$desc,\"recurring\":$9,\"reason\":null"
+    "\"reserveId\":\"$3\",\"amountMinor\":$amount,\"occurredOn\":\"$6\",\"userId\":$user,\"description\":$desc,\"reason\":$reason,\"recurring\":$9"
 }
 
 # ---------------------------------------------------------------------------------------
@@ -173,11 +180,13 @@ add recurrences "$REC_RENT" 0 '"kind":"expense","description":"Aluguel","amountM
 FIRST=$(date +%Y-%m-01)
 
 # Reservas: a emergencia aponta para as categorias essenciais por id (nunca por nome).
-add reserves "$R_EMERG" 0 '"kind":"emergency","name":"Reserva de emergência","icon":"piggy-bank","color":"slate","goalMinor":null,"multiple":6,"essentialCategoryIds":["'"$C_FOOD"'","'"$C_HOME"'","'"$C_CAR"'","'"$C_HEALTH"'"],"dueMonth":null,"recurringAmountMinor":50000,"recurringDay":6'
-add reserves "$R_TRIP" 0 '"kind":"pot","name":"Viagem de julho","icon":"plane","color":"sky","goalMinor":600000,"multiple":null,"essentialCategoryIds":null,"dueMonth":"'"$(date -d "$FIRST +10 month" +%Y-%m)"'","recurringAmountMinor":30000,"recurringDay":10'
-add reserves "$R_IPVA" 0 '"kind":"pot","name":"IPVA","icon":"car","color":"amber","goalMinor":240000,"multiple":null,"essentialCategoryIds":null,"dueMonth":"'"$(date -d "$FIRST +4 month" +%Y-%m)"'","recurringAmountMinor":20000,"recurringDay":5'
-add reserves "$R_FREE" 0 '"kind":"pot","name":"Sem meta","icon":"wallet","color":"teal","goalMinor":null,"multiple":null,"essentialCategoryIds":null,"dueMonth":null,"recurringAmountMinor":null,"recurringDay":null'
-add reserves "$R_DEAD" 1 '"kind":"pot","name":"Apagada","icon":"tag","color":"lime","goalMinor":100000,"multiple":null,"essentialCategoryIds":null,"dueMonth":null,"recurringAmountMinor":null,"recurringDay":null'
+# O aporte recorrente comeca no mes do primeiro deposito mensal abaixo (k=5).
+SINCE=$(date -d "$FIRST -5 month" +%Y-%m)
+add reserves "$R_EMERG" 0 '"kind":"emergency","name":"Reserva de emergência","icon":"piggy-bank","color":"slate","targetMinor":null,"multiple":6,"essentialCategoryIds":["'"$C_FOOD"'","'"$C_HOME"'","'"$C_CAR"'","'"$C_HEALTH"'"],"essentialOverrideMinor":null,"deadline":null,"recurring":{"amountMinor":50000,"day":6,"since":"'"$SINCE"'"}'
+add reserves "$R_TRIP" 0 '"kind":"goal","name":"Viagem de julho","icon":"plane","color":"sky","targetMinor":600000,"multiple":null,"essentialCategoryIds":null,"essentialOverrideMinor":null,"deadline":"'"$(date -d "$FIRST +10 month" +%Y-%m)"'","recurring":{"amountMinor":30000,"day":10,"since":"'"$SINCE"'"}'
+add reserves "$R_IPVA" 0 '"kind":"goal","name":"IPVA","icon":"car","color":"amber","targetMinor":240000,"multiple":null,"essentialCategoryIds":null,"essentialOverrideMinor":null,"deadline":"'"$(date -d "$FIRST +4 month" +%Y-%m)"'","recurring":{"amountMinor":20000,"day":5,"since":"'"$SINCE"'"}'
+add reserves "$R_FREE" 0 '"kind":"goal","name":"Sem meta","icon":"wallet","color":"teal","targetMinor":null,"multiple":null,"essentialCategoryIds":null,"essentialOverrideMinor":null,"deadline":null,"recurring":null'
+add reserves "$R_DEAD" 1 '"kind":"goal","name":"Apagada","icon":"tag","color":"lime","targetMinor":100000,"multiple":null,"essentialCategoryIds":null,"essentialOverrideMinor":null,"deadline":null,"recurring":null'
 # Fora do contrato: kind desconhecido. O hub aceita (JSON opaco), a tela ignora e conta.
 add reserves 01HZZZZZZZZZZZZZZZZZZZZZB9 0 '"kind":"box","name":"Fora do contrato","icon":"tag","color":"slate"'
 
@@ -219,7 +228,7 @@ add transactions 01HZZZZZZZZZZZZZZZZZZZZZX4 0 \
 
 
 # Movimentacoes avulsas das reservas.
-mv 01HZZZZZZZZZZZZZZZZZZZZZY1 0 "$R_EMERG" withdrawal 64000 "$M1-18" "$ANA" "Conserto da geladeira" false
+mv 01HZZZZZZZZZZZZZZZZZZZZZY1 0 "$R_EMERG" withdrawal 64000 "$M1-18" "$ANA" "Conserto da geladeira" false home
 mv 01HZZZZZZZZZZZZZZZZZZZZZY2 0 "$R_TRIP" deposit 150000 "$(date -d "$FIRST -2 month" +%Y-%m)-15" "$ANA" "Parte do freela" false
 # Sem autor nem descricao: a lista mostra "Guardado" e o autor "—".
 mv 01HZZZZZZZZZZZZZZZZZZZZZY3 0 "$R_FREE" deposit 10000 "$M1-02" null null false
@@ -227,9 +236,9 @@ mv 01HZZZZZZZZZZZZZZZZZZZZZY3 0 "$R_FREE" deposit 10000 "$M1-02" null null false
 mv 01HZZZZZZZZZZZZZZZZZZZZZY4 0 "$R_DEAD" deposit 70000 "$M1-03" "$LUIZ" null false
 mv 01HZZZZZZZZZZZZZZZZZZZZZY5 0 "$R_EMERG" deposit 5000 "$(date -d "$FIRST +1 month" +%Y-%m)-05" "$LUIZ" "Agendado" false
 mv 01HZZZZZZZZZZZZZZZZZZZZZY6 1 "$R_EMERG" deposit 99999 "$M1-04" "$LUIZ" "Movimentação apagada" false
-# Fora do contrato: kind desconhecido.
+# Fora do contrato: amountMinor 0 (o app nunca grava zero).
 add reserveMovements 01HZZZZZZZZZZZZZZZZZZZZZY7 0 \
-  "\"reserveId\":\"$R_EMERG\",\"kind\":\"transfer\",\"amountMinor\":1000,\"occurredOn\":\"$M1-05\",\"userId\":null,\"description\":null,\"recurring\":null"
+  "\"reserveId\":\"$R_EMERG\",\"amountMinor\":0,\"occurredOn\":\"$M1-05\",\"userId\":null,\"description\":null,\"reason\":null,\"recurring\":false"
 
 printf '== Push de %d linhas\n' "${#ROWS[@]}"
 JOINED=$(IFS=,; printf '%s' "${ROWS[*]}")

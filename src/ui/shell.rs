@@ -898,7 +898,7 @@ mod tests {
             id: "RP1".into(),
             deleted_at: None,
             seq: 1,
-            data: serde_json::json!({ "kind": "pot", "name": "X", "icon": "tag", "color": "sky" })
+            data: serde_json::json!({ "kind": "goal", "name": "X", "icon": "tag", "color": "sky" })
                 .to_string(),
         }]);
         let snap = Snapshot {

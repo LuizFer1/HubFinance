@@ -5,11 +5,10 @@
 //! leem `transactions`, e o teste `reservas_nao_entram_no_dashboard_nem_nos_lancamentos` de
 //! `view.rs` prova isso. A unica leitura de `transactions` aqui e o custo essencial.
 
-use super::aggregate::js_round;
 use super::contract::{Kind, MovementKind, ReserveKind};
 use super::dataset::{Dataset, Reserve, ReserveMovement};
 use super::list::RowAuthor;
-use super::money::{format_brl, one_decimal, whole_brl};
+use super::money::{format_brl, group_thousands, whole_brl};
 use super::periods::{last_months, month_of, month_short_year, months_between, shift_month};
 
 /// Passo do teto do eixo do grafico: R$ 6.000 (`Math.ceil(max / 6000) * 6000` do prototipo).
@@ -30,7 +29,7 @@ pub enum ReserveColor {
 pub fn reserve_color(r: &Reserve) -> ReserveColor {
     match r.kind {
         ReserveKind::Emergency => ReserveColor::Accent,
-        ReserveKind::Pot => ReserveColor::Token(r.color.clone()),
+        ReserveKind::Goal => ReserveColor::Token(r.color.clone()),
     }
 }
 
@@ -39,7 +38,7 @@ pub fn reserve_color(r: &Reserve) -> ReserveColor {
 pub fn reserve_icon(r: &Reserve) -> &str {
     match r.kind {
         ReserveKind::Emergency => "lifebuoy",
-        ReserveKind::Pot => &r.icon,
+        ReserveKind::Goal => &r.icon,
     }
 }
 
@@ -68,7 +67,9 @@ fn signed(m: &ReserveMovement) -> i64 {
 /// Saldo no fim de `month`: movimentacoes visiveis da reserva com mes `<= month` (comparacao
 /// de string `YYYY-MM`). Mes futuro fica fora porque saldo atual e "saldo no fim do mes
 /// corrente" — a ultima coluna do grafico e o card Total contam a mesma coisa; uma linha
-/// agendada entra quando o mes chegar.
+/// agendada entra quando o mes chegar. Diferenca intencional: o app (`reserveBalance`,
+/// `balances.ts`) soma tambem movimentos datados no futuro; o hub os deixa de fora ate o mes
+/// chegar (decisao 14 da spec).
 pub fn balance_until(dataset: &Dataset, reserve_id: &str, month: &str) -> i64 {
     dataset
         .alive_reserve_movements()
@@ -117,6 +118,16 @@ pub struct ReserveTotals {
     /// Soma dos saldos atuais das reservas vivas.
     pub total_minor: i64,
     /// Depositos no mes corrente.
+    ///
+    /// Diferenca INTENCIONAL com `savedInMonth` do app (`HomeFinance_Mobile/src/domain/reserves/
+    /// balances.ts`), nao um bug a "corrigir": (a) o app conta movimentos de reservas
+    /// apagadas e o hub nao, porque `Dataset::alive_reserve_movements` tira movimento de reserva
+    /// apagada de tudo (decisao 13 da spec de 2026-10-02): o total do app soma so reservas
+    /// vivas, e dinheiro sem destino num total que o app nao mostra faria os dois discordarem;
+    /// (b) o app mostra o liquido (depositos menos retiradas, "retirados" quando negativo, em
+    /// `reserves-page.tsx`) e o hub soma so depositos, como a spec define ("R$ X
+    /// guardados em {mes}" = soma dos depositos do mes corrente). As retiradas aparecem no card
+    /// dos ultimos 12 meses.
     pub saved_this_month_minor: i64,
     /// Depositos e retiradas na janela de 12 meses.
     pub deposits_minor: i64,
@@ -234,17 +245,27 @@ pub struct EssentialPart {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EssentialCost {
-    /// Soma das medias arredondadas: assim a legenda fecha no total que o card mostra.
+    /// `Math.round(soma / meses)` como `essentialCost` do app (essential.ts): a meta da
+    /// emergencia e multiplo x total, e app e hub tem de chegar no mesmo centavo. A legenda
+    /// arredonda cada categoria, entao pode somar alguns centavos diferente do total; a
+    /// diferenca e intencional e so de exibicao (a tela mostra reais inteiros).
     pub total_minor: i64,
     /// Denominador da media: meses da janela com historico.
     pub months: usize,
     pub parts: Vec<EssentialPart>,
+    /// True quando o total veio de `essentialOverrideMinor` (custo digitado no app quando a casa
+    /// nao tinha historico); nesse caso `parts` e vazio e `months` e 0, porque nao existe media
+    /// por categoria para mostrar.
+    pub informed: bool,
 }
 
 /// Custo essencial medio por mes. Janela: os seis meses **completos** antes do corrente (o mes
 /// corrente e parcial e derrubaria a media). Denominador: meses da janela a partir do primeiro
 /// lancamento vivo do hub — uma casa com 2 meses de historico dividiria por 6 e teria meta
 /// irreal. Sem lancamento vivo antes do mes corrente -> `None` (sem base).
+///
+/// O total e `Math.round(soma de todas as categorias / meses)`, arredondado uma unica vez como
+/// no app; as partes arredondam cada categoria (so legenda).
 ///
 /// Casa pelo id resolvido (`mergedInto` seguido so em tombstone), viva ou apagada: o gasto
 /// passado foi essencial mesmo que a categoria tenha sido apagada depois.
@@ -265,6 +286,8 @@ pub fn essential_cost(
     let den = i64::try_from(months).unwrap_or(i64::MAX);
     let mut seen: Vec<&str> = Vec::new();
     let mut parts: Vec<EssentialPart> = Vec::new();
+    // Soma bruta de todas as categorias: o total arredonda uma vez so, como o app.
+    let mut gross = 0i64;
     for raw in category_ids {
         // Copia fundida e padrao na mesma lista sao a mesma categoria: deduplicar pelo id
         // resolvido, senao ela contaria duas vezes. Categoria apagada sem `mergedInto` resolve
@@ -290,6 +313,7 @@ pub fn essential_cost(
             Some(c) => (c.name.clone(), c.color.clone()),
             None => ("Categoria removida".to_string(), "slate".to_string()),
         };
+        gross = gross.saturating_add(sum);
         parts.push(EssentialPart {
             category_id: id.to_string(),
             name,
@@ -304,22 +328,39 @@ pub fn essential_cost(
             .then_with(|| a.category_id.cmp(&b.category_id))
     });
     Some(EssentialCost {
-        total_minor: parts
-            .iter()
-            .fold(0i64, |acc, p| acc.saturating_add(p.average_minor)),
+        total_minor: div_round(gross, den),
         months,
         parts,
+        informed: false,
     })
 }
 
-/// Meta derivada: `multiple x custo`; sem base, 0.
-fn derived_goal(cost: Option<&EssentialCost>, multiple: u8) -> i64 {
-    cost.map_or(0, |c| c.total_minor.saturating_mul(i64::from(multiple)))
+/// Custo da emergencia: espelha `emergencyTarget` do app. O override vence o calculado mesmo
+/// havendo historico (o usuario disse quanto custa); override <= 0 e sem base — o app devolve
+/// meta nula e nao cai para o calculado, e o hub nunca "conserta" o dado.
+pub fn emergency_cost(dataset: &Dataset, r: &Reserve, current: &str) -> Option<EssentialCost> {
+    match r.essential_override_minor {
+        Some(o) if o > 0 => Some(EssentialCost {
+            total_minor: o,
+            months: 0,
+            parts: Vec::new(),
+            informed: true,
+        }),
+        Some(_) => None,
+        None => essential_cost(dataset, &r.essential_category_ids, current),
+    }
 }
 
-/// Meta de uma reserva de emergencia: `multiple x custo essencial das categorias dela`.
+/// Meta derivada: `multiple x custo`; sem base ou com custo <= 0 (como o app), 0.
+fn derived_goal(cost: Option<&EssentialCost>, multiple: u8) -> i64 {
+    cost.filter(|c| c.total_minor > 0)
+        .map_or(0, |c| c.total_minor.saturating_mul(i64::from(multiple)))
+}
+
+/// Meta de uma reserva de emergencia: `multiple x custo informado no app`, ou, sem ele,
+/// `multiple x custo essencial das categorias dela`.
 pub fn emergency_goal(dataset: &Dataset, r: &Reserve, current: &str) -> i64 {
-    let cost = essential_cost(dataset, &r.essential_category_ids, current);
+    let cost = emergency_cost(dataset, r, current);
     derived_goal(cost.as_ref(), r.multiple.unwrap_or(DEFAULT_MULTIPLE))
 }
 
@@ -367,21 +408,34 @@ pub struct EmergencyView {
     pub eta_label: String,
 }
 
+/// Meses cobertos com uma casa, TRUNCADOS como `formatMonths` (goals.ts): arredondar
+/// 3,96 para "4,0" diria que a familia aguenta quatro meses quando nao aguenta.
+fn months_label(x: f64) -> String {
+    let tenths = (x.max(0.0) * 10.0 + 1e-9).floor() as u64;
+    format!("{},{}", group_thousands(tenths / 10), tenths % 10)
+}
+
 pub fn emergency_view(dataset: &Dataset, r: &Reserve, current: &str) -> EmergencyView {
     let balance = balance_until(dataset, &r.id, current);
     let multiple = r.multiple.unwrap_or(DEFAULT_MULTIPLE);
-    let cost = essential_cost(dataset, &r.essential_category_ids, current);
+    let cost = emergency_cost(dataset, r, current);
     let goal = derived_goal(cost.as_ref(), multiple);
     let coverage = cost
         .as_ref()
         .filter(|c| c.total_minor > 0)
-        .map(|c| balance as f64 / c.total_minor as f64);
+        // Espelha `monthsCovered` (goals.ts): saldo negativo cobre 0 meses, nao
+        // "-1,2"; sem o piso o rotulo e o medidor mostrariam cobertura negativa.
+        .map(|c| balance.max(0) as f64 / c.total_minor as f64);
     let recurring = r.recurring_amount_minor.filter(|v| *v > 0);
     let eta = if goal <= 0 {
         EmergencyEta::NoGoal
     } else if balance >= goal {
         EmergencyEta::Reached
     } else if let Some(rec) = recurring {
+        // Espelha `projectedCompletion` do app (goals.ts): mes corrente + ceil(falta /
+        // deposito). `recurring.since` nao entra de proposito, como no app: ele nasce como o
+        // mes seguinte (ou o corrente, se ligado com um deposito do mes), entao "corrente + n"
+        // ja conta o primeiro deposito no mes certo.
         let n = div_ceil(goal.saturating_sub(balance), rec);
         EmergencyEta::Projected {
             month: shift_month(current, i32::try_from(n).unwrap_or(i32::MAX)),
@@ -396,11 +450,13 @@ pub fn emergency_view(dataset: &Dataset, r: &Reserve, current: &str) -> Emergenc
         multiple,
         goal_minor: goal,
         coverage,
-        coverage_label: coverage.map_or_else(|| "—".to_string(), one_decimal),
+        coverage_label: coverage.map_or_else(|| "—".to_string(), months_label),
         pct_label: if goal > 0 {
+            // Piso, como o `percent` de reserve-detail.tsx: arredondar mostraria 100% (ou 59% em
+            // vez de 58%) antes de a meta fechar de fato.
             format!(
                 "{}% da meta",
-                js_round(balance as f64 / goal as f64 * 100.0) as i64
+                (balance as f64 / goal as f64 * 100.0).floor() as i64
             )
         } else {
             "Sem meta".to_string()
@@ -461,7 +517,14 @@ pub fn pace(
     if months_left <= 0 {
         return Pace::Overdue { remaining };
     }
-    let needed = div_ceil(remaining, i64::from(months_left));
+    // Espelha `suggestedMonthly` do app (goals.ts): reais inteiros PARA CIMA, porque a
+    // tela mostra sem centavos e quem guarda o que le precisa chegar na meta. Arredondar em
+    // centavos e exibir "meio para cima" mostraria R$ 265 onde o app sugere R$ 266.
+    // Diferenca intencional: prazo vencido vira `Overdue` aqui, enquanto o app divide por 1
+    // (`Math.max(1, ...)`); o app so mostra a sugestao no formulario, o hub mostra estado no
+    // dashboard, e "Prazo encerrado · faltam X" e o rotulo certo para o card.
+    let needed =
+        div_ceil(remaining, i64::from(months_left).saturating_mul(100)).saturating_mul(100);
     match recurring {
         None => Pace::NoRecurring { needed },
         Some(r) if r >= needed => Pace::OnTrack {
@@ -527,7 +590,7 @@ pub fn pot_row(dataset: &Dataset, r: &Reserve, current: &str, derived_goal: Opti
     let balance = balance_until(dataset, &r.id, current);
     let (goal, due) = match r.kind {
         ReserveKind::Emergency => (derived_goal, None),
-        ReserveKind::Pot => (r.goal_minor, r.due_month.clone()),
+        ReserveKind::Goal => (r.goal_minor, r.due_month.clone()),
     };
     let goal = goal.filter(|g| *g > 0);
     let remaining = goal.map(|g| g.saturating_sub(balance)).filter(|v| *v > 0);
@@ -551,7 +614,9 @@ pub fn pot_row(dataset: &Dataset, r: &Reserve, current: &str, derived_goal: Opti
             format!(
                 "de {} · {}%",
                 format_brl(g),
-                js_round(balance as f64 / g as f64 * 100.0) as i64
+                // Piso, como o `percent` de reserve-detail.tsx: 100% so quando a meta fecha de
+                // fato.
+                (balance as f64 / g as f64 * 100.0).floor() as i64
             )
         }),
         meta_left,
@@ -775,6 +840,44 @@ mod tests {
     }
 
     #[test]
+    fn saldo_de_caixinha_com_deposito_e_retirada() {
+        // A retirada chega com sinal negativo do app e precisa SUBTRAIR do saldo;
+        // antes do conserto do contrato o movimento caia fora e o saldo ficava errado.
+        let mut ds = Dataset::default();
+        add_reserve(
+            &mut ds,
+            "RG1",
+            json!({ "kind": "goal", "name": "Viagem", "icon": "gift", "color": "rose",
+                    "targetMinor": 100000, "deadline": null, "recurring": null }),
+        );
+        add_movement(
+            &mut ds,
+            "MG1",
+            json!({ "reserveId": "RG1", "amountMinor": 50000, "occurredOn": "2026-09-05",
+                    "userId": null, "description": null, "reason": null, "recurring": false }),
+        );
+        add_movement(
+            &mut ds,
+            "MG2",
+            json!({ "reserveId": "RG1", "amountMinor": -15000, "occurredOn": "2026-09-10",
+                    "userId": null, "description": null, "reason": "health", "recurring": false }),
+        );
+        assert_eq!(ds.ignored_total(), 0);
+        assert_eq!(balance_until(&ds, "RG1", "2026-09"), 35_000);
+        let t = totals(&ds, &months());
+        assert_eq!(t.total_minor, 35_000);
+        assert_eq!(t.deposits_minor, 50_000);
+        assert_eq!(t.withdrawals_minor, 15_000);
+        assert_eq!(t.withdrawal_count, 1);
+        assert_eq!(t.saved_this_month_minor, 50_000);
+        assert_eq!(t.withdrawal_reserves, vec!["Viagem"]);
+        assert_eq!(
+            pot_row(&ds, &ds.reserves["RG1"], "2026-09", None).balance_minor,
+            35_000
+        );
+    }
+
+    #[test]
     fn nota_das_retiradas() {
         let ds = fixtures_with_reserves();
         assert_eq!(
@@ -822,7 +925,7 @@ mod tests {
         add_movement(
             &mut ds,
             "MZ",
-            json!({ "reserveId": "RP4", "kind": "withdrawal", "amountMinor": 10000, "occurredOn": "2026-09-01" }),
+            json!({ "reserveId": "RP4", "amountMinor": -10000, "occurredOn": "2026-09-01" }),
         );
         assert_eq!(shares(&ds, "2026-09").len(), 5);
     }
@@ -893,6 +996,21 @@ mod tests {
         assert_eq!(c.parts[2].color, "slate");
         assert_eq!(c.parts[0].name, "Moradia");
         assert_eq!(c.parts[0].color, "amber");
+    }
+
+    #[test]
+    fn total_arredonda_uma_vez_como_o_app() {
+        let ds = with_transactions(&[
+            ("T1", "expense", 15_000, "2026-07-05", "C1"),
+            ("T2", "expense", 15_001, "2026-08-05", "C1"),
+            ("T3", "expense", 15_000, "2026-07-06", "C2"),
+            ("T4", "expense", 15_001, "2026-08-06", "C2"),
+        ]);
+        let c = essential_cost(&ds, &strings(&["C1", "C2"]), "2026-09").unwrap();
+        assert_eq!(c.months, 2);
+        // round(60_002 / 2) = 30_001; somar as partes arredondadas daria 30_002.
+        assert_eq!(c.total_minor, 30_001);
+        assert!(c.parts.iter().all(|p| p.average_minor == 15_001));
     }
 
     #[test]
@@ -999,7 +1117,8 @@ mod tests {
         assert_eq!(e.goal_minor, 390_000);
         assert!((e.coverage.unwrap() - 3.538).abs() < 1e-3);
         assert_eq!(e.coverage_label, "3,5");
-        assert_eq!(e.pct_label, "59% da meta");
+        // Piso: 230.000 / 390.000 = 58,97% (o app mostra 58%).
+        assert_eq!(e.pct_label, "58% da meta");
         assert_eq!(e.remaining_label, "Faltam R$ 1.600,00 para a meta");
         let expected = [1.0, 1.0, 1.0, 0.538, 0.0, 0.0];
         assert_eq!(e.segments.len(), 6);
@@ -1022,7 +1141,11 @@ mod tests {
         json!({
             "kind": "emergency", "name": "Reserva", "icon": "x", "color": "slate",
             "multiple": multiple, "essentialCategoryIds": ["C1", "C2"],
-            "recurringAmountMinor": recurring
+            "recurring": if recurring.is_null() {
+                serde_json::Value::Null
+            } else {
+                json!({ "amountMinor": recurring })
+            }
         })
     }
 
@@ -1045,7 +1168,7 @@ mod tests {
         add_movement(
             &mut ds,
             "MX",
-            json!({ "reserveId": "RE1", "kind": "deposit", "amountMinor": 200000, "occurredOn": "2026-09-02" }),
+            json!({ "reserveId": "RE1", "amountMinor": 200000, "occurredOn": "2026-09-02" }),
         );
         let e = emergency_view(&ds, &ds.reserves["RE1"], "2026-09");
         assert_eq!(e.eta, EmergencyEta::Reached);
@@ -1082,6 +1205,28 @@ mod tests {
     }
 
     const NOW: &str = "2026-09";
+
+    #[test]
+    fn ritmo_em_reais_inteiros_como_o_app() {
+        assert_eq!(
+            pace(0, Some(265_010), Some("2027-07"), None, NOW),
+            Pace::NoRecurring { needed: 26_600 }
+        );
+        assert_eq!(
+            pace(0, Some(100_001), Some("2026-10"), Some(100_050), NOW),
+            Pace::Behind {
+                recurring: 100_050,
+                needed: 100_100
+            }
+        );
+        assert_eq!(
+            pace(0, Some(100_001), Some("2026-10"), Some(100_100), NOW),
+            Pace::OnTrack {
+                recurring: 100_100,
+                needed: 100_100
+            }
+        );
+    }
 
     #[test]
     fn ritmo_nas_sete_variantes() {
@@ -1190,9 +1335,9 @@ mod tests {
         assert_eq!(p1.color, ReserveColor::Token("sky".into()));
         assert_eq!(
             row("RP2").meta_right.as_deref(),
-            Some("de R$ 2.400,00 · 17%")
+            Some("de R$ 2.400,00 · 16%")
         );
-        assert_eq!(row("RP3").meta_right.as_deref(), Some("de R$ 800,00 · 48%"));
+        assert_eq!(row("RP3").meta_right.as_deref(), Some("de R$ 800,00 · 47%"));
         let p4 = row("RP4");
         assert_eq!(p4.meta_left, "sem meta");
         assert_eq!(p4.meta_right, None);
@@ -1209,8 +1354,8 @@ mod tests {
     fn caixinha_so_com_meta_ou_so_com_prazo() {
         let mut ds = fixtures_with_reserves();
         let pot = |goal: serde_json::Value, due: serde_json::Value| {
-            json!({ "kind": "pot", "name": "X", "icon": "tag", "color": "teal",
-                "goalMinor": goal, "dueMonth": due })
+            json!({ "kind": "goal", "name": "X", "icon": "tag", "color": "teal",
+                "targetMinor": goal, "deadline": due })
         };
         add_reserve(&mut ds, "RP7", pot(json!(30_000), json!(null)));
         add_reserve(&mut ds, "RP8", pot(json!(null), json!("2027-03")));
@@ -1230,7 +1375,7 @@ mod tests {
             &mut ds,
             "RE9",
             json!({ "kind": "emergency", "name": "Outra", "icon": "x", "color": "slate",
-                "essentialCategoryIds": ["C1", "C2"], "dueMonth": "2027-01", "goalMinor": 1 }),
+                "essentialCategoryIds": ["C1", "C2"], "deadline": "2027-01", "targetMinor": 1 }),
         );
         let r = &ds.reserves["RE9"];
         let goal = emergency_goal(&ds, r, NOW);
@@ -1241,6 +1386,106 @@ mod tests {
         assert_eq!(p.color, ReserveColor::Accent);
         assert_eq!(p.due_month, None);
         assert_eq!(p.meta_left, "faltam R$ 3.900");
+    }
+
+    fn informed_json(
+        cats: serde_json::Value,
+        multiple: serde_json::Value,
+        o: i64,
+    ) -> serde_json::Value {
+        json!({ "kind": "emergency", "name": "Reserva", "icon": "lifebuoy", "color": "violet",
+            "targetMinor": null, "multiple": multiple, "essentialCategoryIds": cats,
+            "essentialOverrideMinor": o, "deadline": null, "recurring": null })
+    }
+
+    #[test]
+    fn emergencia_com_custo_informado_sem_lancamentos() {
+        let mut ds = Dataset::default();
+        add_reserve(&mut ds, "RE1", informed_json(json!([]), json!(3), 250_000));
+        let e = emergency_view(&ds, &ds.reserves["RE1"], NOW);
+        assert_eq!(
+            e.cost,
+            Some(EssentialCost {
+                total_minor: 250_000,
+                months: 0,
+                parts: vec![],
+                informed: true
+            })
+        );
+        assert_eq!(e.goal_minor, 750_000);
+        assert_eq!(e.pct_label, "0% da meta");
+        assert!(e.remaining_label.starts_with("Faltam"));
+        assert_eq!(emergency_goal(&ds, &ds.reserves["RE1"], NOW), 750_000);
+
+        add_reserve(
+            &mut ds,
+            "RE1",
+            informed_json(json!([]), json!(null), 250_000),
+        );
+        assert_eq!(emergency_goal(&ds, &ds.reserves["RE1"], NOW), 1_500_000);
+    }
+
+    #[test]
+    fn rotulos_como_o_app() {
+        assert_eq!(months_label(3.96), "3,9");
+        assert_eq!(months_label(4.0), "4,0");
+        assert_eq!(months_label(0.04), "0,0");
+        assert_eq!(months_label(-1.2), "0,0");
+        assert_eq!(months_label(12.0), "12,0");
+
+        // Retirada maior que os depositos: saldo negativo cobre 0 meses, sem sinal.
+        let mut ds = Dataset::default();
+        add_reserve(&mut ds, "RE1", informed_json(json!([]), json!(3), 250_000));
+        add_movement(
+            &mut ds,
+            "M1",
+            json!({ "reserveId": "RE1", "amountMinor": -50_000, "occurredOn": "2026-09-02" }),
+        );
+        let e = emergency_view(&ds, &ds.reserves["RE1"], NOW);
+        assert!(e.balance_minor < 0);
+        assert_eq!(e.coverage_label, "0,0");
+        assert!(e.segments.iter().all(|s| *s == 0.0));
+    }
+
+    #[test]
+    fn custo_informado_vence_o_calculado() {
+        let mut ds = fixtures_with_reserves();
+        add_reserve(
+            &mut ds,
+            "RE1",
+            informed_json(json!(["C1", "C2"]), json!(6), 100_000),
+        );
+        let e = emergency_view(&ds, &ds.reserves["RE1"], NOW);
+        assert_eq!(e.goal_minor, 600_000);
+        assert!(e.cost.is_some_and(|c| c.informed));
+        assert_eq!(emergency_goal(&ds, &ds.reserves["RE1"], NOW), 600_000);
+
+        add_reserve(
+            &mut ds,
+            "RE9",
+            informed_json(json!(["C1", "C2"]), json!(6), 100_000),
+        );
+        let r = &ds.reserves["RE9"];
+        let p = pot_row(&ds, r, NOW, Some(emergency_goal(&ds, r, NOW)));
+        assert_eq!(p.goal_minor, Some(600_000));
+    }
+
+    #[test]
+    fn custo_informado_zero_ou_negativo_e_sem_meta() {
+        for o in [0, -500] {
+            let mut ds = fixtures_with_reserves();
+            add_reserve(
+                &mut ds,
+                "RE1",
+                informed_json(json!(["C1", "C2"]), json!(6), o),
+            );
+            let e = emergency_view(&ds, &ds.reserves["RE1"], NOW);
+            assert_eq!(e.cost, None);
+            assert_eq!(e.goal_minor, 0);
+            assert_eq!(e.pct_label, "Sem meta");
+            assert_eq!(e.eta, EmergencyEta::NoGoal);
+            assert_eq!(emergency_goal(&ds, &ds.reserves["RE1"], NOW), 0);
+        }
     }
 
     #[test]
@@ -1294,7 +1539,7 @@ mod tests {
         add_movement(
             &mut ds,
             "MZ",
-            json!({ "reserveId": "RP1", "kind": "withdrawal", "amountMinor": 100, "occurredOn": "2026-09-23" }),
+            json!({ "reserveId": "RP1", "amountMinor": -100, "occurredOn": "2026-09-23" }),
         );
         let (rows, _) = movements(&ds, &months());
         assert_eq!(rows[0].id, "MZ");

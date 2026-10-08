@@ -286,24 +286,31 @@ pub(crate) fn fixtures_with_reserves() -> dataset::Dataset {
             "name": "Reserva de emergência",
             "icon": "piggy-bank",
             "color": "slate",
-            "goalMinor": null,
+            "targetMinor": null,
             "multiple": 6,
             "essentialCategoryIds": ["C1", "C2", "C3", "C9"],
-            "dueMonth": null,
-            "recurringAmountMinor": 50000
+            "essentialOverrideMinor": null,
+            "deadline": null,
+            "recurring": { "amountMinor": 50000, "day": 5, "since": "2026-01" }
         }),
     );
     let pot = |name: &str, icon: &str, color: &str, goal: Value, due: Value, recurring: Value| {
         json!({
-            "kind": "pot",
+            "kind": "goal",
             "name": name,
             "icon": icon,
             "color": color,
-            "goalMinor": goal,
+            "targetMinor": goal,
             "multiple": null,
             "essentialCategoryIds": null,
-            "dueMonth": due,
-            "recurringAmountMinor": recurring
+            "essentialOverrideMinor": null,
+            "deadline": due,
+            // since antigo o bastante para nao mudar nenhum resultado.
+            "recurring": if recurring.is_null() {
+                serde_json::Value::Null
+            } else {
+                json!({ "amountMinor": recurring, "day": 10, "since": "2026-01" })
+            }
         })
     };
     push(

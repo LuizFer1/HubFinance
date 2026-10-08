@@ -30,7 +30,7 @@ pub enum ReserveColor {
 pub fn reserve_color(r: &Reserve) -> ReserveColor {
     match r.kind {
         ReserveKind::Emergency => ReserveColor::Accent,
-        ReserveKind::Pot => ReserveColor::Token(r.color.clone()),
+        ReserveKind::Goal => ReserveColor::Token(r.color.clone()),
     }
 }
 
@@ -39,7 +39,7 @@ pub fn reserve_color(r: &Reserve) -> ReserveColor {
 pub fn reserve_icon(r: &Reserve) -> &str {
     match r.kind {
         ReserveKind::Emergency => "lifebuoy",
-        ReserveKind::Pot => &r.icon,
+        ReserveKind::Goal => &r.icon,
     }
 }
 
@@ -527,7 +527,7 @@ pub fn pot_row(dataset: &Dataset, r: &Reserve, current: &str, derived_goal: Opti
     let balance = balance_until(dataset, &r.id, current);
     let (goal, due) = match r.kind {
         ReserveKind::Emergency => (derived_goal, None),
-        ReserveKind::Pot => (r.goal_minor, r.due_month.clone()),
+        ReserveKind::Goal => (r.goal_minor, r.due_month.clone()),
     };
     let goal = goal.filter(|g| *g > 0);
     let remaining = goal.map(|g| g.saturating_sub(balance)).filter(|v| *v > 0);
@@ -1022,7 +1022,11 @@ mod tests {
         json!({
             "kind": "emergency", "name": "Reserva", "icon": "x", "color": "slate",
             "multiple": multiple, "essentialCategoryIds": ["C1", "C2"],
-            "recurringAmountMinor": recurring
+            "recurring": if recurring.is_null() {
+                serde_json::Value::Null
+            } else {
+                json!({ "amountMinor": recurring })
+            }
         })
     }
 
@@ -1209,8 +1213,8 @@ mod tests {
     fn caixinha_so_com_meta_ou_so_com_prazo() {
         let mut ds = fixtures_with_reserves();
         let pot = |goal: serde_json::Value, due: serde_json::Value| {
-            json!({ "kind": "pot", "name": "X", "icon": "tag", "color": "teal",
-                "goalMinor": goal, "dueMonth": due })
+            json!({ "kind": "goal", "name": "X", "icon": "tag", "color": "teal",
+                "targetMinor": goal, "deadline": due })
         };
         add_reserve(&mut ds, "RP7", pot(json!(30_000), json!(null)));
         add_reserve(&mut ds, "RP8", pot(json!(null), json!("2027-03")));
@@ -1230,7 +1234,7 @@ mod tests {
             &mut ds,
             "RE9",
             json!({ "kind": "emergency", "name": "Outra", "icon": "x", "color": "slate",
-                "essentialCategoryIds": ["C1", "C2"], "dueMonth": "2027-01", "goalMinor": 1 }),
+                "essentialCategoryIds": ["C1", "C2"], "deadline": "2027-01", "targetMinor": 1 }),
         );
         let r = &ds.reserves["RE9"];
         let goal = emergency_goal(&ds, r, NOW);

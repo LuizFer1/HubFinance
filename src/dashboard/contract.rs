@@ -86,11 +86,17 @@ pub struct RecurrenceFields {
 #[serde(rename_all = "lowercase")]
 pub enum ReserveKind {
     Emergency,
-    Pot,
+    /// O texto de UI continua "Caixinha"; "goal" e o nome que o app grava
+    /// (`HomeFinance_Mobile/src/domain/model/reserve.ts`). Sem alias para "pot": nenhum app
+    /// gravou "pot", so testes e seed usavam, e um alias aceitaria dado que o app nunca produz.
+    Goal,
 }
 
-/// Linha de `reserves` (contrato fixado pela spec do hub de 2026-10-02; o app adota depois).
-/// Nao lidos: `recurringDay` (regra de materializacao do app), `createdAt`.
+/// Linha de `reserves`. O contrato segue o formato que o app ja grava
+/// (`HomeFinance_Mobile/src/domain/model/reserve.ts`; handoff em
+/// `docs/desktop/plans/2026-10-07-hub-reservas-contrato-app.md`): o log e eterno e ja ha
+/// linhas gravadas assim, por isso e o hub que se adapta, nao o contrario.
+/// Nao lidos: `createdAt` e `recurring.day` (regra de materializacao do app).
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReserveFields {
@@ -98,8 +104,9 @@ pub struct ReserveFields {
     pub name: String,
     pub icon: String,
     pub color: String,
-    /// Meta da caixinha. Nao e lida para `emergency`: a meta dela e derivada do custo essencial.
-    #[serde(default)]
+    /// Meta da caixinha (`targetMinor` no app). Nao e lida para `emergency`: a meta dela e
+    /// derivada do custo essencial.
+    #[serde(default, rename = "targetMinor")]
     pub goal_minor: Option<i64>,
     /// `u8` de proposito: o serde recusa fracao, texto e fora de 0..=255, entao "tipo errado"
     /// sai de graca, sem validacao a mais. Nulo vale o padrao (6) na tela.
@@ -109,11 +116,40 @@ pub struct ReserveFields {
     /// isso em vez de ignorar a reserva inteira.
     #[serde(default)]
     pub essential_category_ids: Option<Vec<String>>,
-    /// `YYYY-MM`; fora do formato e tipo errado (compara como string com `month_of`).
+    /// Custo essencial digitado no app quando nao havia historico; substitui o calculado
+    /// (o uso na meta da emergencia e de outra etapa, aqui so se carrega).
     #[serde(default)]
+    pub essential_override_minor: Option<i64>,
+    /// `deadline` no app: `YYYY-MM`; fora do formato e tipo errado (compara como string com
+    /// `month_of`).
+    #[serde(default, rename = "deadline")]
     pub due_month: Option<String>,
+    /// Deposito mensal. Objeto errado ("sim", `amountMinor` fracionado ou ausente) derruba a
+    /// linha pelo proprio serde, como os outros campos: o hub nao adivinha o que o app quis dizer.
     #[serde(default)]
-    pub recurring_amount_minor: Option<i64>,
+    pub recurring: Option<RecurringFields>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecurringFields {
+    pub amount_minor: i64,
+    /// Nao lido pelo hub (regra de materializacao do app); aceito para tipar o objeto.
+    #[serde(default)]
+    pub day: Option<u8>,
+    /// Primeiro mes (`YYYY-MM`) em que o deposito vale.
+    #[serde(default)]
+    pub since: Option<String>,
+}
+
+impl ReserveFields {
+    pub fn recurring_amount_minor(&self) -> Option<i64> {
+        self.recurring.as_ref().map(|r| r.amount_minor)
+    }
+
+    pub fn recurring_since(&self) -> Option<&str> {
+        self.recurring.as_ref().and_then(|r| r.since.as_deref())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -147,8 +183,10 @@ pub enum ContractError {
     Json(#[from] serde_json::Error),
     #[error("occurredOn fora do formato YYYY-MM-DD")]
     OccurredOnShape,
-    #[error("dueMonth fora do formato YYYY-MM")]
+    #[error("deadline fora do formato YYYY-MM")]
     DueMonthShape,
+    #[error("recurring.since fora do formato YYYY-MM")]
+    RecurringSinceShape,
 }
 
 pub fn parse_transaction(data: &str) -> Result<TransactionFields, ContractError> {
@@ -184,6 +222,11 @@ pub fn parse_reserve(data: &str) -> Result<ReserveFields, ContractError> {
     {
         return Err(ContractError::DueMonthShape);
     }
+    // A projecao do deposito mensal compara `since` como string com o mes corrente; um formato
+    // livre compararia errado sem aviso.
+    if fields.recurring_since().is_some_and(|m| !is_iso_month(m)) {
+        return Err(ContractError::RecurringSinceShape);
+    }
     Ok(fields)
 }
 
@@ -196,7 +239,7 @@ pub fn parse_reserve_movement(data: &str) -> Result<ReserveMovementFields, Contr
 }
 
 /// 7 bytes, `-` em 4, digitos no resto, mes 01..=12: a mesma forma do comeco de `is_iso_date`,
-/// para `dueMonth` comparar como string com `month_of(occurredOn)` sem parsear.
+/// para `deadline`/`recurring.since` compararem como string com `month_of(occurredOn)` sem parsear.
 pub fn is_iso_month(s: &str) -> bool {
     let b = s.as_bytes();
     if b.len() != 7 || b[4] != b'-' {
@@ -423,17 +466,20 @@ mod tests {
 
     fn reserve() -> Value {
         json!({
-            "kind": "pot",
+            "id": "01JZ0000000000000000000RE1",
+            "createdAt": "2026-10-01T18:00:00.000Z",
+            "updatedAt": "0001790000000-0000-01JZ0000000000000000000DV1",
+            "deletedAt": null,
+            "kind": "goal",
             "name": "Viagem",
-            "icon": "plane",
-            "color": "sky",
-            "goalMinor": 500000,
+            "icon": "gift",
+            "color": "rose",
+            "targetMinor": 500000,
             "multiple": null,
             "essentialCategoryIds": null,
-            "dueMonth": "2027-07",
-            "recurringAmountMinor": 30000,
-            "recurringDay": 10,
-            "createdAt": "2026-09-01T00:00:00Z",
+            "essentialOverrideMinor": null,
+            "deadline": "2027-07",
+            "recurring": { "amountMinor": 30000, "day": 10, "since": "2026-11" },
             "foo": 1
         })
     }
@@ -454,10 +500,12 @@ mod tests {
     #[test]
     fn reserva_valida_com_campos_extras() {
         let r = parse_reserve(&reserve().to_string()).unwrap();
-        assert_eq!(r.kind, ReserveKind::Pot);
+        assert_eq!(r.kind, ReserveKind::Goal);
         assert_eq!(r.goal_minor, Some(500_000));
         assert_eq!(r.due_month.as_deref(), Some("2027-07"));
-        assert_eq!(r.recurring_amount_minor, Some(30_000));
+        assert_eq!(r.recurring_amount_minor(), Some(30_000));
+        assert_eq!(r.recurring_since(), Some("2026-11"));
+        assert_eq!(r.essential_override_minor, None);
         assert_eq!(r.multiple, None);
         assert_eq!(r.essential_category_ids, None);
     }
@@ -466,6 +514,8 @@ mod tests {
     fn reserva_kind_desconhecido_ou_ausente() {
         let e = err_text(parse_reserve(&with(reserve(), "kind", json!("box"))));
         assert!(e.contains("box") || e.contains("variant"), "{e}");
+        // "pot" foi o nome antigo: sem alias, cai como qualquer valor desconhecido.
+        assert!(parse_reserve(&with(reserve(), "kind", json!("pot"))).is_err());
         let e = err_text(parse_reserve(&without(reserve(), "kind")));
         assert!(e.contains("kind"), "{e}");
     }
@@ -507,30 +557,64 @@ mod tests {
     #[test]
     fn reserva_due_month_fora_do_formato() {
         for bad in [json!("2027-7"), json!("2027-13"), json!("2027-07-01")] {
-            let e = err_text(parse_reserve(&with(reserve(), "dueMonth", bad)));
-            assert!(e.contains("dueMonth"), "{e}");
+            let e = err_text(parse_reserve(&with(reserve(), "deadline", bad)));
+            assert!(e.contains("deadline"), "{e}");
         }
         // Numero e tipo errado do serde, que tambem cita o campo.
-        let e = err_text(parse_reserve(&with(reserve(), "dueMonth", json!(202707))));
+        let e = err_text(parse_reserve(&with(reserve(), "deadline", json!(202707))));
         assert!(e.contains("invalid type"), "{e}");
-        let r = parse_reserve(&with(reserve(), "dueMonth", Value::Null)).unwrap();
+        let r = parse_reserve(&with(reserve(), "deadline", Value::Null)).unwrap();
         assert_eq!(r.due_month, None);
-        let r = parse_reserve(&without(reserve(), "dueMonth")).unwrap();
+        let r = parse_reserve(&without(reserve(), "deadline")).unwrap();
         assert_eq!(r.due_month, None);
     }
 
     #[test]
     fn reserva_goal_fracionado_e_anulaveis_ausentes() {
-        assert!(parse_reserve(&with(reserve(), "goalMinor", json!(12.5))).is_err());
+        assert!(parse_reserve(&with(reserve(), "targetMinor", json!(12.5))).is_err());
         let r = parse_reserve(
-            &json!({ "kind": "pot", "name": "X", "icon": "tag", "color": "slate" }).to_string(),
+            &json!({ "kind": "goal", "name": "X", "icon": "tag", "color": "slate" }).to_string(),
         )
         .unwrap();
         assert_eq!(r.goal_minor, None);
         assert_eq!(r.multiple, None);
         assert_eq!(r.essential_category_ids, None);
         assert_eq!(r.due_month, None);
-        assert_eq!(r.recurring_amount_minor, None);
+        assert_eq!(r.recurring, None);
+        assert_eq!(r.recurring_amount_minor(), None);
+        assert_eq!(r.essential_override_minor, None);
+    }
+
+    #[test]
+    fn reserva_recurring_tipos_e_formato() {
+        let r = parse_reserve(&with(reserve(), "recurring", Value::Null)).unwrap();
+        assert_eq!(r.recurring_amount_minor(), None);
+        assert!(parse_reserve(&with(reserve(), "recurring", json!("sim"))).is_err());
+        assert!(
+            parse_reserve(&with(
+                reserve(),
+                "recurring",
+                json!({ "amountMinor": 12.5 })
+            ))
+            .is_err()
+        );
+        assert!(parse_reserve(&with(reserve(), "recurring", json!({ "day": 10 }))).is_err());
+        let e = err_text(parse_reserve(&with(
+            reserve(),
+            "recurring",
+            json!({ "amountMinor": 100, "since": "2026-1" }),
+        )));
+        assert!(e.contains("recurring.since"), "{e}");
+        let r =
+            parse_reserve(&with(reserve(), "recurring", json!({ "amountMinor": 100 }))).unwrap();
+        assert_eq!(r.recurring_since(), None);
+    }
+
+    #[test]
+    fn reserva_essential_override_lido() {
+        let r = parse_reserve(&with(reserve(), "essentialOverrideMinor", json!(250000))).unwrap();
+        assert_eq!(r.essential_override_minor, Some(250_000));
+        assert!(parse_reserve(&with(reserve(), "essentialOverrideMinor", json!("x"))).is_err());
     }
 
     #[test]
@@ -546,6 +630,67 @@ mod tests {
         let r = parse_reserve(&ok.to_string()).unwrap();
         assert_eq!(r.kind, ReserveKind::Emergency);
         assert_eq!(r.multiple, Some(6));
+    }
+
+    #[test]
+    fn reserva_campos_do_app_chegam_projetados() {
+        let r = parse_reserve(&reserve().to_string()).unwrap();
+        assert_eq!(r.goal_minor, Some(500_000));
+        assert_eq!(r.due_month.as_deref(), Some("2027-07"));
+        assert_eq!(r.recurring_amount_minor(), Some(30_000));
+        assert_eq!(r.recurring.as_ref().and_then(|x| x.day), Some(10));
+        assert_eq!(r.recurring_since(), Some("2026-11"));
+    }
+
+    #[test]
+    fn reserva_recurring_nulo_ou_ausente_passa() {
+        let r = parse_reserve(&with(reserve(), "recurring", Value::Null)).unwrap();
+        assert_eq!(r.recurring, None);
+        let r = parse_reserve(&without(reserve(), "recurring")).unwrap();
+        assert_eq!(r.recurring, None);
+    }
+
+    #[test]
+    fn reserva_essential_override_nulo_ausente_e_tipos_errados() {
+        let r = parse_reserve(&with(reserve(), "essentialOverrideMinor", json!(65000))).unwrap();
+        assert_eq!(r.essential_override_minor, Some(65_000));
+        let r = parse_reserve(&with(reserve(), "essentialOverrideMinor", Value::Null)).unwrap();
+        assert_eq!(r.essential_override_minor, None);
+        let r = parse_reserve(&without(reserve(), "essentialOverrideMinor")).unwrap();
+        assert_eq!(r.essential_override_minor, None);
+        for bad in [json!(12.5), json!("65000")] {
+            assert!(
+                parse_reserve(&with(reserve(), "essentialOverrideMinor", bad.clone())).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn reserva_de_emergencia_como_o_app_grava() {
+        let row = json!({
+            "id": "01JZ0000000000000000000RE2",
+            "createdAt": "2026-10-01T18:00:00.000Z",
+            "updatedAt": "1759341600000-0000-01JZ0000000000000000000DV1",
+            "deletedAt": null,
+            "kind": "emergency",
+            "name": "Reserva de emergência",
+            "icon": "lifebuoy",
+            "color": "violet",
+            "targetMinor": null,
+            "multiple": 6,
+            "essentialCategoryIds": ["C1", "C2"],
+            "essentialOverrideMinor": 350000,
+            "deadline": null,
+            "recurring": { "amountMinor": 50000, "day": 5, "since": "2026-11" }
+        });
+        let r = parse_reserve(&row.to_string()).unwrap();
+        assert_eq!(r.kind, ReserveKind::Emergency);
+        assert_eq!(r.multiple, Some(6));
+        assert_eq!(r.essential_override_minor, Some(350_000));
+        assert_eq!(r.goal_minor, None);
+        assert_eq!(r.due_month, None);
+        assert_eq!(r.recurring_amount_minor(), Some(50_000));
     }
 
     #[test]

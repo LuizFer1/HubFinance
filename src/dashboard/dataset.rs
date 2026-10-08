@@ -88,6 +88,10 @@ pub struct Reserve {
     pub essential_category_ids: Vec<String>,
     pub due_month: Option<String>,
     pub recurring_amount_minor: Option<i64>,
+    /// Primeiro mes em que o deposito mensal vale; o app so materializa a partir dele.
+    pub recurring_since: Option<String>,
+    /// Custo essencial digitado no app quando nao havia historico.
+    pub essential_override_minor: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,7 +141,7 @@ pub const CATEGORIES: &str = "categories";
 pub const USERS: &str = "users";
 pub const PAYMENT_METHODS: &str = "paymentMethods";
 pub const RECURRENCES: &str = "recurrences";
-/// As duas de reservas tem o contrato fixado pelo hub (spec 2026-10-02); o app adota os nomes.
+/// As duas de reservas seguem o formato que o app grava (`reserve.ts`), nao um contrato do hub.
 pub const RESERVES: &str = "reserves";
 pub const RESERVE_MOVEMENTS: &str = "reserveMovements";
 
@@ -233,6 +237,8 @@ impl Dataset {
                     );
                 }),
                 RESERVES => contract::parse_reserve(&row.data).map(|f| {
+                    let recurring_amount_minor = f.recurring_amount_minor();
+                    let recurring_since = f.recurring_since().map(str::to_string);
                     self.reserves.insert(
                         id.clone(),
                         Reserve {
@@ -246,7 +252,9 @@ impl Dataset {
                             multiple: f.multiple,
                             essential_category_ids: f.essential_category_ids.unwrap_or_default(),
                             due_month: f.due_month,
-                            recurring_amount_minor: f.recurring_amount_minor,
+                            recurring_amount_minor,
+                            recurring_since,
+                            essential_override_minor: f.essential_override_minor,
                         },
                     );
                 }),
@@ -704,11 +712,11 @@ mod tests {
 
     fn reserve(name: &str) -> Value {
         json!({
-            "kind": "pot",
+            "kind": "goal",
             "name": name,
             "icon": "plane",
             "color": "sky",
-            "goalMinor": 500000,
+            "targetMinor": 500000,
             "essentialCategoryIds": null
         })
     }
@@ -746,6 +754,51 @@ mod tests {
         // Reserva nao e lancamento: o estado vazio do Dashboard continua.
         assert!(ds.is_empty());
         assert!(ds.has_reserves());
+    }
+
+    #[test]
+    fn reserva_do_app_chega_inteira_no_dataset() {
+        let goal = json!({
+            "kind": "goal",
+            "name": "Viagem",
+            "icon": "gift",
+            "color": "rose",
+            "targetMinor": 500000,
+            "multiple": null,
+            "essentialCategoryIds": null,
+            "essentialOverrideMinor": null,
+            "deadline": "2027-07",
+            "recurring": { "amountMinor": 30000, "day": 10, "since": "2026-11" }
+        });
+        let emergency = json!({
+            "kind": "emergency",
+            "name": "Reserva de emergência",
+            "icon": "lifebuoy",
+            "color": "violet",
+            "targetMinor": null,
+            "multiple": 6,
+            "essentialCategoryIds": ["C1", "C2"],
+            "essentialOverrideMinor": 350000,
+            "deadline": null,
+            "recurring": null
+        });
+        let mut ds = Dataset::default();
+        let report = ds.apply([
+            raw(RESERVES, "RE1", None, 1, goal),
+            raw(RESERVES, "RE2", None, 2, emergency),
+        ]);
+        assert_eq!(report.ignored_total, 0);
+        assert_eq!(report.applied, 2);
+        let g = &ds.reserves["RE1"];
+        assert_eq!(g.goal_minor, Some(500_000));
+        assert_eq!(g.due_month.as_deref(), Some("2027-07"));
+        assert_eq!(g.recurring_amount_minor, Some(30_000));
+        assert_eq!(g.recurring_since.as_deref(), Some("2026-11"));
+        assert_eq!(g.essential_override_minor, None);
+        let e = &ds.reserves["RE2"];
+        assert_eq!(e.essential_override_minor, Some(350_000));
+        assert_eq!(e.multiple, Some(6));
+        assert_eq!(e.recurring_amount_minor, None);
     }
 
     #[test]

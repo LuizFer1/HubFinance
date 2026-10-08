@@ -560,6 +560,17 @@ fn essential_section<'a>(
     ]
     .spacing(12)
     .align_y(Alignment::Center);
+    // Com custo informado não há média por categoria: o app grava só o número que o usuário
+    // digitou quando a casa não tinha histórico. Mostramos o total e o rótulo "custo informado
+    // no app" em vez de inventar partes ou dizer "nenhuma categoria definida", que seria falso.
+    if cost.informed {
+        return column![
+            header,
+            Space::new().height(2),
+            text("Custo informado no app.").size(12).color(muted),
+        ]
+        .into();
+    }
     if cost.parts.is_empty() {
         return column![
             header,
@@ -1010,6 +1021,24 @@ mod tests {
         let _ = view(&app);
         // Janela estreita: KPIs em 2 + 1, cards empilhados, legenda numa coluna.
         app.window_size = iced::Size::new(1024.0, 720.0);
+        let _ = view(&app);
+        app.window_size = iced::Size::new(600.0, 720.0);
+        let _ = view(&app);
+    }
+
+    #[test]
+    fn custo_informado_constroi_sem_panico() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_reserves(dir.path());
+        assert!(app.reserves.emergency.is_some());
+        if let Some(e) = app.reserves.emergency.as_mut() {
+            e.cost = Some(EssentialCost {
+                total_minor: 250_000,
+                months: 0,
+                parts: Vec::new(),
+                informed: true,
+            });
+        }
         let _ = view(&app);
         app.window_size = iced::Size::new(600.0, 720.0);
         let _ = view(&app);

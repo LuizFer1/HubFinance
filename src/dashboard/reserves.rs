@@ -239,6 +239,10 @@ pub struct EssentialCost {
     /// Denominador da media: meses da janela com historico.
     pub months: usize,
     pub parts: Vec<EssentialPart>,
+    /// True quando o total veio de `essentialOverrideMinor` (custo digitado no app quando a casa
+    /// nao tinha historico); nesse caso `parts` e vazio e `months` e 0, porque nao existe media
+    /// por categoria para mostrar.
+    pub informed: bool,
 }
 
 /// Custo essencial medio por mes. Janela: os seis meses **completos** antes do corrente (o mes
@@ -309,17 +313,36 @@ pub fn essential_cost(
             .fold(0i64, |acc, p| acc.saturating_add(p.average_minor)),
         months,
         parts,
+        informed: false,
     })
 }
 
-/// Meta derivada: `multiple x custo`; sem base, 0.
-fn derived_goal(cost: Option<&EssentialCost>, multiple: u8) -> i64 {
-    cost.map_or(0, |c| c.total_minor.saturating_mul(i64::from(multiple)))
+/// Custo da emergencia: espelha `emergencyTarget` do app. O override vence o calculado mesmo
+/// havendo historico (o usuario disse quanto custa); override <= 0 e sem base — o app devolve
+/// meta nula e nao cai para o calculado, e o hub nunca "conserta" o dado.
+pub fn emergency_cost(dataset: &Dataset, r: &Reserve, current: &str) -> Option<EssentialCost> {
+    match r.essential_override_minor {
+        Some(o) if o > 0 => Some(EssentialCost {
+            total_minor: o,
+            months: 0,
+            parts: Vec::new(),
+            informed: true,
+        }),
+        Some(_) => None,
+        None => essential_cost(dataset, &r.essential_category_ids, current),
+    }
 }
 
-/// Meta de uma reserva de emergencia: `multiple x custo essencial das categorias dela`.
+/// Meta derivada: `multiple x custo`; sem base ou com custo <= 0 (como o app), 0.
+fn derived_goal(cost: Option<&EssentialCost>, multiple: u8) -> i64 {
+    cost.filter(|c| c.total_minor > 0)
+        .map_or(0, |c| c.total_minor.saturating_mul(i64::from(multiple)))
+}
+
+/// Meta de uma reserva de emergencia: `multiple x custo informado no app`, ou, sem ele,
+/// `multiple x custo essencial das categorias dela`.
 pub fn emergency_goal(dataset: &Dataset, r: &Reserve, current: &str) -> i64 {
-    let cost = essential_cost(dataset, &r.essential_category_ids, current);
+    let cost = emergency_cost(dataset, r, current);
     derived_goal(cost.as_ref(), r.multiple.unwrap_or(DEFAULT_MULTIPLE))
 }
 
@@ -370,7 +393,7 @@ pub struct EmergencyView {
 pub fn emergency_view(dataset: &Dataset, r: &Reserve, current: &str) -> EmergencyView {
     let balance = balance_until(dataset, &r.id, current);
     let multiple = r.multiple.unwrap_or(DEFAULT_MULTIPLE);
-    let cost = essential_cost(dataset, &r.essential_category_ids, current);
+    let cost = emergency_cost(dataset, r, current);
     let goal = derived_goal(cost.as_ref(), multiple);
     let coverage = cost
         .as_ref()
@@ -1245,6 +1268,84 @@ mod tests {
         assert_eq!(p.color, ReserveColor::Accent);
         assert_eq!(p.due_month, None);
         assert_eq!(p.meta_left, "faltam R$ 3.900");
+    }
+
+    fn informed_json(
+        cats: serde_json::Value,
+        multiple: serde_json::Value,
+        o: i64,
+    ) -> serde_json::Value {
+        json!({ "kind": "emergency", "name": "Reserva", "icon": "lifebuoy", "color": "violet",
+            "targetMinor": null, "multiple": multiple, "essentialCategoryIds": cats,
+            "essentialOverrideMinor": o, "deadline": null, "recurring": null })
+    }
+
+    #[test]
+    fn emergencia_com_custo_informado_sem_lancamentos() {
+        let mut ds = Dataset::default();
+        add_reserve(&mut ds, "RE1", informed_json(json!([]), json!(3), 250_000));
+        let e = emergency_view(&ds, &ds.reserves["RE1"], NOW);
+        assert_eq!(
+            e.cost,
+            Some(EssentialCost {
+                total_minor: 250_000,
+                months: 0,
+                parts: vec![],
+                informed: true
+            })
+        );
+        assert_eq!(e.goal_minor, 750_000);
+        assert_eq!(e.pct_label, "0% da meta");
+        assert!(e.remaining_label.starts_with("Faltam"));
+        assert_eq!(emergency_goal(&ds, &ds.reserves["RE1"], NOW), 750_000);
+
+        add_reserve(
+            &mut ds,
+            "RE1",
+            informed_json(json!([]), json!(null), 250_000),
+        );
+        assert_eq!(emergency_goal(&ds, &ds.reserves["RE1"], NOW), 1_500_000);
+    }
+
+    #[test]
+    fn custo_informado_vence_o_calculado() {
+        let mut ds = fixtures_with_reserves();
+        add_reserve(
+            &mut ds,
+            "RE1",
+            informed_json(json!(["C1", "C2"]), json!(6), 100_000),
+        );
+        let e = emergency_view(&ds, &ds.reserves["RE1"], NOW);
+        assert_eq!(e.goal_minor, 600_000);
+        assert!(e.cost.is_some_and(|c| c.informed));
+        assert_eq!(emergency_goal(&ds, &ds.reserves["RE1"], NOW), 600_000);
+
+        add_reserve(
+            &mut ds,
+            "RE9",
+            informed_json(json!(["C1", "C2"]), json!(6), 100_000),
+        );
+        let r = &ds.reserves["RE9"];
+        let p = pot_row(&ds, r, NOW, Some(emergency_goal(&ds, r, NOW)));
+        assert_eq!(p.goal_minor, Some(600_000));
+    }
+
+    #[test]
+    fn custo_informado_zero_ou_negativo_e_sem_meta() {
+        for o in [0, -500] {
+            let mut ds = fixtures_with_reserves();
+            add_reserve(
+                &mut ds,
+                "RE1",
+                informed_json(json!(["C1", "C2"]), json!(6), o),
+            );
+            let e = emergency_view(&ds, &ds.reserves["RE1"], NOW);
+            assert_eq!(e.cost, None);
+            assert_eq!(e.goal_minor, 0);
+            assert_eq!(e.pct_label, "Sem meta");
+            assert_eq!(e.eta, EmergencyEta::NoGoal);
+            assert_eq!(emergency_goal(&ds, &ds.reserves["RE1"], NOW), 0);
+        }
     }
 
     #[test]

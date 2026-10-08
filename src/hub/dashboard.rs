@@ -263,7 +263,6 @@ pub(crate) mod tests {
                         false,
                         json!({
                             "reserveId": "01HZZZZZZZZZZZZZZZZZZZZZB1",
-                            "kind": "deposit",
                             "amountMinor": 5000,
                             "occurredOn": "2026-09-06"
                         }),

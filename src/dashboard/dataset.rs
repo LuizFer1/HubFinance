@@ -724,9 +724,11 @@ mod tests {
     fn movement(reserve_id: &str) -> Value {
         json!({
             "reserveId": reserve_id,
-            "kind": "deposit",
             "amountMinor": 50000,
             "occurredOn": "2026-09-06",
+            "userId": "U1",
+            "description": null,
+            "reason": null,
             "recurring": null
         })
     }

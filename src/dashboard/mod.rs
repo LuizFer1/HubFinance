@@ -392,23 +392,20 @@ pub(crate) fn fixtures_with_reserves() -> dataset::Dataset {
         ),
     );
 
-    let mv = |reserve: &str,
-              kind: &str,
-              amount: i64,
-              on: &str,
-              user: &str,
-              description: Value,
-              recurring: Value| {
-        json!({
-            "reserveId": reserve,
-            "kind": kind,
-            "amountMinor": amount,
-            "occurredOn": on,
-            "userId": user,
-            "description": description,
-            "recurring": recurring
-        })
-    };
+    // Formato do app: sem `kind`, o sinal de `amountMinor` decide guardar/retirar. O app exige
+    // `reason` em retirada; o hub nao le o campo, mas a fixture segue o contrato real.
+    let mv =
+        |reserve: &str, amount: i64, on: &str, user: &str, description: Value, recurring: Value| {
+            json!({
+                "reserveId": reserve,
+                "amountMinor": amount,
+                "occurredOn": on,
+                "userId": user,
+                "description": description,
+                "reason": if amount < 0 { json!("other") } else { Value::Null },
+                "recurring": recurring
+            })
+        };
     let monthly = || json!("Guardado todo mês");
     let t = || json!(true);
     let f = || json!(false);
@@ -417,20 +414,19 @@ pub(crate) fn fixtures_with_reserves() -> dataset::Dataset {
         (
             "M01",
             false,
-            mv("RE1", "deposit", 50_000, "2026-07-06", "U2", monthly(), t()),
+            mv("RE1", 50_000, "2026-07-06", "U2", monthly(), t()),
         ),
         (
             "M02",
             false,
-            mv("RE1", "deposit", 50_000, "2026-08-06", "U2", monthly(), t()),
+            mv("RE1", 50_000, "2026-08-06", "U2", monthly(), t()),
         ),
         (
             "M03",
             false,
             mv(
                 "RE1",
-                "withdrawal",
-                20_000,
+                -20_000,
                 "2026-08-18",
                 "U1",
                 json!("Conserto da geladeira"),
@@ -440,14 +436,13 @@ pub(crate) fn fixtures_with_reserves() -> dataset::Dataset {
         (
             "M04",
             false,
-            mv("RE1", "deposit", 50_000, "2026-09-06", "U2", monthly(), t()),
+            mv("RE1", 50_000, "2026-09-06", "U2", monthly(), t()),
         ),
         (
             "M05",
             false,
             mv(
                 "RE1",
-                "deposit",
                 100_000,
                 "2026-09-01",
                 "U2",
@@ -458,24 +453,23 @@ pub(crate) fn fixtures_with_reserves() -> dataset::Dataset {
         (
             "M06",
             false,
-            mv("RE1", "deposit", 10_000, "2026-10-05", "U2", null(), null()),
+            mv("RE1", 10_000, "2026-10-05", "U2", null(), null()),
         ),
         (
             "M07",
             true,
-            mv("RE1", "deposit", 999, "2026-09-03", "U2", null(), null()),
+            mv("RE1", 999, "2026-09-03", "U2", null(), null()),
         ),
         (
             "M08",
             false,
-            mv("RP1", "deposit", 30_000, "2026-07-10", "U1", monthly(), t()),
+            mv("RP1", 30_000, "2026-07-10", "U1", monthly(), t()),
         ),
         (
             "M09",
             false,
             mv(
                 "RP1",
-                "deposit",
                 150_000,
                 "2026-07-15",
                 "U1",
@@ -486,42 +480,33 @@ pub(crate) fn fixtures_with_reserves() -> dataset::Dataset {
         (
             "M10",
             false,
-            mv("RP1", "deposit", 30_000, "2026-08-10", "U1", null(), t()),
+            mv("RP1", 30_000, "2026-08-10", "U1", null(), t()),
         ),
         (
             "M11",
             false,
-            mv("RP1", "deposit", 30_000, "2026-09-10", "U1", null(), t()),
+            mv("RP1", 30_000, "2026-09-10", "U1", null(), t()),
         ),
         (
             "M12",
             false,
-            mv(
-                "RP1",
-                "withdrawal",
-                5_000,
-                "2026-09-20",
-                "U1",
-                json!("Passagem"),
-                f(),
-            ),
+            mv("RP1", -5_000, "2026-09-20", "U1", json!("Passagem"), f()),
         ),
         (
             "M13",
             false,
-            mv("RP2", "deposit", 20_000, "2026-08-05", "U2", null(), t()),
+            mv("RP2", 20_000, "2026-08-05", "U2", null(), t()),
         ),
         (
             "M14",
             false,
-            mv("RP2", "deposit", 20_000, "2026-09-05", "U2", null(), t()),
+            mv("RP2", 20_000, "2026-09-05", "U2", null(), t()),
         ),
         (
             "M15",
             false,
             mv(
                 "RP3",
-                "deposit",
                 38_000,
                 "2026-09-12",
                 "U1",
@@ -533,30 +518,22 @@ pub(crate) fn fixtures_with_reserves() -> dataset::Dataset {
         (
             "M16",
             false,
-            mv("RP4", "deposit", 10_000, "2026-06-01", "U3", null(), null()),
+            mv("RP4", 10_000, "2026-06-01", "U3", null(), null()),
         ),
         (
             "M17",
             false,
-            mv("RP5", "deposit", 70_000, "2026-09-02", "U1", null(), null()),
+            mv("RP5", 70_000, "2026-09-02", "U1", null(), null()),
         ),
         (
             "M18",
             false,
-            mv("RX", "deposit", 1_000, "2026-09-02", "U1", null(), null()),
+            mv("RX", 1_000, "2026-09-02", "U1", null(), null()),
         ),
         (
             "M19",
             false,
-            mv(
-                "RP6",
-                "deposit",
-                50_000,
-                "2026-05-03",
-                "U2",
-                json!("Bônus"),
-                f(),
-            ),
+            mv("RP6", 50_000, "2026-05-03", "U2", json!("Bônus"), f()),
         ),
     ];
     for (id, deleted, data) in movements {

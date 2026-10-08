@@ -152,35 +152,52 @@ impl ReserveFields {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MovementKind {
     Deposit,
     Withdrawal,
 }
 
-/// Linha de `reserveMovements`. Nao lido: `reason` (o motivo da retirada e regra do app).
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// Linha de `reserveMovements` ja traduzida. Nao lido: `reason` (o motivo da retirada e regra
+/// do app). Nao e desserializada direto: o JSON do app nao tem `kind`, o sinal de `amountMinor`
+/// decide guardar/retirar e `parse_reserve_movement` o traduz para `kind`.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReserveMovementFields {
     pub reserve_id: String,
     pub kind: MovementKind,
-    /// Positivo por convencao (o sinal vem de `kind`), mas nao validado: o hub nao julga.
+    /// Sempre positivo aqui: o sinal vindo do JSON ja virou `kind`.
     pub amount_minor: i64,
     pub occurred_on: String,
-    #[serde(default)]
     pub user_id: Option<String>,
-    #[serde(default)]
     pub description: Option<String>,
-    #[serde(default)]
     pub recurring: Option<bool>,
+}
+
+/// Forma crua do app. Sem `deny_unknown_fields`: um `kind` legado vira campo desconhecido e e
+/// ignorado, senao o sinal e o `kind` poderiam discordar.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawMovementFields {
+    reserve_id: String,
+    amount_minor: i64,
+    occurred_on: String,
+    #[serde(default)]
+    user_id: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    recurring: Option<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContractError {
-    /// Traz o motivo do serde ("missing field `kind`", "invalid type: ... amountMinor").
+    /// Traz o motivo do serde ("missing field `reserveId`", "invalid type: ... amountMinor").
     #[error("{0}")]
     Json(#[from] serde_json::Error),
+    #[error("amountMinor nao pode ser zero")]
+    AmountZero,
+    #[error("amountMinor fora do intervalo")]
+    AmountOutOfRange,
     #[error("occurredOn fora do formato YYYY-MM-DD")]
     OccurredOnShape,
     #[error("deadline fora do formato YYYY-MM")]
@@ -231,11 +248,29 @@ pub fn parse_reserve(data: &str) -> Result<ReserveFields, ContractError> {
 }
 
 pub fn parse_reserve_movement(data: &str) -> Result<ReserveMovementFields, ContractError> {
-    let fields: ReserveMovementFields = serde_json::from_str(data)?;
-    if !is_iso_date(&fields.occurred_on) {
+    let raw: RawMovementFields = serde_json::from_str(data)?;
+    if !is_iso_date(&raw.occurred_on) {
         return Err(ContractError::OccurredOnShape);
     }
-    Ok(fields)
+    let (kind, amount_minor) = match raw.amount_minor.cmp(&0) {
+        std::cmp::Ordering::Greater => (MovementKind::Deposit, raw.amount_minor),
+        // `checked_abs`: `-i64::MIN` estoura (panic em debug); essa linha vira "fora do contrato".
+        std::cmp::Ordering::Less => match raw.amount_minor.checked_abs() {
+            Some(abs) => (MovementKind::Withdrawal, abs),
+            None => return Err(ContractError::AmountOutOfRange),
+        },
+        // Linha com 0 e corrupta (o app nunca grava): contar em "fora do contrato", nao somar.
+        std::cmp::Ordering::Equal => return Err(ContractError::AmountZero),
+    };
+    Ok(ReserveMovementFields {
+        reserve_id: raw.reserve_id,
+        kind,
+        amount_minor,
+        occurred_on: raw.occurred_on,
+        user_id: raw.user_id,
+        description: raw.description,
+        recurring: raw.recurring,
+    })
 }
 
 /// 7 bytes, `-` em 4, digitos no resto, mes 01..=12: a mesma forma do comeco de `is_iso_date`,
@@ -486,14 +521,17 @@ mod tests {
 
     fn movement() -> Value {
         json!({
+            "id": "01JZ0000000000000000000MV1",
+            "createdAt": "2026-09-06T12:00:00.000Z",
+            "updatedAt": "0001790000000-0000-01JZ0000000000000000000DV1",
+            "deletedAt": null,
             "reserveId": "RE1",
-            "kind": "deposit",
             "amountMinor": 50000,
             "occurredOn": "2026-09-06",
             "userId": "U2",
             "description": "Guardado todo mês",
-            "recurring": true,
-            "reason": null
+            "reason": null,
+            "recurring": true
         })
     }
 
@@ -703,20 +741,61 @@ mod tests {
     }
 
     #[test]
-    fn movimentacao_kind_e_valor() {
+    fn movimentacao_positiva_e_deposito() {
+        let m = parse_reserve_movement(&with(movement(), "amountMinor", json!(50_000))).unwrap();
+        assert_eq!(m.kind, MovementKind::Deposit);
+        assert_eq!(m.amount_minor, 50_000);
+    }
+
+    #[test]
+    fn movimentacao_negativa_e_retirada() {
+        let mut v = movement();
+        v["amountMinor"] = json!(-15_000);
+        v["reason"] = json!("health");
+        let m = parse_reserve_movement(&v.to_string()).unwrap();
+        assert_eq!(m.kind, MovementKind::Withdrawal);
+        assert_eq!(m.amount_minor, 15_000);
+    }
+
+    #[test]
+    fn movimentacao_zero_e_erro() {
         let e = err_text(parse_reserve_movement(&with(
             movement(),
-            "kind",
-            json!("transfer"),
+            "amountMinor",
+            json!(0),
         )));
-        assert!(e.contains("transfer") || e.contains("variant"), "{e}");
-        assert!(parse_reserve_movement(&without(movement(), "kind")).is_err());
+        assert!(e.contains("zero"), "{e}");
+    }
+
+    #[test]
+    fn movimentacao_i64_min_e_erro_sem_panic() {
+        let e = err_text(parse_reserve_movement(&with(
+            movement(),
+            "amountMinor",
+            json!(i64::MIN),
+        )));
+        assert!(e.contains("intervalo"), "{e}");
+        let m =
+            parse_reserve_movement(&with(movement(), "amountMinor", json!(i64::MIN + 1))).unwrap();
+        assert_eq!(m.kind, MovementKind::Withdrawal);
+        assert_eq!(m.amount_minor, i64::MAX);
+    }
+
+    #[test]
+    fn movimentacao_kind_extra_e_ignorado() {
+        for kind in ["withdrawal", "transfer"] {
+            let m = parse_reserve_movement(&with(movement(), "kind", json!(kind))).unwrap();
+            assert_eq!(m.kind, MovementKind::Deposit);
+            assert_eq!(m.amount_minor, 50_000);
+        }
+    }
+
+    #[test]
+    fn movimentacao_valor_invalido() {
         for bad in [json!(12.5), json!("12")] {
             assert!(parse_reserve_movement(&with(movement(), "amountMinor", bad)).is_err());
         }
         assert!(parse_reserve_movement(&without(movement(), "amountMinor")).is_err());
-        // Negativo passa: o hub nao julga.
-        assert!(parse_reserve_movement(&with(movement(), "amountMinor", json!(-5))).is_ok());
     }
 
     #[test]

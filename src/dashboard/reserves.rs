@@ -822,7 +822,7 @@ mod tests {
         add_movement(
             &mut ds,
             "MZ",
-            json!({ "reserveId": "RP4", "kind": "withdrawal", "amountMinor": 10000, "occurredOn": "2026-09-01" }),
+            json!({ "reserveId": "RP4", "amountMinor": -10000, "occurredOn": "2026-09-01" }),
         );
         assert_eq!(shares(&ds, "2026-09").len(), 5);
     }
@@ -1049,7 +1049,7 @@ mod tests {
         add_movement(
             &mut ds,
             "MX",
-            json!({ "reserveId": "RE1", "kind": "deposit", "amountMinor": 200000, "occurredOn": "2026-09-02" }),
+            json!({ "reserveId": "RE1", "amountMinor": 200000, "occurredOn": "2026-09-02" }),
         );
         let e = emergency_view(&ds, &ds.reserves["RE1"], "2026-09");
         assert_eq!(e.eta, EmergencyEta::Reached);
@@ -1298,7 +1298,7 @@ mod tests {
         add_movement(
             &mut ds,
             "MZ",
-            json!({ "reserveId": "RP1", "kind": "withdrawal", "amountMinor": 100, "occurredOn": "2026-09-23" }),
+            json!({ "reserveId": "RP1", "amountMinor": -100, "occurredOn": "2026-09-23" }),
         );
         let (rows, _) = movements(&ds, &months());
         assert_eq!(rows[0].id, "MZ");

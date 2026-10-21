@@ -18,6 +18,37 @@ pub enum Kind {
     Expense,
 }
 
+/// Estados que tiram um lancamento das contas (`reportState` do app, `transaction.ts`).
+///
+/// So os dois valores conhecidos excluem; qualquer outro (texto novo de uma versao futura do app,
+/// outro tipo JSON) conta como lancamento normal, como `countsInTotals` do app: o erro seguro e
+/// somar a mais, nunca fazer o dinheiro sumir.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportState {
+    /// Movimento entre contas proprias: nao e receita nem despesa.
+    Transfer,
+    /// Continua na lista, mas fora de qualquer soma.
+    Hidden,
+}
+
+impl ReportState {
+    pub fn from_value(value: &serde_json::Value) -> Option<Self> {
+        match value.as_str() {
+            Some("transfer") => Some(Self::Transfer),
+            Some("hidden") => Some(Self::Hidden),
+            _ => None,
+        }
+    }
+
+    /// Rotulo da tag na lista.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Transfer => "Transferência",
+            Self::Hidden => "Oculto",
+        }
+    }
+}
+
 /// `src/domain/model/transaction.ts`. Nao lidos: `currency`, `cashbackMinor`, `occurrenceKey`.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +66,16 @@ pub struct TransactionFields {
     pub user_id: Option<String>,
     #[serde(default)]
     pub recurrence_id: Option<String>,
+    /// `reportState` do app. `Value` e nao `String` de proposito: campo novo de versao futura,
+    /// de qualquer tipo, nao pode fazer a *linha* ser ignorada; ver `ReportState::from_value`.
+    #[serde(default)]
+    pub report_state: Option<serde_json::Value>,
+}
+
+impl TransactionFields {
+    pub fn report_state(&self) -> Option<ReportState> {
+        self.report_state.as_ref().and_then(ReportState::from_value)
+    }
 }
 
 /// `src/domain/model/category.ts`. Token de cor e chave de icone desconhecidos sao validos:
@@ -353,6 +394,35 @@ mod tests {
         assert_eq!(t.occurred_on, "2026-09-14");
         assert_eq!(t.user_id.as_deref(), Some("01HZZZZZZZZZZZZZZZZZZZZZP1"));
         assert_eq!(t.recurrence_id, None);
+    }
+
+    #[test]
+    fn linha_antiga_sem_report_state_conta_normalmente() {
+        let t = parse_transaction(&tx().to_string()).unwrap();
+        assert_eq!(t.report_state(), None);
+        let t = parse_transaction(&with(tx(), "reportState", Value::Null)).unwrap();
+        assert_eq!(t.report_state(), None);
+    }
+
+    #[test]
+    fn report_state_conhecido_e_lido() {
+        let t = parse_transaction(&with(tx(), "reportState", json!("transfer"))).unwrap();
+        assert_eq!(t.report_state(), Some(ReportState::Transfer));
+        let t = parse_transaction(&with(tx(), "reportState", json!("hidden"))).unwrap();
+        assert_eq!(t.report_state(), Some(ReportState::Hidden));
+    }
+
+    #[test]
+    fn report_state_desconhecido_ou_de_outro_tipo_nao_derruba_a_linha() {
+        for future in [
+            json!("archived"),
+            json!(3),
+            json!({ "x": 1 }),
+            json!(["hidden"]),
+        ] {
+            let t = parse_transaction(&with(tx(), "reportState", future)).unwrap();
+            assert_eq!(t.report_state(), None);
+        }
     }
 
     #[test]

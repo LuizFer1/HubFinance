@@ -429,6 +429,22 @@ fn table(app: &App) -> Element<'_, Message> {
         .into()
 }
 
+/// Tag de lancamento que nao conta nas somas ("Transferência", "Oculto").
+fn state_tag<'a>(t: &'static Tokens, label: &str) -> Element<'a, Message> {
+    container(
+        text(label.to_string())
+            .size(11)
+            .font(fonts::INTER_MEDIUM)
+            .line_height(1.0)
+            .color(t.text_alpha(0.70)),
+    )
+    .height(20)
+    .padding([0, 7])
+    .align_y(Alignment::Center)
+    .style(theme::fill(t.neutral_800, 999.0))
+    .into()
+}
+
 fn recurrence_tag<'a>(t: &'static Tokens, label: &str) -> Element<'a, Message> {
     container(
         row![
@@ -463,6 +479,9 @@ fn table_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
     .align_y(Alignment::Center);
     if let Some(label) = &r.recurrence_label {
         description = description.push(recurrence_tag(t, label));
+    }
+    if let Some(state) = r.report_state {
+        description = description.push(state_tag(t, state.label()));
     }
     let category_color = r
         .category_color

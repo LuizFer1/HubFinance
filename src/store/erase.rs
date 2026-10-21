@@ -71,10 +71,6 @@ impl AreaSet {
         self.0 |= area.bit();
     }
 
-    pub fn remove(&mut self, area: Area) {
-        self.0 &= !area.bit();
-    }
-
     pub fn toggle(&mut self, area: Area) {
         self.0 ^= area.bit();
     }
@@ -388,6 +384,7 @@ fn erase_planned(
 impl Store {
     /// `GROUP BY` unico para todos os aparelhos: linhas vivas "do aparelho" por tabela das
     /// areas. Serve de pre-filtro barato para a deteccao de orfaos (`devices_data`).
+    #[cfg(test)]
     pub fn device_data_counts(&self) -> Result<BTreeMap<String, Vec<TableCount>>, StoreError> {
         let conn = self.lock();
         Ok(counts_by_device(&conn)?)
@@ -406,6 +403,7 @@ impl Store {
     }
 
     /// Plano de apagar tudo de um aparelho (a contagem que o modal mostra).
+    #[cfg(test)]
     pub fn device_data(&self, device_id: &str) -> Result<DeviceData, StoreError> {
         Ok(plan(&self.lock(), device_id)?.summary)
     }

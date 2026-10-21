@@ -59,6 +59,7 @@ impl Store {
         &self.epoch
     }
 
+    #[cfg(test)]
     pub fn hub_device_id(&self) -> &str {
         &self.hub_device_id
     }

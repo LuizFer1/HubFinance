@@ -11,7 +11,8 @@ use iced::{Alignment, Element, Length, Padding, mouse, window};
 use super::app::{App, Message, Screen};
 use super::theme::{self, Tokens};
 use super::{
-    connection_view, dashboard_view, fonts, icons, reserves_view, time, transactions_view, widgets,
+    connection_view, dashboard_view, fonts, icons, remove_view, reserves_view, time,
+    transactions_view, widgets,
 };
 use crate::config::ThemeMode;
 use crate::dashboard::money::group_thousands;
@@ -28,94 +29,13 @@ pub fn root(app: &App) -> Element<'_, Message> {
     if !app.maximized {
         layers = layers.push(resize_frame());
     }
-    if let Some(dialog) = remove_dialog(app) {
+    if let Some(dialog) = remove_view::dialog(app) {
         layers = layers.push(dialog);
     }
     if let Some(pending) = &app.pending_removal {
         layers = layers.push(toast(app.tokens, &pending.toast));
     }
     layers.into()
-}
-
-/// Dialogo "Remover Ana?": fundo preto a 55 % que cancela ao clicar e a caixa por cima.
-fn remove_dialog(app: &App) -> Option<Element<'_, Message>> {
-    let t = app.tokens;
-    let device_id = app.confirm_remove.as_deref()?;
-    let person = app.people.iter().find(|p| p.device_id == device_id)?;
-    let photo = app.avatars.get(&person.device_id).map(|a| &a.handle);
-    let name = person.display_name.as_str();
-    let header = row![
-        widgets::avatar(t, name, person.color.as_deref(), photo, 40.0),
-        text(format!("Remover {name}?"))
-            .size(18)
-            .font(fonts::INTER_MEDIUM)
-            .color(t.text),
-    ]
-    .spacing(12)
-    .align_y(Alignment::Center);
-    let body = text(format!(
-        "O {} para de sincronizar com este computador. Os lançamentos que {name} já criou \
-         continuam no histórico. Para voltar, basta conectar de novo pelo QR code.",
-        person.device_name
-    ))
-    .size(14)
-    .line_height(1.55)
-    .color(t.text_alpha(0.70));
-    let action = |content: Element<'static, Message>| {
-        button(
-            container(content)
-                .height(Length::Fill)
-                .align_y(Alignment::Center),
-        )
-        .height(38)
-        .padding([0, 16])
-    };
-    let cancel = action(text("Cancelar").size(13).font(fonts::INTER_MEDIUM).into())
-        .style(theme::outline_divider(t))
-        .on_press(Message::CancelRemove);
-    let confirm = action(
-        row![
-            icons::icon_inherit(icons::USER_MINUS, 13.0),
-            text("Remover").size(13).font(fonts::INTER_MEDIUM),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center)
-        .into(),
-    )
-    .style(theme::danger_filled(t))
-    .on_press(Message::ConfirmRemove);
-    let buttons = row![Space::new().width(Length::Fill), cancel, confirm].spacing(10);
-    let width = (app.window_size.width - 48.0).clamp(240.0, 420.0);
-    let dialog_box = container(
-        column![
-            header,
-            Space::new().height(14),
-            body,
-            Space::new().height(22),
-            buttons
-        ]
-        .width(Length::Fill),
-    )
-    .width(width)
-    .padding(24)
-    .style(theme::dialog(t));
-    // A caixa engole o clique: sem isso, clicar dentro dela chegaria ao fundo e cancelaria.
-    let dialog_box = opaque(mouse_area(dialog_box).on_press(Message::Noop));
-    let scrim = opaque(
-        mouse_area(
-            container(Space::new())
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(theme::scrim()),
-        )
-        .on_press(Message::CancelRemove),
-    );
-    Some(
-        stack![scrim, container(dialog_box).center(Length::Fill)]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into(),
-    )
 }
 
 /// Toast de 40 px centralizado embaixo, com "Desfazer".
@@ -625,7 +545,12 @@ fn content(app: &App) -> Element<'_, Message> {
             Screen::Connection => connection_view::view(app),
         }
     };
-    let page = column![header(app), body].spacing(14);
+    let mut page = column![header(app)].spacing(14);
+    // O aviso vale para qualquer tela: na primeira abertura quem esta no dashboard tambem ve.
+    if let Some(banner) = remove_view::orphan_banner(app) {
+        page = page.push(banner);
+    }
+    let page = page.push(body);
     let inner = container(page).width(Length::Fill).padding(Padding {
         top: 28.0,
         right: 32.0,
@@ -786,6 +711,7 @@ mod tests {
             last_pull_at: pull.map(Into::into),
             revoked,
             user_id: None,
+            ..DeviceView::default()
         }
     }
 

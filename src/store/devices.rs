@@ -104,8 +104,10 @@ impl Store {
         Ok(devices)
     }
 
-    /// `true` se o aparelho existe. Revogar de novo mantem a data da primeira revogacao, que
+    /// So os testes usam: o hub revoga por `remove_device`, que revoga e apaga na mesma
+    /// transacao. `true` se o aparelho existe. Revogar de novo mantem a data da primeira revogacao, que
     /// e a que a janela mostra como historico.
+    #[cfg(test)]
     pub fn revoke_device(&self, device_id: &str, now: &str) -> Result<bool, StoreError> {
         let conn = self.lock();
         let changed = conn.execute(

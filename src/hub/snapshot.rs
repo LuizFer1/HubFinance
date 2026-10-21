@@ -9,6 +9,7 @@ use std::time::SystemTime;
 use crate::dashboard::dataset::Dataset;
 use crate::dashboard::people::DeviceInfo;
 use crate::store::devices::Device;
+use crate::store::erase::DeviceData;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Status {
@@ -32,7 +33,7 @@ pub struct PairingView {
 
 /// Sem `key_hash` de proposito: o hash nao tem utilidade na tela e nao deve chegar a UI nem a
 /// log nenhum.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DeviceView {
     pub device_id: String,
     pub name: String,
@@ -43,6 +44,19 @@ pub struct DeviceView {
     pub revoked: bool,
     /// A pessoa do app que pareou (`users[user_id]`), quando o app mandou.
     pub user_id: Option<String>,
+    /// "Manter tudo" ja gravado para este aparelho.
+    pub data_kept: bool,
+    /// O que apagar apagaria hoje (vazio se o aparelho nao tem linha viva nas areas).
+    pub data: DeviceData,
+}
+
+impl DeviceView {
+    /// Aparelho **orfao**: removido, sem "Manter tudo" e com algo a apagar. Derivado do estado,
+    /// sem flag de versao nem de "ja perguntei": decidir (apagar tudo ou manter) o tira da
+    /// lista, e "Depois" nao grava nada, entao o aviso volta na proxima abertura.
+    pub fn is_orphan(&self) -> bool {
+        self.revoked && !self.data_kept && !self.data.is_empty()
+    }
 }
 
 impl From<Device> for DeviceView {
@@ -56,6 +70,8 @@ impl From<Device> for DeviceView {
             last_pull_at: d.last_pull_at,
             revoked: d.revoked_at.is_some(),
             user_id: d.user_id,
+            data_kept: d.data_kept_at.is_some(),
+            data: DeviceData::default(),
         }
     }
 }

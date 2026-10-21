@@ -19,6 +19,7 @@ use crate::server::ca_http::{CaState, ca_router};
 use crate::server::router::full_api;
 use crate::server::serve::{Servers, bind_servers};
 use crate::server::state::{AppState, ServerEvent, rfc3339};
+use crate::store::erase::{AreaSet, DeviceData};
 use crate::store::{Store, StoreError};
 use crate::tls::server_cert::{ServerCert, needs_reissue};
 use crate::tls::{self, lan};
@@ -161,6 +162,28 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// "128 lançamentos, 3 metas": so o que foi apagado, so contagens.
+fn erased_summary(report: &DeviceData) -> String {
+    let parts = [
+        (report.transactions, "lançamento", "lançamentos"),
+        (report.budgets, "meta", "metas"),
+        (report.reserves, "reserva", "reservas"),
+        (
+            report.reserve_movements,
+            "movimento de reserva",
+            "movimentos de reserva",
+        ),
+        (report.recurrences, "recorrência", "recorrências"),
+        (report.adjustments, "reajuste", "reajustes"),
+    ];
+    parts
+        .iter()
+        .filter(|(n, _, _)| *n > 0)
+        .map(|(n, one, many)| plural(*n, one, many))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 impl Hub {
     async fn serve(
         mut self,
@@ -177,7 +200,13 @@ impl Hub {
                     // UI caiu sem mandar Shutdown: desliga do mesmo jeito.
                     None | Some(Command::Shutdown) => break,
                     Some(Command::IssuePairingToken) => self.issue_token(),
-                    Some(Command::RevokeDevice(id)) => self.revoke(id).await,
+                    Some(Command::RemoveDevice { device_id, erase }) => {
+                        self.remove_device(device_id, erase).await;
+                    }
+                    Some(Command::EraseDeviceData { device_id, areas }) => {
+                        self.erase_device_data(device_id, areas).await;
+                    }
+                    Some(Command::KeepDeviceData(id)) => self.keep_device_data(id).await,
                 },
                 Some(event) = self.events.recv() => self.on_event(event).await,
                 _ = tick.tick() => self.on_tick().await,
@@ -221,32 +250,97 @@ impl Hub {
         });
     }
 
-    async fn revoke(&mut self, device_id: String) {
+    fn device_name(&self, device_id: &str) -> String {
+        self.snap
+            .devices
+            .iter()
+            .find(|d| d.device_id == device_id)
+            .map_or_else(|| device_id.to_string(), |d| d.name.clone())
+    }
+
+    /// Revoga e, se o usuario marcou areas, apaga na mesma transacao (ver `Store::remove_device`).
+    /// A atividade (e o arquivo de log que a espelha) so leva contagens, nunca ids de linha,
+    /// valores nem nomes de categoria.
+    async fn remove_device(&mut self, device_id: String, erase: AreaSet) {
         let now = rfc3339(SystemTime::now());
+        let name = self.device_name(&device_id);
         let id = device_id.clone();
         match self
-            .blocking(move |store| store.revoke_device(&id, &now))
+            .blocking(move |store| store.remove_device(&id, erase, &now))
             .await
         {
-            Ok(true) => {
-                let name = self
-                    .snap
-                    .devices
-                    .iter()
-                    .find(|d| d.device_id == device_id)
-                    .map_or(device_id.clone(), |d| d.name.clone());
-                self.snap
-                    .log(ActivityKind::Info, format!("Revogado: {name}"));
+            Ok(Some(report)) => {
+                let mut text = format!("Removido: {name}");
+                if !report.is_empty() {
+                    text.push_str(&format!("; apagado: {}", erased_summary(&report)));
+                } else if erase.is_empty() {
+                    text.push_str("; dados mantidos");
+                }
+                self.snap.log(ActivityKind::Info, text);
+                self.after_erase(&report).await;
             }
-            Ok(false) => self.snap.log(
-                ActivityKind::Warning,
-                format!("Aparelho nao encontrado: {device_id}"),
-            ),
+            Ok(None) => self.not_found(&device_id),
             Err(e) => self
                 .snap
-                .log(ActivityKind::Error, format!("Erro ao revogar: {e}")),
+                .log(ActivityKind::Error, format!("Erro ao remover: {e}")),
         }
         self.reload_devices().await;
+    }
+
+    async fn erase_device_data(&mut self, device_id: String, areas: AreaSet) {
+        let name = self.device_name(&device_id);
+        let id = device_id.clone();
+        match self
+            .blocking(move |store| store.erase_device_rows(&id, areas))
+            .await
+        {
+            Ok(Some(report)) => {
+                self.snap.log(
+                    ActivityKind::Info,
+                    format!("Dados apagados de {name}: {}", erased_summary(&report)),
+                );
+                self.after_erase(&report).await;
+            }
+            Ok(None) => self.not_found(&device_id),
+            Err(e) => self
+                .snap
+                .log(ActivityKind::Error, format!("Erro ao apagar dados: {e}")),
+        }
+        self.reload_devices().await;
+    }
+
+    async fn keep_device_data(&mut self, device_id: String) {
+        let now = rfc3339(SystemTime::now());
+        let name = self.device_name(&device_id);
+        let id = device_id.clone();
+        match self
+            .blocking(move |store| store.keep_device_data(&id, &now))
+            .await
+        {
+            Ok(true) => self
+                .snap
+                .log(ActivityKind::Info, format!("Dados mantidos: {name}")),
+            Ok(false) => self.not_found(&device_id),
+            Err(e) => self
+                .snap
+                .log(ActivityKind::Error, format!("Erro ao manter os dados: {e}")),
+        }
+        self.reload_devices().await;
+    }
+
+    fn not_found(&mut self, device_id: &str) {
+        self.snap.log(
+            ActivityKind::Warning,
+            format!("Aparelho nao encontrado: {device_id}"),
+        );
+    }
+
+    /// O tombstone entra no dashboard na hora (e nao pelo debounce do push): quem apagou esta
+    /// olhando a tela e espera ver os totais mudarem.
+    async fn after_erase(&mut self, report: &DeviceData) {
+        if !report.is_empty() {
+            self.refresh_dashboard().await;
+        }
     }
 
     async fn on_event(&mut self, event: ServerEvent) {
@@ -439,9 +533,21 @@ impl Hub {
     }
 
     async fn reload_devices(&mut self) {
-        match self.blocking(|store| store.list_devices()).await {
-            Ok(devices) => {
-                self.snap.devices = devices.into_iter().map(DeviceView::from).collect();
+        // A contagem por area sai junto da lista: e dela que o aviso de aparelho removido com
+        // dados e o modal tiram os numeros, e a UI so le o snapshot.
+        let loaded = self
+            .blocking(|store| Ok((store.list_devices()?, store.devices_data()?)))
+            .await;
+        match loaded {
+            Ok((devices, mut data)) => {
+                self.snap.devices = devices
+                    .into_iter()
+                    .map(|device| {
+                        let mut view = DeviceView::from(device);
+                        view.data = data.remove(&view.device_id).unwrap_or_default();
+                        view
+                    })
+                    .collect();
             }
             Err(e) => self.snap.log(
                 ActivityKind::Error,
@@ -469,6 +575,22 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resumo_do_que_foi_apagado_so_tem_contagens() {
+        let report = DeviceData {
+            transactions: 128,
+            budgets: 1,
+            reserves: 2,
+            reserve_movements: 14,
+            ..DeviceData::default()
+        };
+        assert_eq!(
+            erased_summary(&report),
+            "128 lançamentos, 1 meta, 2 reservas, 14 movimentos de reserva"
+        );
+        assert_eq!(erased_summary(&DeviceData::default()), "");
+    }
 
     #[test]
     fn url_do_qr_segue_o_ip_principal() {

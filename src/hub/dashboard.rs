@@ -10,9 +10,9 @@ use crate::store::Store;
 /// segura o `Arc` anterior). Meio segundo junta a rajada e ainda parece imediato.
 pub const REFRESH_DEBOUNCE: Duration = Duration::from_millis(500);
 
-/// As tabelas que o contrato de campos le; o resto nem sai do banco. `reserves` e
-/// `reserveMovements` sao lidas no formato que o app grava.
-pub const TABLES: [&str; 7] = [
+/// As tabelas que o contrato de campos le; o resto nem sai do banco. `reserves`,
+/// `reserveMovements` e `budgets` sao lidas no formato que o app grava.
+pub const TABLES: [&str; 8] = [
     "transactions",
     "categories",
     "users",
@@ -20,6 +20,7 @@ pub const TABLES: [&str; 7] = [
     "recurrences",
     "reserves",
     "reserveMovements",
+    "budgets",
 ];
 
 #[derive(Default)]
@@ -122,6 +123,26 @@ pub(crate) mod tests {
             "amountMinor": amount,
             "occurredOn": "2026-09-14"
         })
+    }
+
+    #[tokio::test]
+    async fn refresh_carrega_metas_por_categoria() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store
+            .apply_batch(
+                ORIGIN,
+                &[push_entry(
+                    "budgets",
+                    "01HZZZZZZZZZZZZZZZZZZZZZB1",
+                    1000,
+                    false,
+                    json!({ "categoryId": "01HZZZZZZZZZZZZZZZZZZZZZC1", "limitMinor": 5000 }),
+                )],
+            )
+            .unwrap();
+        let mut state = DashboardState::default();
+        state.refresh(&store, SystemTime::now()).await.unwrap();
+        assert_eq!(state.dataset.alive_budgets().count(), 1);
     }
 
     #[tokio::test]

@@ -206,16 +206,27 @@ fn owned_ids(conn: &Connection, device_id: &str, table: &str) -> rusqlite::Resul
 }
 
 /// Linhas vivas de `table` com um campo de referencia (`json_extract`) e a marca "do aparelho".
+///
+/// `only_owned` restringe a leitura as linhas do aparelho (pelo indice em `origin`): so quem
+/// precisa enxergar as linhas **alheias** (movimento de outro aparelho numa reserva, reajuste
+/// de uma serie que cai) le a tabela inteira. O plano roda a cada evento de sync para contar
+/// os orfaos, entao varrer todo lancamento de todos os aparelhos a cada push nao serve.
 fn live_with_ref(
     conn: &Connection,
     device_id: &str,
     table: &str,
     field: &str,
+    only_owned: bool,
 ) -> rusqlite::Result<Vec<(String, Option<String>, bool)>> {
+    let owned = owned_by("?1");
+    let filter = if only_owned {
+        format!("AND {owned}")
+    } else {
+        String::new()
+    };
     let mut stmt = conn.prepare(&format!(
-        "SELECT r.id, json_extract(r.data, '$.{field}'), {} FROM rows r \
-         WHERE r.tbl = ?2 AND r.deleted_at IS NULL ORDER BY r.id",
-        owned_by("?1")
+        "SELECT r.id, json_extract(r.data, '$.{field}'), {owned} FROM rows r \
+         WHERE r.tbl = ?2 AND r.deleted_at IS NULL {filter} ORDER BY r.id"
     ))?;
     stmt.query_map((device_id, table), |r| {
         // Referencia que nao e texto (versao futura do app) vira "sem referencia", nao erro.
@@ -245,7 +256,7 @@ fn plan(conn: &Connection, device_id: &str) -> rusqlite::Result<Plan> {
     }
 
     // Transferencias: a tabela `transactions` do aparelho. Ninguem referencia lancamento.
-    for (id, state, _) in live_with_ref(conn, device_id, "transactions", "reportState")?
+    for (id, state, _) in live_with_ref(conn, device_id, "transactions", "reportState", true)?
         .into_iter()
         .filter(|(_, _, owned)| *owned)
     {
@@ -264,7 +275,14 @@ fn plan(conn: &Connection, device_id: &str) -> rusqlite::Result<Plan> {
     // vivos dela sao do aparelho (senao o saldo dos outros aparelhos seria cortado), e entao
     // leva todos junto — nunca sobra movimento vivo de reserva apagada, que o app continuaria
     // descontando do saldo.
-    let movements = live_with_ref(conn, device_id, "reserveMovements", "reserveId")?;
+    let owned_reserves = owned_ids(conn, device_id, "reserves")?;
+    let movements = live_with_ref(
+        conn,
+        device_id,
+        "reserveMovements",
+        "reserveId",
+        owned_reserves.is_empty(),
+    )?;
     let with_foreign_movement: HashSet<&str> = movements
         .iter()
         .filter(|(_, _, owned)| !owned)
@@ -280,7 +298,7 @@ fn plan(conn: &Connection, device_id: &str) -> rusqlite::Result<Plan> {
             });
         }
     }
-    for id in owned_ids(conn, device_id, "reserves")? {
+    for id in owned_reserves {
         if with_foreign_movement.contains(id.as_str()) {
             summary.reserves_kept += 1;
         } else {
@@ -308,9 +326,13 @@ fn plan(conn: &Connection, device_id: &str) -> rusqlite::Result<Plan> {
             id: id.clone(),
         });
     }
-    for (id, series_ref, owned) in
-        live_with_ref(conn, device_id, "recurrenceAdjustments", "recurrenceId")?
-    {
+    for (id, series_ref, owned) in live_with_ref(
+        conn,
+        device_id,
+        "recurrenceAdjustments",
+        "recurrenceId",
+        series.is_empty(),
+    )? {
         let of_erased_series = series_ref.as_deref().is_some_and(|s| series.contains(s));
         if owned || of_erased_series {
             summary.adjustments += 1;
@@ -325,7 +347,7 @@ fn plan(conn: &Connection, device_id: &str) -> rusqlite::Result<Plan> {
         }
     }
     if !series.is_empty() {
-        summary.generated = live_with_ref(conn, device_id, "transactions", "recurrenceId")?
+        summary.generated = live_with_ref(conn, device_id, "transactions", "recurrenceId", false)?
             .iter()
             .filter(|(_, series_ref, _)| series_ref.as_deref().is_some_and(|s| series.contains(s)))
             .count();

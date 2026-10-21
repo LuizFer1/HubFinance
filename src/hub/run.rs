@@ -390,7 +390,7 @@ impl Hub {
                         format!("{name} recebeu {}", plural(rows, "linha", "linhas")),
                     );
                 }
-                self.reload_devices().await;
+                self.reload_devices_keeping_counts().await;
             }
             ServerEvent::TokenExhausted => {
                 self.snap.pairing = None;
@@ -533,18 +533,43 @@ impl Hub {
     }
 
     async fn reload_devices(&mut self) {
+        self.reload(true).await;
+    }
+
+    /// Pull nao muda `rows`: so `last_*` mudou, entao a contagem por area (cara: varre linhas)
+    /// fica a do ultimo carregamento. Push, remocao e apagar sempre recontam.
+    async fn reload_devices_keeping_counts(&mut self) {
+        self.reload(false).await;
+    }
+
+    async fn reload(&mut self, recount: bool) {
         // A contagem por area sai junto da lista: e dela que o aviso de aparelho removido com
         // dados e o modal tiram os numeros, e a UI so le o snapshot.
         let loaded = self
-            .blocking(|store| Ok((store.list_devices()?, store.devices_data()?)))
+            .blocking(move |store| {
+                let data = if recount {
+                    Some(store.devices_data()?)
+                } else {
+                    None
+                };
+                Ok((store.list_devices()?, data))
+            })
             .await;
         match loaded {
             Ok((devices, mut data)) => {
+                let previous = std::mem::take(&mut self.snap.devices);
                 self.snap.devices = devices
                     .into_iter()
                     .map(|device| {
                         let mut view = DeviceView::from(device);
-                        view.data = data.remove(&view.device_id).unwrap_or_default();
+                        view.data = match data.as_mut() {
+                            Some(data) => data.remove(&view.device_id).unwrap_or_default(),
+                            None => previous
+                                .iter()
+                                .find(|p| p.device_id == view.device_id)
+                                .map(|p| p.data.clone())
+                                .unwrap_or_default(),
+                        };
                         view
                     })
                     .collect();

@@ -144,7 +144,7 @@ fn split_bar<'a>(t: &'static Tokens, parts: &[(i64, Color)]) -> Element<'a, Mess
 }
 
 /// Trilho com preenchimento parcial (0..=1) a esquerda.
-fn fill_bar<'a>(
+pub(super) fn fill_bar<'a>(
     track: Color,
     color: Color,
     fraction: f32,

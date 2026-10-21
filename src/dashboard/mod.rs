@@ -1,6 +1,7 @@
 //! Interpretacao financeira das linhas: puro, sem rusqlite, iced, axum ou tokio.
 
 pub mod aggregate;
+pub mod budgets;
 pub mod colors;
 pub mod contract;
 pub mod dataset;

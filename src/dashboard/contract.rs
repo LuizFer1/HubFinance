@@ -199,6 +199,20 @@ pub enum MovementKind {
     Withdrawal,
 }
 
+/// Linha de `budgets` (`budget.ts` do app): meta mensal de gasto de uma categoria.
+///
+/// `updatedAt` (HLC) vem no JSON porque o hub guarda a linha como o app a mandou; ele decide
+/// qual de duas metas da mesma categoria vale (ver `budgets::current_budgets`). Ausente, a meta
+/// perde para qualquer outra.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetFields {
+    pub category_id: String,
+    pub limit_minor: i64,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
 /// Linha de `reserveMovements` ja traduzida. Nao lido: `reason` (o motivo da retirada e regra
 /// do app). Nao e desserializada direto: o JSON do app nao tem `kind`, o sinal de `amountMinor`
 /// decide guardar/retirar e `parse_reserve_movement` o traduz para `kind`.
@@ -245,6 +259,9 @@ pub enum ContractError {
     DueMonthShape,
     #[error("recurring.since fora do formato YYYY-MM")]
     RecurringSinceShape,
+    /// O app so grava meta positiva; zero ou negativo nao tem barra para desenhar.
+    #[error("limitMinor deve ser positivo")]
+    LimitNotPositive,
 }
 
 pub fn parse_transaction(data: &str) -> Result<TransactionFields, ContractError> {
@@ -269,6 +286,14 @@ pub fn parse_payment_method(data: &str) -> Result<PaymentMethodFields, ContractE
 
 pub fn parse_recurrence(data: &str) -> Result<RecurrenceFields, ContractError> {
     Ok(serde_json::from_str(data)?)
+}
+
+pub fn parse_budget(data: &str) -> Result<BudgetFields, ContractError> {
+    let fields: BudgetFields = serde_json::from_str(data)?;
+    if fields.limit_minor <= 0 {
+        return Err(ContractError::LimitNotPositive);
+    }
+    Ok(fields)
 }
 
 pub fn parse_reserve(data: &str) -> Result<ReserveFields, ContractError> {
@@ -907,6 +932,36 @@ mod tests {
         for bad in ["[]", "null", "{"] {
             assert!(parse_reserve(bad).is_err(), "{bad}");
             assert!(parse_reserve_movement(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn meta_valida_le_categoria_limite_e_versao() {
+        let b = parse_budget(
+            r#"{"categoryId":"C1","limitMinor":50000,"updatedAt":"1754568000000-0000-AAA","dirty":0}"#,
+        )
+        .unwrap();
+        assert_eq!(b.category_id, "C1");
+        assert_eq!(b.limit_minor, 50_000);
+        assert_eq!(b.updated_at.as_deref(), Some("1754568000000-0000-AAA"));
+    }
+
+    #[test]
+    fn meta_sem_versao_e_valida() {
+        let b = parse_budget(r#"{"categoryId":"C1","limitMinor":1}"#).unwrap();
+        assert_eq!(b.updated_at, None);
+    }
+
+    #[test]
+    fn meta_fora_do_contrato_e_erro() {
+        for bad in [
+            r#"{"limitMinor":100}"#,
+            r#"{"categoryId":"C1"}"#,
+            r#"{"categoryId":"C1","limitMinor":"x"}"#,
+            r#"{"categoryId":"C1","limitMinor":0}"#,
+            r#"{"categoryId":"C1","limitMinor":-5}"#,
+        ] {
+            assert!(parse_budget(bad).is_err(), "{bad}");
         }
     }
 }

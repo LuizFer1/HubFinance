@@ -14,6 +14,12 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
   ficam iguais aos do app para o mesmo conjunto de lançamentos.
 - Linha antiga (sem o campo) e valor que esta versão não conhece contam como lançamento
   normal. Nenhuma mudança no protocolo `/v1` nem no banco.
+- O dashboard mostra as **metas por categoria** do app (tabela `budgets`) numa seção própria, só
+  leitura: gasto do mês, meta, restante e uso, com a barra em atenção a partir de 80 % e em
+  cor de despesa quando passa de 100 %. Vale a mesma regra do app: só despesa que conta nos
+  totais (transferência e oculto ficam de fora), categorias fundidas resolvidas, meta de
+  categoria apagada some e, com duas metas para a mesma categoria, vale a de `updatedAt` maior.
+  Linha de meta fora do contrato (sem categoria, limite zero ou negativo) é ignorada e contada.
 
 ## [0.0.5] - 2026-10-07
 

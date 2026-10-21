@@ -6,6 +6,7 @@ use super::aggregate::{
     MonthSummary, MonthTotals, NO_CATEGORY_COLOR, Slice, average_surplus, axis_top,
     expense_by_category, month_summary, monthly_totals, recent,
 };
+use super::budgets::{BudgetStatus, budget_report};
 use super::contract::ReserveKind;
 use super::dataset::Dataset;
 use super::list::{
@@ -44,6 +45,8 @@ pub struct DashboardView {
     /// "entre abr e set".
     pub bars_range_label: String,
     pub recent: Vec<ListRow>,
+    /// Metas por categoria contra o gasto do mes, a mais usada primeiro. Vazio sem metas.
+    pub budgets: Vec<BudgetStatus>,
     /// Hub sem nenhum lancamento vivo: o estado "Sem dados" (nao confundir com mes vazio).
     pub is_empty: bool,
     pub ignored_total: usize,
@@ -81,6 +84,7 @@ pub fn build_dashboard(dataset: &Dataset, today: &str, month: &str) -> Dashboard
             .into_iter()
             .map(|tx| to_row(dataset, tx))
             .collect(),
+        budgets: budget_report(dataset, month),
         is_empty: dataset.is_empty(),
         ignored_total: dataset.ignored_total(),
     }
@@ -243,6 +247,48 @@ mod tests {
     use super::*;
     use crate::dashboard::fixtures;
     use crate::dashboard::list::{TypeFilter, category_options, list_month};
+
+    #[test]
+    fn dashboard_traz_as_metas_do_mes_escolhido() {
+        use crate::dashboard::budgets::BudgetLevel;
+        use crate::dashboard::dataset::{BUDGETS, RawRow};
+
+        let mut ds = fixtures();
+        // Moradia: 1.800,00 de gasto em setembro contra uma meta de 1.500,00.
+        let housing = ds
+            .categories
+            .values()
+            .find(|c| c.name == "Moradia")
+            .map(|c| c.id.clone())
+            .expect("fixture tem Moradia");
+        ds.apply([RawRow {
+            table: BUDGETS.into(),
+            id: "B1".into(),
+            deleted_at: None,
+            seq: 10_000,
+            data: serde_json::json!({
+                "categoryId": housing, "limitMinor": 150_000, "updatedAt": "1-A"
+            })
+            .to_string(),
+        }]);
+
+        let sep = build_dashboard(&ds, "2026-09-24", "2026-09");
+        assert_eq!(sep.budgets.len(), 1);
+        assert_eq!(sep.budgets[0].level, BudgetLevel::Over);
+        assert_eq!(sep.budgets[0].over_minor, 30_000);
+
+        // Junho nao tem gasto: a meta vale todo mes e aparece zerada.
+        let jun = build_dashboard(&ds, "2026-09-24", "2026-06");
+        assert_eq!(jun.budgets.len(), 1);
+        assert_eq!(jun.budgets[0].spent_minor, 0);
+        assert_eq!(jun.budgets[0].level, BudgetLevel::Ok);
+
+        assert!(
+            build_dashboard(&fixtures(), "2026-09-24", "2026-09")
+                .budgets
+                .is_empty()
+        );
+    }
 
     #[test]
     fn dashboard_do_mes_corrente() {

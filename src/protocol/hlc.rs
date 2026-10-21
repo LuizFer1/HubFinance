@@ -34,6 +34,27 @@ pub fn compare_hlc(a: &str, b: &str) -> Ordering {
     a.cmp(b)
 }
 
+/// HLC da versao apagada que o **hub** escreve (excecao a "o hub nunca edita dado": so a pedido
+/// explicito do usuario, ao desconectar um aparelho). Deriva da propria linha: `millis + 1`,
+/// contador zero e o `deviceId` do hub, sem ler o relogio de parede.
+///
+/// Por que sem relogio: o app chama `observe` nos HLCs que recebe, entao um PC com a data
+/// adiantada envenenaria o relogio de todos os celulares. Por que `+ 1`: com largura fixa,
+/// millis maior vence qualquer contador ou sufixo da versao atual, entao o tombstone ganha o LWW
+/// por construcao; qualquer edicao posterior num celular usa `Date.now()` e vence o tombstone.
+///
+/// `None` se `current` ou `hub_device_id` nao formam um HLC valido (ou se os millis estouram
+/// os 13 digitos): quem chama pula a linha em vez de gravar um HLC que o app recusaria.
+pub fn tombstone_after(current: &str, hub_device_id: &str) -> Option<String> {
+    if !is_valid_hlc(current) {
+        return None;
+    }
+    let millis: u64 = current.get(..13)?.parse().ok()?;
+    let next = millis.checked_add(1)?;
+    let hlc = format!("{next:013}-0000-{hub_device_id}");
+    is_valid_hlc(&hlc).then_some(hlc)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,5 +143,46 @@ mod tests {
         let b = hlc("1759344000000", "0010", DEVICE);
         assert_eq!(compare_hlc(&a, &b), Ordering::Less);
         assert_eq!(compare_hlc(&a, &a), Ordering::Equal);
+    }
+
+    const HUB: &str = "01HZZZZZZZZZZZZZZZZZZZZZZH";
+
+    #[test]
+    fn tombstone_e_maior_que_a_versao_atual_em_qualquer_caso() {
+        // Contador alto, sufixo maior e millis no teto: sempre vence por millis.
+        for current in [
+            hlc("1759344000000", "0000", DEVICE),
+            hlc("1759344000000", "FFFF", "ZZZZZZZZZZZZZZZZZZZZZZZZZZ"),
+            hlc("0000000000000", "0000", DEVICE),
+            hlc("9999999999998", "FFFF", "ZZZZZZZZZZZZZZZZZZZZZZZZZZ"),
+        ] {
+            let next = tombstone_after(&current, HUB).unwrap();
+            assert_eq!(compare_hlc(&next, &current), Ordering::Greater, "{current}");
+            assert!(is_valid_hlc(&next));
+            assert!(next.ends_with(HUB));
+        }
+    }
+
+    #[test]
+    fn tombstone_nao_depende_do_relogio_de_parede() {
+        // Mesma entrada, mesma saida: nada de `now` entra na conta.
+        let current = hlc("1759344000000", "0003", DEVICE);
+        assert_eq!(
+            tombstone_after(&current, HUB),
+            Some(hlc("1759344000001", "0000", HUB))
+        );
+    }
+
+    #[test]
+    fn tombstone_recusa_entrada_invalida_ou_estouro() {
+        assert_eq!(tombstone_after("lixo", HUB), None);
+        assert_eq!(
+            tombstone_after(&hlc("1759344000000", "0000", DEVICE), "curto"),
+            None
+        );
+        assert_eq!(
+            tombstone_after(&hlc("9999999999999", "0000", DEVICE), HUB),
+            None
+        );
     }
 }

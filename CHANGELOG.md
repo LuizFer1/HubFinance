@@ -6,6 +6,15 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+### Adicionado
+
+- O dashboard respeita os estados de lançamento do app (`reportState`): uma **transferência
+  interna** ou um lançamento **oculto** continua na lista, com uma etiqueta, mas não entra em
+  saldo, receitas, despesas, rosca, gráfico dos últimos meses nem no saldo do dia. Os totais
+  ficam iguais aos do app para o mesmo conjunto de lançamentos.
+- Linha antiga (sem o campo) e valor que esta versão não conhece contam como lançamento
+  normal. Nenhuma mudança no protocolo `/v1` nem no banco.
+
 ## [0.0.5] - 2026-10-07
 
 Nenhuma mudança no protocolo `/v1` nem no banco: instalar por cima da 0.0.4 preserva `epoch`,

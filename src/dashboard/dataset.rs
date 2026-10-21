@@ -9,7 +9,7 @@ use std::time::SystemTime;
 
 use base64::Engine;
 
-use super::contract::{self, ContractError, Kind, MovementKind, ReserveKind};
+use super::contract::{self, ContractError, Kind, MovementKind, ReportState, ReserveKind};
 
 /// Uma linha como a store guarda: `id` e `deleted_at` vem das colunas ja validadas pela
 /// fatia 1; `data` e o JSON opaco do app.
@@ -34,6 +34,16 @@ pub struct Transaction {
     pub payment_method_id: Option<String>,
     pub user_id: Option<String>,
     pub recurrence_id: Option<String>,
+    /// `None` = conta normalmente (inclui valor que esta versao nao conhece).
+    pub report_state: Option<ReportState>,
+}
+
+impl Transaction {
+    /// A regra unica de "conta nos totais" (`countsInTotals` do app). Toda soma do dashboard
+    /// passa por aqui; a lista continua mostrando a linha, marcada.
+    pub fn counts_in_totals(&self) -> bool {
+        self.report_state.is_none()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -175,6 +185,7 @@ impl Dataset {
             let id = row.id.clone();
             let result: Result<(), ContractError> = match row.table.as_str() {
                 TRANSACTIONS => contract::parse_transaction(&row.data).map(|f| {
+                    let report_state = f.report_state();
                     self.transactions.insert(
                         id.clone(),
                         Transaction {
@@ -188,6 +199,7 @@ impl Dataset {
                             payment_method_id: f.payment_method_id,
                             user_id: f.user_id,
                             recurrence_id: f.recurrence_id,
+                            report_state,
                         },
                     );
                 }),

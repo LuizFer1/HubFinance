@@ -1,5 +1,7 @@
 //! Agregacoes do Dashboard, espelho de `breakdown.ts` / `insights.ts` do app mais as regras
-//! do prototipo (teto do eixo, media do periodo). So lancamentos vivos entram em conta.
+//! do prototipo (teto do eixo, media do periodo). So lancamentos vivos entram em conta, e
+//! os marcados como transferencia ou ocultos (`Transaction::counts_in_totals`) ficam de fora
+//! de toda soma daqui, como no app.
 
 use std::collections::HashMap;
 
@@ -23,10 +25,11 @@ pub struct Totals {
     pub expense_count: usize,
 }
 
-/// Soma so o que recebe: quem chama decide o recorte (mes, filtros).
+/// Soma so o que recebe: quem chama decide o recorte (mes, filtros). Transferencia e oculto
+/// nao somam nem contam.
 pub fn totals<'a>(items: impl Iterator<Item = &'a Transaction>) -> Totals {
     let mut t = Totals::default();
-    for tx in items {
+    for tx in items.filter(|t| t.counts_in_totals()) {
         match tx.kind {
             Kind::Income => {
                 t.income_minor = t.income_minor.saturating_add(tx.amount_minor);
@@ -120,7 +123,7 @@ pub struct Slice {
 pub fn expense_by_category(dataset: &Dataset, month: &str) -> Vec<Slice> {
     let mut by_key: HashMap<String, Slice> = HashMap::new();
     let mut total: i64 = 0;
-    for tx in in_month(dataset, month).filter(|t| t.kind == Kind::Expense) {
+    for tx in in_month(dataset, month).filter(|t| t.kind == Kind::Expense && t.counts_in_totals()) {
         total = total.saturating_add(tx.amount_minor);
         let category = dataset.find_category(tx.category_id.as_deref());
         let key = category.map_or(NO_CATEGORY_KEY, |c| c.id.as_str());
@@ -180,7 +183,10 @@ impl MonthTotals {
 /// Um total por mes pedido, na mesma ordem; mes sem lancamento vem zerado.
 pub fn monthly_totals(dataset: &Dataset, months: &[String]) -> Vec<MonthTotals> {
     let mut sums: HashMap<&str, (i64, i64)> = months.iter().map(|m| (m.as_str(), (0, 0))).collect();
-    for tx in dataset.alive_transactions() {
+    for tx in dataset
+        .alive_transactions()
+        .filter(|t| t.counts_in_totals())
+    {
         let Some(entry) = tx.occurred_on.get(..7).and_then(|m| sums.get_mut(m)) else {
             continue;
         };
@@ -437,6 +443,126 @@ mod tests {
         assert_eq!(average_surplus(&[m(100, 0), m(0, 400), m(100, 0)]), -67);
         assert_eq!(average_surplus(&[m(3, 0), m(0, 0)]), 2);
         assert_eq!(average_surplus(&[]), 0);
+    }
+
+    /// Dataset de setembro/agosto com lancamentos normais mais, opcionalmente, os marcados.
+    /// Os valores das linhas marcadas sao grandes de proposito: qualquer soma que as inclua
+    /// diverge do dataset sem elas.
+    fn dataset_with_marked(include_marked: bool) -> Dataset {
+        use crate::dashboard::dataset::{CATEGORIES, RawRow, TRANSACTIONS};
+        let mut seq = 0;
+        let mut rows = Vec::new();
+        let mut push = |table: &str, id: &str, data: serde_json::Value| {
+            seq += 1;
+            rows.push(RawRow {
+                table: table.into(),
+                id: id.into(),
+                deleted_at: None,
+                seq,
+                data: data.to_string(),
+            });
+        };
+        push(
+            CATEGORIES,
+            "C1",
+            serde_json::json!({ "name": "Alimentação", "color": "orange", "icon": "utensils" }),
+        );
+        let tx = |kind: &str, amount: i64, on: &str, state: Option<serde_json::Value>| {
+            let mut v = serde_json::json!({
+                "kind": kind, "description": "x", "amountMinor": amount,
+                "occurredOn": on, "categoryId": "C1"
+            });
+            if let Some(state) = state {
+                v["reportState"] = state;
+            }
+            v
+        };
+        push(
+            TRANSACTIONS,
+            "T1",
+            tx("income", 650_000, "2026-09-05", None),
+        );
+        push(
+            TRANSACTIONS,
+            "T2",
+            tx("expense", 80_000, "2026-09-08", None),
+        );
+        push(
+            TRANSACTIONS,
+            "T3",
+            tx("expense", 20_000, "2026-08-12", None),
+        );
+        if include_marked {
+            push(
+                TRANSACTIONS,
+                "M1",
+                tx("expense", 300_000, "2026-09-10", Some("transfer".into())),
+            );
+            push(
+                TRANSACTIONS,
+                "M2",
+                tx("income", 300_000, "2026-09-10", Some("transfer".into())),
+            );
+            push(
+                TRANSACTIONS,
+                "M3",
+                tx("expense", 45_000, "2026-08-15", Some("hidden".into())),
+            );
+            // Valor de uma versao futura: conta como normal.
+            push(
+                TRANSACTIONS,
+                "F1",
+                tx("expense", 1_000, "2026-09-11", Some("archived".into())),
+            );
+        }
+        let mut ds = Dataset::default();
+        ds.apply(rows);
+        ds
+    }
+
+    #[test]
+    fn transferencia_e_oculto_ficam_fora_de_toda_soma() {
+        let marked = dataset_with_marked(true);
+        let plain = dataset_with_marked(false);
+
+        // Unica diferenca esperada: F1 (valor futuro) conta como lancamento normal.
+        let sep = month_summary(&marked, "2026-09");
+        assert_eq!(sep.current.income_minor, 650_000);
+        assert_eq!(sep.current.expense_minor, 81_000);
+        assert_eq!(sep.current.expense_count, 2);
+        assert_eq!(sep.previous.expense_minor, 20_000);
+        assert_eq!(sep.delta_minor, (650_000 - 81_000) - (-20_000));
+
+        let months = last_months("2026-09", 3);
+        let bars = monthly_totals(&marked, &months);
+        assert_eq!(bars[1].expense_minor, 20_000);
+        assert_eq!(bars[2].income_minor, 650_000);
+        assert_eq!(bars[2].expense_minor, 81_000);
+
+        let slices = expense_by_category(&marked, "2026-09");
+        assert_eq!(slices.len(), 1);
+        assert_eq!(slices[0].amount_minor, 81_000);
+        assert!((slices[0].share - 1.0).abs() < 1e-9);
+
+        // Sem o lancamento de valor futuro, com e sem as marcadas dao exatamente o mesmo.
+        let a = month_summary(&plain, "2026-09");
+        assert_eq!(a.current.income_minor, sep.current.income_minor);
+        assert_eq!(a.current.expense_minor + 1_000, sep.current.expense_minor);
+        assert_eq!(a.previous, sep.previous);
+        assert_eq!(
+            monthly_totals(&plain, &months)[1],
+            monthly_totals(&marked, &months)[1]
+        );
+    }
+
+    #[test]
+    fn marcadas_continuam_vivas_na_lista_de_recentes() {
+        let marked = dataset_with_marked(true);
+        let ids: Vec<&str> = recent(&marked, "2026-09", 10)
+            .iter()
+            .map(|t| t.id.as_str())
+            .collect();
+        assert!(ids.contains(&"M1") && ids.contains(&"M2"));
     }
 
     #[test]

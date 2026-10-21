@@ -162,6 +162,7 @@ mod tests {
             last_pull_at: None,
             revoked_at: Some("2026-10-01T19:00:00Z".into()),
             user_id: None,
+            data_kept_at: None,
         });
         assert!(view.revoked);
         assert!(!format!("{view:?}").contains("segredo"));

@@ -6,6 +6,14 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [1.0.0] - 2026-10-21
+
+Nenhuma mudança no protocolo `/v1`. O banco sobe para o schema v3 na primeira abertura (a migração preserva aparelhos e linhas).
+
+**Provisório:** o critério de quando uma linha é "do aparelho" (`store/erase.rs::owned_by`) e a inclusão de **recorrências** (com os reajustes) entre as áreas apagáveis ainda não foram confirmados pelo dono do produto e entram nesta versão como provisórios; podem mudar numa versão seguinte.
+
+A 1.0.0 marca o primeiro uso diário do hub, por decisão do dono do produto; não indica que o provisório acima foi confirmado.
+
 ### Adicionado
 
 - O dashboard respeita os estados de lançamento do app (`reportState`): uma **transferência
@@ -162,7 +170,8 @@ campo da 0.0.2 acontece.
 - Scripts `scripts/e2e.sh` (roteiro curl de pareamento e sync) e `scripts/seed-dashboard.sh`
   (carga de exemplo do dashboard).
 
-[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v0.0.5...HEAD
+[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/LuizFer1/HubFinance/compare/v0.0.5...v1.0.0
 [0.0.5]: https://github.com/LuizFer1/HubFinance/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/LuizFer1/HubFinance/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/LuizFer1/HubFinance/compare/v0.0.2...v0.0.3

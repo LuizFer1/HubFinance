@@ -18,6 +18,37 @@ pub enum Kind {
     Expense,
 }
 
+/// Estados que tiram um lancamento das contas (`reportState` do app, `transaction.ts`).
+///
+/// So os dois valores conhecidos excluem; qualquer outro (texto novo de uma versao futura do app,
+/// outro tipo JSON) conta como lancamento normal, como `countsInTotals` do app: o erro seguro e
+/// somar a mais, nunca fazer o dinheiro sumir.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportState {
+    /// Movimento entre contas proprias: nao e receita nem despesa.
+    Transfer,
+    /// Continua na lista, mas fora de qualquer soma.
+    Hidden,
+}
+
+impl ReportState {
+    pub fn from_value(value: &serde_json::Value) -> Option<Self> {
+        match value.as_str() {
+            Some("transfer") => Some(Self::Transfer),
+            Some("hidden") => Some(Self::Hidden),
+            _ => None,
+        }
+    }
+
+    /// Rotulo da tag na lista.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Transfer => "Transferência",
+            Self::Hidden => "Oculto",
+        }
+    }
+}
+
 /// `src/domain/model/transaction.ts`. Nao lidos: `currency`, `cashbackMinor`, `occurrenceKey`.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +66,16 @@ pub struct TransactionFields {
     pub user_id: Option<String>,
     #[serde(default)]
     pub recurrence_id: Option<String>,
+    /// `reportState` do app. `Value` e nao `String` de proposito: campo novo de versao futura,
+    /// de qualquer tipo, nao pode fazer a *linha* ser ignorada; ver `ReportState::from_value`.
+    #[serde(default)]
+    pub report_state: Option<serde_json::Value>,
+}
+
+impl TransactionFields {
+    pub fn report_state(&self) -> Option<ReportState> {
+        self.report_state.as_ref().and_then(ReportState::from_value)
+    }
 }
 
 /// `src/domain/model/category.ts`. Token de cor e chave de icone desconhecidos sao validos:
@@ -158,6 +199,20 @@ pub enum MovementKind {
     Withdrawal,
 }
 
+/// Linha de `budgets` (`budget.ts` do app): meta mensal de gasto de uma categoria.
+///
+/// `updatedAt` (HLC) vem no JSON porque o hub guarda a linha como o app a mandou; ele decide
+/// qual de duas metas da mesma categoria vale (ver `budgets::current_budgets`). Ausente, a meta
+/// perde para qualquer outra.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetFields {
+    pub category_id: String,
+    pub limit_minor: i64,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
 /// Linha de `reserveMovements` ja traduzida. Nao lido: `reason` (o motivo da retirada e regra
 /// do app). Nao e desserializada direto: o JSON do app nao tem `kind`, o sinal de `amountMinor`
 /// decide guardar/retirar e `parse_reserve_movement` o traduz para `kind`.
@@ -204,6 +259,9 @@ pub enum ContractError {
     DueMonthShape,
     #[error("recurring.since fora do formato YYYY-MM")]
     RecurringSinceShape,
+    /// O app so grava meta positiva; zero ou negativo nao tem barra para desenhar.
+    #[error("limitMinor deve ser positivo")]
+    LimitNotPositive,
 }
 
 pub fn parse_transaction(data: &str) -> Result<TransactionFields, ContractError> {
@@ -228,6 +286,14 @@ pub fn parse_payment_method(data: &str) -> Result<PaymentMethodFields, ContractE
 
 pub fn parse_recurrence(data: &str) -> Result<RecurrenceFields, ContractError> {
     Ok(serde_json::from_str(data)?)
+}
+
+pub fn parse_budget(data: &str) -> Result<BudgetFields, ContractError> {
+    let fields: BudgetFields = serde_json::from_str(data)?;
+    if fields.limit_minor <= 0 {
+        return Err(ContractError::LimitNotPositive);
+    }
+    Ok(fields)
 }
 
 pub fn parse_reserve(data: &str) -> Result<ReserveFields, ContractError> {
@@ -353,6 +419,35 @@ mod tests {
         assert_eq!(t.occurred_on, "2026-09-14");
         assert_eq!(t.user_id.as_deref(), Some("01HZZZZZZZZZZZZZZZZZZZZZP1"));
         assert_eq!(t.recurrence_id, None);
+    }
+
+    #[test]
+    fn linha_antiga_sem_report_state_conta_normalmente() {
+        let t = parse_transaction(&tx().to_string()).unwrap();
+        assert_eq!(t.report_state(), None);
+        let t = parse_transaction(&with(tx(), "reportState", Value::Null)).unwrap();
+        assert_eq!(t.report_state(), None);
+    }
+
+    #[test]
+    fn report_state_conhecido_e_lido() {
+        let t = parse_transaction(&with(tx(), "reportState", json!("transfer"))).unwrap();
+        assert_eq!(t.report_state(), Some(ReportState::Transfer));
+        let t = parse_transaction(&with(tx(), "reportState", json!("hidden"))).unwrap();
+        assert_eq!(t.report_state(), Some(ReportState::Hidden));
+    }
+
+    #[test]
+    fn report_state_desconhecido_ou_de_outro_tipo_nao_derruba_a_linha() {
+        for future in [
+            json!("archived"),
+            json!(3),
+            json!({ "x": 1 }),
+            json!(["hidden"]),
+        ] {
+            let t = parse_transaction(&with(tx(), "reportState", future)).unwrap();
+            assert_eq!(t.report_state(), None);
+        }
     }
 
     #[test]
@@ -837,6 +932,36 @@ mod tests {
         for bad in ["[]", "null", "{"] {
             assert!(parse_reserve(bad).is_err(), "{bad}");
             assert!(parse_reserve_movement(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn meta_valida_le_categoria_limite_e_versao() {
+        let b = parse_budget(
+            r#"{"categoryId":"C1","limitMinor":50000,"updatedAt":"1754568000000-0000-AAA","dirty":0}"#,
+        )
+        .unwrap();
+        assert_eq!(b.category_id, "C1");
+        assert_eq!(b.limit_minor, 50_000);
+        assert_eq!(b.updated_at.as_deref(), Some("1754568000000-0000-AAA"));
+    }
+
+    #[test]
+    fn meta_sem_versao_e_valida() {
+        let b = parse_budget(r#"{"categoryId":"C1","limitMinor":1}"#).unwrap();
+        assert_eq!(b.updated_at, None);
+    }
+
+    #[test]
+    fn meta_fora_do_contrato_e_erro() {
+        for bad in [
+            r#"{"limitMinor":100}"#,
+            r#"{"categoryId":"C1"}"#,
+            r#"{"categoryId":"C1","limitMinor":"x"}"#,
+            r#"{"categoryId":"C1","limitMinor":0}"#,
+            r#"{"categoryId":"C1","limitMinor":-5}"#,
+        ] {
+            assert!(parse_budget(bad).is_err(), "{bad}");
         }
     }
 }

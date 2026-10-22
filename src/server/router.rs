@@ -668,4 +668,140 @@ pub(crate) mod tests {
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(resp["error"], "payload_too_large");
     }
+
+    // --- desconectar aparelho apagando dados: convergencia ---
+
+    fn row_in(table: &str, id: &str, updated_at: &str, extra: Value) -> Value {
+        let mut row = json!({
+            "id": id, "createdAt": "2026-10-01T18:00:00.000Z", "updatedAt": updated_at,
+            "deletedAt": null, "dirty": 1
+        });
+        if let (Some(row), Some(extra)) = (row.as_object_mut(), extra.as_object()) {
+            row.extend(extra.clone());
+        }
+        json!({ "table": table, "row": row })
+    }
+
+    #[tokio::test]
+    async fn remover_apagando_uma_area_propaga_o_tombstone_e_o_hlc_maior_vence() {
+        use crate::store::erase::{Area, AreaSet};
+
+        let app = test_app();
+        let key_a = app.pair(DEVICE_A, "A").await;
+        let key_b = app.pair(DEVICE_B, "B").await;
+        let local = hlc(1_000, DEVICE_A);
+        push(
+            &app,
+            &key_a,
+            vec![
+                row_in(
+                    "budgets",
+                    &row_id(1),
+                    &local,
+                    json!({ "categoryId": row_id(9) }),
+                ),
+                row_in("transactions", &row_id(2), &local, json!({})),
+            ],
+        )
+        .await;
+        let (_, first) = pull(&app, &key_b, 0, None).await;
+        let cursor = first["cursor"].as_i64().unwrap();
+        assert_eq!(first["rows"].as_array().unwrap().len(), 2);
+
+        // Remover A apagando so as metas: uma transacao no hub.
+        let report = app
+            .state
+            .store
+            .remove_device(
+                DEVICE_A,
+                [Area::Budgets].into_iter().collect::<AreaSet>(),
+                "2026-10-02T00:00:00Z",
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.budgets, 1);
+        let (status, _) = push(
+            &app,
+            &key_a,
+            vec![row_in(
+                "budgets",
+                &row_id(3),
+                &hlc(2_000, DEVICE_A),
+                json!({}),
+            )],
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "revogado nao empurra mais"
+        );
+
+        // B puxa so o tombstone (a transacao nao foi tocada) e o cursor avanca.
+        let (_, second) = pull(&app, &key_b, cursor, None).await;
+        let rows = second["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        let tomb = &rows[0]["row"];
+        assert_eq!(tomb["id"], row_id(1));
+        assert_eq!(tomb["deletedAt"], tomb["updatedAt"]);
+        assert!(tomb["updatedAt"].as_str().unwrap() > local.as_str());
+        assert!(tomb.get("dirty").is_none());
+        assert!(second["cursor"].as_i64().unwrap() > cursor);
+
+        // Linha mais nova editada por B depois (relogio real e bem maior) vence o tombstone;
+        // uma mais antiga que o tombstone nao.
+        let (_, old) = push(
+            &app,
+            &key_b,
+            vec![row_in(
+                "budgets",
+                &row_id(1),
+                &hlc(1_000, DEVICE_B),
+                json!({}),
+            )],
+        )
+        .await;
+        assert_eq!(old["ignored"][0]["reason"], "older");
+        let (_, newer) = push(
+            &app,
+            &key_b,
+            vec![row_in(
+                "budgets",
+                &row_id(1),
+                &hlc(1_759_344_000_000, DEVICE_B),
+                json!({}),
+            )],
+        )
+        .await;
+        assert_eq!(newer["accepted"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn aparelho_repareado_puxa_o_tombstone_e_ele_ganha_da_linha_local() {
+        use crate::store::erase::AreaSet;
+
+        let app = test_app();
+        let key_a = app.pair(DEVICE_A, "A").await;
+        let local = hlc(1_000, DEVICE_A);
+        push(
+            &app,
+            &key_a,
+            vec![row_in("transactions", &row_id(2), &local, json!({}))],
+        )
+        .await;
+        app.state
+            .store
+            .remove_device(DEVICE_A, AreaSet::all(), "2026-10-02T00:00:00Z")
+            .unwrap();
+
+        // Re-parear o mesmo device_id reativa e limpa a decisao; o pull devolve o tombstone
+        // (origin do hub, nao A), que tem HLC estritamente maior que a copia local do A.
+        let new_key = app.pair(DEVICE_A, "A de novo").await;
+        let (status, resp) = pull(&app, &new_key, 0, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let row = &resp["rows"][0]["row"];
+        assert_eq!(row["id"], row_id(2));
+        assert!(row["deletedAt"].is_string());
+        assert!(row["updatedAt"].as_str().unwrap() > local.as_str());
+    }
 }

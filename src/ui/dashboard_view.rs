@@ -14,8 +14,10 @@ use super::charts::{
     BarsProgram, DonutProgram, EMPTY_HEIGHT, EMPTY_WIDTH, EmptyChartProgram, categories_label,
     percent,
 };
+use super::reserves_view::fill_bar;
 use super::theme::{self, Tokens, alpha};
 use super::{fonts, icons, shell, time, widgets};
+use crate::dashboard::budgets::{BudgetLevel, BudgetStatus};
 use crate::dashboard::contract::Kind;
 use crate::dashboard::list::{ListRow, RowAuthor};
 use crate::dashboard::money::{format_brl, group_thousands, money_parts, signed_brl_plus};
@@ -35,7 +37,11 @@ pub fn view(app: &App) -> Element<'_, Message> {
     if v.is_empty {
         col = col.push(empty_card(app));
     } else {
-        col = col.push(charts_row(app)).push(recent_card(app));
+        col = col.push(charts_row(app));
+        if !v.budgets.is_empty() {
+            col = col.push(budgets_card(app));
+        }
+        col = col.push(recent_card(app));
     }
     if let Some(footer) = footer(app) {
         col = col.push(footer);
@@ -413,6 +419,89 @@ fn legend(app: &App) -> Element<'_, Message> {
         );
     }
     container(col).width(Length::Fill).into()
+}
+
+// ---- metas ----
+
+/// Porcentagem de uso como o app a mostra: `floor`, nunca `round`, para 99,6 % nao ler "100 %"
+/// com a meta ainda por atingir.
+fn used_percent(ratio: f64) -> i64 {
+    (ratio * 100.0).floor() as i64
+}
+
+/// Nota sob a barra: quanto resta, ou quanto passou, e em quantos lancamentos.
+fn budget_note(b: &BudgetStatus) -> String {
+    let count = if b.count == 1 {
+        "1 lançamento".to_string()
+    } else {
+        format!("{} lançamentos", b.count)
+    };
+    match b.level {
+        BudgetLevel::Over => format!("Passou {} da meta · {count}", format_brl(b.over_minor)),
+        _ => format!("Restam {} · {count}", format_brl(b.remaining_minor)),
+    }
+}
+
+/// Metas por categoria do mes, somente leitura (as metas nascem no app). Passar de 100 % e
+/// informacao: a barra enche e muda para a cor de despesa.
+fn budgets_card(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let v = &app.dashboard;
+    let mut col = column![widgets::card_title(
+        t,
+        "Metas por categoria",
+        Some(categories_label(v.budgets.len())),
+    )]
+    .spacing(14);
+    for b in &v.budgets {
+        let over = b.level == BudgetLevel::Over;
+        let fill = match b.level {
+            BudgetLevel::Ok => t.accent,
+            BudgetLevel::Warning => t.amber,
+            BudgetLevel::Over => t.expense,
+        };
+        let head = row![
+            widgets::tile(t, icons::glyph(&b.icon), &b.color),
+            column![
+                text(b.name.clone())
+                    .size(14)
+                    .font(fonts::INTER_MEDIUM)
+                    .wrapping(Wrapping::None)
+                    .color(t.text),
+                text(format!(
+                    "{} de {}",
+                    format_brl(b.spent_minor),
+                    format_brl(b.limit_minor)
+                ))
+                .size(12)
+                .color(t.text_alpha(0.60)),
+            ]
+            .width(Length::Fill),
+            text(format!("{}%", used_percent(b.used_ratio)))
+                .size(13)
+                .font(fonts::INTER_MEDIUM)
+                .color(if over {
+                    t.expense_fg
+                } else {
+                    t.text_alpha(0.75)
+                }),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
+        col = col.push(
+            column![
+                head,
+                fill_bar(t.neutral_800, fill, b.used_ratio as f32, 6.0, 3.0),
+                text(budget_note(b)).size(12).color(if over {
+                    t.expense_fg
+                } else {
+                    t.text_alpha(0.55)
+                }),
+            ]
+            .spacing(8),
+        );
+    }
+    card(t, col)
 }
 
 fn bars_card(app: &App, body_height: Option<f32>) -> Element<'_, Message> {
@@ -801,6 +890,41 @@ mod tests {
     use super::*;
     use crate::dashboard::fixtures;
     use crate::dashboard::view::build_dashboard;
+
+    fn status(level: BudgetLevel, spent: i64, limit: i64, count: usize) -> BudgetStatus {
+        BudgetStatus {
+            category_id: "C".into(),
+            name: "Alimentação".into(),
+            color: "sky".into(),
+            icon: "tag".into(),
+            limit_minor: limit,
+            spent_minor: spent,
+            remaining_minor: limit - spent,
+            used_ratio: spent as f64 / limit as f64,
+            level,
+            over_minor: (spent - limit).max(0),
+            count,
+        }
+    }
+
+    #[test]
+    fn porcentagem_da_meta_nunca_arredonda_para_cima() {
+        assert_eq!(used_percent(0.996), 99);
+        assert_eq!(used_percent(0.85), 85);
+        assert_eq!(used_percent(1.75), 175);
+    }
+
+    #[test]
+    fn nota_da_meta() {
+        assert_eq!(
+            budget_note(&status(BudgetLevel::Ok, 55_000, 100_000, 2)),
+            "Restam R$ 450,00 · 2 lançamentos"
+        );
+        assert_eq!(
+            budget_note(&status(BudgetLevel::Over, 35_000, 20_000, 1)),
+            "Passou R$ 150,00 da meta · 1 lançamento"
+        );
+    }
 
     #[test]
     fn variacao_do_saldo() {

@@ -9,7 +9,7 @@ use std::time::SystemTime;
 
 use base64::Engine;
 
-use super::contract::{self, ContractError, Kind, MovementKind, ReserveKind};
+use super::contract::{self, ContractError, Kind, MovementKind, ReportState, ReserveKind};
 
 /// Uma linha como a store guarda: `id` e `deleted_at` vem das colunas ja validadas pela
 /// fatia 1; `data` e o JSON opaco do app.
@@ -34,6 +34,16 @@ pub struct Transaction {
     pub payment_method_id: Option<String>,
     pub user_id: Option<String>,
     pub recurrence_id: Option<String>,
+    /// `None` = conta normalmente (inclui valor que esta versao nao conhece).
+    pub report_state: Option<ReportState>,
+}
+
+impl Transaction {
+    /// A regra unica de "conta nos totais" (`countsInTotals` do app). Toda soma do dashboard
+    /// passa por aqui; a lista continua mostrando a linha, marcada.
+    pub fn counts_in_totals(&self) -> bool {
+        self.report_state.is_none()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,6 +81,19 @@ pub struct Recurrence {
     pub id: String,
     pub deleted: bool,
     pub frequency: String,
+}
+
+/// Meta mensal de uma categoria. Pode haver mais de uma por categoria (cada aparelho escreve a
+/// sua e o app as converge; depois de uma fusao de padroes sobram duas): quem escolhe e
+/// `budgets::current_budgets`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Budget {
+    pub id: String,
+    pub deleted: bool,
+    pub category_id: String,
+    pub limit_minor: i64,
+    /// HLC da linha; `None` perde para qualquer versao conhecida.
+    pub updated_at: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -128,6 +151,7 @@ pub struct Dataset {
     pub recurrences: HashMap<String, Recurrence>,
     pub reserves: HashMap<String, Reserve>,
     pub reserve_movements: HashMap<String, ReserveMovement>,
+    pub budgets: HashMap<String, Budget>,
     /// Tabela -> ids cuja versao mais nova esta fora do contrato. Conjunto, nao contador: uma
     /// versao valida depois tira a linha daqui.
     pub ignored: BTreeMap<String, BTreeSet<String>>,
@@ -146,6 +170,8 @@ pub const RECURRENCES: &str = "recurrences";
 /// As duas de reservas seguem o formato que o app grava (`reserve.ts`), nao um contrato do hub.
 pub const RESERVES: &str = "reserves";
 pub const RESERVE_MOVEMENTS: &str = "reserveMovements";
+/// Metas por categoria (`budget.ts` do app).
+pub const BUDGETS: &str = "budgets";
 
 /// Teto da cadeia de `mergedInto` (o mesmo de `resolve.ts` do app). Nenhuma fusao produz ciclo,
 /// mas as linhas sao eternas e podem trazer um; sem o teto, a janela travaria num laco.
@@ -175,6 +201,7 @@ impl Dataset {
             let id = row.id.clone();
             let result: Result<(), ContractError> = match row.table.as_str() {
                 TRANSACTIONS => contract::parse_transaction(&row.data).map(|f| {
+                    let report_state = f.report_state();
                     self.transactions.insert(
                         id.clone(),
                         Transaction {
@@ -188,6 +215,7 @@ impl Dataset {
                             payment_method_id: f.payment_method_id,
                             user_id: f.user_id,
                             recurrence_id: f.recurrence_id,
+                            report_state,
                         },
                     );
                 }),
@@ -276,6 +304,18 @@ impl Dataset {
                         },
                     );
                 }),
+                BUDGETS => contract::parse_budget(&row.data).map(|f| {
+                    self.budgets.insert(
+                        id.clone(),
+                        Budget {
+                            id: id.clone(),
+                            deleted,
+                            category_id: f.category_id,
+                            limit_minor: f.limit_minor,
+                            updated_at: f.updated_at,
+                        },
+                    );
+                }),
                 _ => continue,
             };
             applied += 1;
@@ -324,6 +364,9 @@ impl Dataset {
             }
             RESERVE_MOVEMENTS => {
                 self.reserve_movements.remove(id);
+            }
+            BUDGETS => {
+                self.budgets.remove(id);
             }
             _ => {}
         }
@@ -417,6 +460,11 @@ impl Dataset {
     /// Nenhuma transacao viva: o estado "Sem dados" das telas.
     pub fn is_empty(&self) -> bool {
         self.alive_transactions().next().is_none()
+    }
+
+    /// `deleted_at IS NULL`; a escolha de uma meta por categoria e de `budgets`.
+    pub fn alive_budgets(&self) -> impl Iterator<Item = &Budget> {
+        self.budgets.values().filter(|b| !b.deleted)
     }
 
     pub fn alive_reserves(&self) -> impl Iterator<Item = &Reserve> {

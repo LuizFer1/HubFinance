@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::aggregate::{NO_CATEGORY_COLOR, NO_CATEGORY_NAME, Totals, in_month, sort_desc, totals};
-use super::contract::Kind;
+use super::contract::{Kind, ReportState};
 use super::dataset::{Dataset, Transaction};
 use super::periods::day_heading;
 
@@ -104,6 +104,8 @@ pub struct ListRow {
     pub payment_icon: String,
     /// Tag de recorrencia ("Mensal"...); `None` sem serie.
     pub recurrence_label: Option<String>,
+    /// Transferencia ou oculto: a linha aparece, marcada, mas nao soma.
+    pub report_state: Option<ReportState>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -143,6 +145,7 @@ pub(crate) fn to_row(dataset: &Dataset, tx: &Transaction) -> ListRow {
         payment_name: dataset.payment_method_name(tx.payment_method_id.as_deref()),
         payment_icon: payment.map_or_else(|| NO_PAYMENT_ICON.to_string(), |p| p.icon.clone()),
         recurrence_label: dataset.recurrence_label(tx.recurrence_id.as_deref()),
+        report_state: tx.report_state,
     }
 }
 
@@ -155,7 +158,9 @@ pub fn list_month(dataset: &Dataset, month: &str, filters: &Filters) -> ListView
     sort_desc(&mut items);
     let mut groups: Vec<DayGroup> = Vec::new();
     for tx in &items {
+        // O saldo do dia e o que conta: a linha marcada aparece, mas nao entra na conta.
         let signed = match tx.kind {
+            _ if !tx.counts_in_totals() => 0,
             Kind::Income => tx.amount_minor,
             Kind::Expense => tx.amount_minor.saturating_neg(),
         };
@@ -263,6 +268,57 @@ mod tests {
             authors: authors.iter().map(|a| a.to_string()).collect(),
             kind,
         }
+    }
+
+    #[test]
+    fn linha_marcada_aparece_marcada_mas_nao_soma_nem_no_dia() {
+        use crate::dashboard::contract::ReportState;
+        use crate::dashboard::dataset::{RawRow, TRANSACTIONS};
+
+        let mut ds = Dataset::default();
+        let mut seq = 0;
+        let rows: Vec<RawRow> = [
+            ("A", "expense", 1_000, None),
+            ("B", "expense", 90_000, Some("transfer")),
+            ("C", "income", 50_000, Some("hidden")),
+        ]
+        .into_iter()
+        .map(|(id, kind, amount, state)| {
+            seq += 1;
+            let mut v = serde_json::json!({
+                "kind": kind, "description": id, "amountMinor": amount,
+                "occurredOn": "2026-09-10"
+            });
+            if let Some(state) = state {
+                v["reportState"] = state.into();
+            }
+            RawRow {
+                table: TRANSACTIONS.into(),
+                id: id.into(),
+                deleted_at: None,
+                seq,
+                data: v.to_string(),
+            }
+        })
+        .collect();
+        ds.apply(rows);
+
+        let view = list_month(&ds, "2026-09", &Filters::default());
+        assert_eq!(view.count, 3);
+        assert_eq!(view.groups.len(), 1);
+        assert_eq!(view.groups[0].rows.len(), 3);
+        assert_eq!(view.groups[0].net_minor, -1_000);
+        assert_eq!(view.totals.expense_minor, 1_000);
+        assert_eq!(view.totals.income_minor, 0);
+        let states: Vec<Option<ReportState>> = view.groups[0]
+            .rows
+            .iter()
+            .map(|r| (r.id.as_str(), r.report_state))
+            .filter(|(id, _)| *id != "A")
+            .map(|(_, s)| s)
+            .collect();
+        assert!(states.contains(&Some(ReportState::Transfer)));
+        assert!(states.contains(&Some(ReportState::Hidden)));
     }
 
     #[test]

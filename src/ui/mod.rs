@@ -6,6 +6,7 @@ mod connection_view;
 mod dashboard_view;
 mod fonts;
 mod icons;
+mod remove_view;
 mod reserves_view;
 mod shell;
 mod theme;

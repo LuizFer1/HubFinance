@@ -6,6 +6,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use rusqlite::Connection;
 
 pub mod devices;
+pub mod erase;
 pub mod rows;
 pub mod schema;
 
@@ -24,6 +25,8 @@ pub enum StoreError {
 pub struct Store {
     conn: Mutex<Connection>,
     epoch: String,
+    /// Autor dos tombstones gerados pelo hub; ver `schema::ensure_hub_device_id`.
+    hub_device_id: String,
 }
 
 impl Store {
@@ -44,14 +47,21 @@ impl Store {
         schema::configure(&conn)?;
         schema::migrate(&conn)?;
         let epoch = schema::ensure_epoch(&conn)?;
+        let hub_device_id = schema::ensure_hub_device_id(&conn)?;
         Ok(Store {
             conn: Mutex::new(conn),
             epoch,
+            hub_device_id,
         })
     }
 
     pub fn epoch(&self) -> &str {
         &self.epoch
+    }
+
+    #[cfg(test)]
+    pub fn hub_device_id(&self) -> &str {
+        &self.hub_device_id
     }
 
     /// Maior `seq` gravado (0 em banco vazio). O nucleo compara com o que o dashboard ja leu

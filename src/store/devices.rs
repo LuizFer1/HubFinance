@@ -18,6 +18,8 @@ pub struct Device {
     pub revoked_at: Option<String>,
     /// `meta.localUserId` do app que pareou; `None` se o app nao mandou.
     pub user_id: Option<String>,
+    /// "Manter tudo" gravado ao remover/decidir; `None` = nenhuma decisao sobre os dados.
+    pub data_kept_at: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -33,6 +35,8 @@ impl Store {
     ///
     /// A linha inteira e substituida, inclusive `last_*` e `user_id`: a atividade e a pessoa
     /// do aparelho antigo nao descrevem o novo (re-parear sem `userId` zera a pessoa).
+    /// `data_kept_at` tambem volta a `NULL`: a decisao "manter os dados" era sobre o aparelho
+    /// removido, nao sobre o que ele voltar a enviar.
     pub fn upsert_device(
         &self,
         device_id: &str,
@@ -48,7 +52,8 @@ impl Store {
              ON CONFLICT (device_id) DO UPDATE SET
                name = excluded.name, key_hash = excluded.key_hash,
                paired_at = excluded.paired_at, last_seen_at = NULL, last_push_at = NULL,
-               last_pull_at = NULL, revoked_at = NULL, user_id = excluded.user_id",
+               last_pull_at = NULL, revoked_at = NULL, user_id = excluded.user_id,
+               data_kept_at = NULL",
             (device_id, name, key_hash, now, user_id),
         )?;
         Ok(conn.query_row(
@@ -99,8 +104,10 @@ impl Store {
         Ok(devices)
     }
 
-    /// `true` se o aparelho existe. Revogar de novo mantem a data da primeira revogacao, que
+    /// So os testes usam: o hub revoga por `remove_device`, que revoga e apaga na mesma
+    /// transacao. `true` se o aparelho existe. Revogar de novo mantem a data da primeira revogacao, que
     /// e a que a janela mostra como historico.
+    #[cfg(test)]
     pub fn revoke_device(&self, device_id: &str, now: &str) -> Result<bool, StoreError> {
         let conn = self.lock();
         let changed = conn.execute(
@@ -128,7 +135,7 @@ impl Store {
 }
 
 const COLUMNS: &str = "device_id, name, key_hash, paired_at, last_seen_at, last_push_at, \
-                       last_pull_at, revoked_at, user_id";
+                       last_pull_at, revoked_at, user_id, data_kept_at";
 
 fn device_from_row(r: &Row<'_>) -> rusqlite::Result<Device> {
     Ok(Device {
@@ -141,6 +148,7 @@ fn device_from_row(r: &Row<'_>) -> rusqlite::Result<Device> {
         last_pull_at: r.get(6)?,
         revoked_at: r.get(7)?,
         user_id: r.get(8)?,
+        data_kept_at: r.get(9)?,
     })
 }
 

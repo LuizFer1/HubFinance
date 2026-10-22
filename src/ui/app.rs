@@ -12,6 +12,7 @@ use time::{OffsetDateTime, UtcOffset};
 use tokio::sync::watch;
 
 use super::connection_view;
+use super::remove_view;
 use super::theme::Tokens;
 use crate::config::{self, ThemeMode, UiPrefs};
 use crate::dashboard::dataset::avatar_bytes;
@@ -22,8 +23,9 @@ use crate::dashboard::view::{
     DashboardView, ReservesView, TransactionsView, build_dashboard, build_reserves,
     build_transactions,
 };
-use crate::hub::snapshot::{Snapshot, Status};
+use crate::hub::snapshot::{DeviceView, Snapshot, Status};
 use crate::hub::{Command, HubHandle};
+use crate::store::erase::{Area, AreaSet};
 
 /// Quanto tempo "Copiado" fica no botao, como no prototipo.
 pub const COPIED_FOR: Duration = Duration::from_millis(1600);
@@ -41,6 +43,32 @@ pub struct PendingRemoval {
     pub device_id: String,
     pub toast: String,
     pub deadline: Instant,
+    pub action: PendingAction,
+}
+
+/// O que sai para o nucleo quando o prazo do "Desfazer" vence. Remocao e apagar andam juntos:
+/// desfazer cancela os dois, e nada foi enviado antes disso.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingAction {
+    /// Aparelho ativo: revoga e apaga `AreaSet` (vazio = so remove, mantendo os dados).
+    Remove(AreaSet),
+    /// Aparelho ja removido: so apaga as areas.
+    Erase(AreaSet),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoveStep {
+    Choose,
+    Confirm,
+}
+
+/// Modal aberto para este aparelho. `selected` vazio e "Manter tudo" (o padrao): marcar
+/// qualquer area leva ao passo `Confirm`, em vermelho, antes de qualquer envio.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoveDialog {
+    pub device_id: String,
+    pub step: RemoveStep,
+    pub selected: AreaSet,
 }
 
 /// Tamanho inicial da janela (`ui::run`); vale ate o primeiro evento de redimensionamento.
@@ -108,9 +136,12 @@ pub struct App {
     pub(super) copied: Option<(CopyTarget, Instant)>,
     /// Linha sob o mouse em "Usuarios conectados" (hover de 4 %).
     pub(super) hover_row: Option<String>,
-    /// Dialogo "Remover ...?" aberto para este `device_id`.
-    pub(super) confirm_remove: Option<String>,
+    /// Modal "Remover ...?" (ou "Dados de ...", para aparelho ja removido) aberto.
+    pub(super) confirm_remove: Option<RemoveDialog>,
     pub(super) pending_removal: Option<PendingRemoval>,
+    /// "Depois" no aviso de aparelhos removidos com dados: so esta sessao, nada e gravado. O
+    /// aviso volta na proxima abertura porque a deteccao e derivada do banco.
+    pub(super) orphans_postponed: bool,
     /// "Hoje" (`YYYY-MM-DD`) no fuso local: a unica leitura de relogio que decide algo na tela
     /// (mes corrente, tag "Parcial"). Nasce no boot e e reconferida a cada tique.
     pub(super) today: String,
@@ -190,9 +221,22 @@ pub enum Message {
     HoverRow(String),
     UnhoverRow(String),
     AskRemove(String),
+    /// Marca ou desmarca uma area no passo 1 (area sem dados nao faz nada).
+    ToggleArea(Area),
+    /// "Apagar tudo": marca as areas que tem dados.
+    SelectAllAreas,
+    /// "Manter tudo": desmarca tudo (o padrao).
+    SelectNoAreas,
+    /// Botao primario do passo 1: sem area marcada confirma direto; com area vai ao passo 2.
+    RemoveContinue,
+    RemoveBack,
     CancelRemove,
     ConfirmRemove,
     UndoRemove,
+    /// "Decidir" do aviso: abre o modal do primeiro aparelho removido com dados.
+    DecideOrphan,
+    /// "Depois" do aviso.
+    PostponeOrphans,
     Noop,
 }
 
@@ -227,6 +271,7 @@ impl App {
             hover_row: None,
             confirm_remove: None,
             pending_removal: None,
+            orphans_postponed: false,
             today: String::new(),
             months: Vec::new(),
             month_idx: 0,
@@ -363,14 +408,34 @@ impl App {
             .filter(move |p| Some(p.device_id.as_str()) != pending)
     }
 
-    /// Envia a revogacao pendente agora (prazo vencido, outra remocao, troca de tela ou
-    /// fechamento).
+    pub(super) fn device(&self, device_id: &str) -> Option<&DeviceView> {
+        self.snapshot
+            .devices
+            .iter()
+            .find(|d| d.device_id == device_id)
+    }
+
+    /// Aparelhos removidos que ainda tem dados a decidir, menos o que ja tem um apagar
+    /// pendente (some na hora, como a pessoa removida).
+    pub(super) fn orphans(&self) -> Vec<&DeviceView> {
+        let pending = self.pending_removal.as_ref().map(|p| p.device_id.as_str());
+        self.snapshot
+            .devices
+            .iter()
+            .filter(|d| d.is_orphan() && Some(d.device_id.as_str()) != pending)
+            .collect()
+    }
+
+    /// Envia a remocao (e o apagar) pendente agora (prazo vencido, outra remocao, troca de
+    /// tela ou fechamento).
     fn commit_pending(&mut self) {
         if let Some(pending) = self.pending_removal.take() {
-            let _ = self
-                .handle
-                .commands
-                .send(Command::RevokeDevice(pending.device_id));
+            let device_id = pending.device_id;
+            let command = match pending.action {
+                PendingAction::Remove(erase) => Command::RemoveDevice { device_id, erase },
+                PendingAction::Erase(areas) => Command::EraseDeviceData { device_id, areas },
+            };
+            let _ = self.handle.commands.send(command);
         }
     }
 
@@ -655,7 +720,61 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::AskRemove(device_id) => {
-            app.confirm_remove = Some(device_id);
+            app.confirm_remove = Some(RemoveDialog {
+                device_id,
+                step: RemoveStep::Choose,
+                selected: AreaSet::default(),
+            });
+            Task::none()
+        }
+        Message::ToggleArea(area) => {
+            let enabled = app
+                .confirm_remove
+                .as_ref()
+                .and_then(|d| app.device(&d.device_id))
+                .is_some_and(|d| d.data.items(area) > 0);
+            if let Some(dialog) = app.confirm_remove.as_mut().filter(|_| enabled) {
+                dialog.selected.toggle(area);
+            }
+            Task::none()
+        }
+        Message::SelectAllAreas => {
+            let with_data: AreaSet = app
+                .confirm_remove
+                .as_ref()
+                .and_then(|d| app.device(&d.device_id))
+                .map(|d| {
+                    Area::ALL
+                        .into_iter()
+                        .filter(|a| d.data.items(*a) > 0)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(dialog) = app.confirm_remove.as_mut() {
+                dialog.selected = with_data;
+            }
+            Task::none()
+        }
+        Message::SelectNoAreas => {
+            if let Some(dialog) = app.confirm_remove.as_mut() {
+                dialog.selected = AreaSet::default();
+            }
+            Task::none()
+        }
+        Message::RemoveContinue => {
+            let Some(dialog) = app.confirm_remove.as_mut() else {
+                return Task::none();
+            };
+            if dialog.selected.is_empty() {
+                return update(app, Message::ConfirmRemove);
+            }
+            dialog.step = RemoveStep::Confirm;
+            Task::none()
+        }
+        Message::RemoveBack => {
+            if let Some(dialog) = app.confirm_remove.as_mut() {
+                dialog.step = RemoveStep::Choose;
+            }
             Task::none()
         }
         Message::CancelRemove => {
@@ -663,26 +782,70 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ConfirmRemove => {
-            let Some(device_id) = app.confirm_remove.take() else {
+            let Some(dialog) = app.confirm_remove.take() else {
                 return Task::none();
+            };
+            // Marcar algo exige ter passado pelo passo 2 (vermelho, com as contagens): sem
+            // isso, uma mensagem fora de ordem apagaria sem a confirmacao explicita.
+            if !dialog.selected.is_empty() && dialog.step != RemoveStep::Confirm {
+                app.confirm_remove = Some(RemoveDialog {
+                    step: RemoveStep::Confirm,
+                    ..dialog
+                });
+                return Task::none();
+            }
+            let Some(device) = app.device(&dialog.device_id) else {
+                return Task::none();
+            };
+            let (orphan, data, device_name) =
+                (device.revoked, device.data.clone(), device.name.clone());
+            if orphan && dialog.selected.is_empty() {
+                // "Manter tudo" de aparelho ja removido: nada destrutivo, entra na hora.
+                let _ = app
+                    .handle
+                    .commands
+                    .send(Command::KeepDeviceData(dialog.device_id));
+                return Task::none();
+            }
+            let base = if orphan {
+                format!("Dados de {device_name}")
+            } else {
+                app.people
+                    .iter()
+                    .find(|p| p.device_id == dialog.device_id)
+                    .map_or_else(|| "Aparelho removido do hub".to_string(), removal_toast)
             };
             // So uma remocao desfazivel por vez: a anterior vai agora.
             app.commit_pending();
-            let toast = app
-                .people
-                .iter()
-                .find(|p| p.device_id == device_id)
-                .map_or_else(|| "Aparelho removido do hub".to_string(), removal_toast);
+            let toast = remove_view::toast_text(&base, &data, dialog.selected);
+            let action = if orphan {
+                PendingAction::Erase(dialog.selected)
+            } else {
+                PendingAction::Remove(dialog.selected)
+            };
             app.pending_removal = Some(PendingRemoval {
-                device_id,
+                device_id: dialog.device_id,
                 toast,
                 deadline: Instant::now() + UNDO_FOR,
+                action,
             });
             Task::none()
         }
         Message::UndoRemove => {
-            // Nada foi enviado ao nucleo: desfazer e so esquecer.
+            // Nada foi enviado ao nucleo: desfazer e so esquecer. Vale para a remocao e para
+            // o apagar, que saem juntos no mesmo comando.
             app.pending_removal = None;
+            Task::none()
+        }
+        Message::DecideOrphan => {
+            let first = app.orphans().first().map(|d| d.device_id.clone());
+            if let Some(device_id) = first {
+                return update(app, Message::AskRemove(device_id));
+            }
+            Task::none()
+        }
+        Message::PostponeOrphans => {
+            app.orphans_postponed = true;
             Task::none()
         }
         Message::Noop => Task::none(),
@@ -767,6 +930,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
 #[cfg(test)]
 pub(super) mod tests {
     use tokio::sync::mpsc;
+
+    use crate::store::erase::DeviceData;
 
     use super::*;
 
@@ -969,6 +1134,7 @@ pub(super) mod tests {
             last_pull_at: None,
             revoked: false,
             user_id: Some(user.into()),
+            ..DeviceView::default()
         };
         let snap = Snapshot {
             devices: vec![device],
@@ -998,6 +1164,7 @@ pub(super) mod tests {
             last_pull_at: None,
             revoked: false,
             user_id: None,
+            ..DeviceView::default()
         };
         let snap = Snapshot {
             devices: vec![device("D1", "Pixel 7"), device("D2", "iPhone 13")],
@@ -1009,8 +1176,8 @@ pub(super) mod tests {
     fn revoked(rx: &mut mpsc::UnboundedReceiver<Command>) -> Vec<String> {
         let mut out = Vec::new();
         while let Ok(cmd) = rx.try_recv() {
-            if let Command::RevokeDevice(id) = cmd {
-                out.push(id);
+            if let Command::RemoveDevice { device_id, .. } = cmd {
+                out.push(device_id);
             }
         }
         out
@@ -1021,7 +1188,10 @@ pub(super) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, mut rx, _tx) = app_with_two_people(dir.path());
         let _ = update(&mut app, Message::AskRemove("D1".into()));
-        assert_eq!(app.confirm_remove.as_deref(), Some("D1"));
+        assert_eq!(
+            app.confirm_remove.as_ref().map(|d| d.device_id.as_str()),
+            Some("D1")
+        );
         let _ = update(&mut app, Message::CancelRemove);
         assert_eq!(app.confirm_remove, None);
         assert_eq!(app.pending_removal, None);
@@ -1087,8 +1257,314 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::AskRemove("D1".into()));
         let _ = update(&mut app, Message::ConfirmRemove);
         let _ = update(&mut app, Message::CloseRequested);
-        assert!(matches!(rx.try_recv(), Ok(Command::RevokeDevice(id)) if id == "D1"));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Command::RemoveDevice { device_id, .. }) if device_id == "D1"
+        ));
         assert!(matches!(rx.try_recv(), Ok(Command::Shutdown)));
+    }
+
+    // --- modal por area, desfazer e aviso de aparelho removido ---
+
+    fn data() -> DeviceData {
+        DeviceData {
+            budgets: 3,
+            transactions: 100,
+            internal_transfers: 4,
+            reserves: 2,
+            reserve_movements: 14,
+            recurrences: 1,
+            adjustments: 2,
+            ..DeviceData::default()
+        }
+    }
+
+    fn view(id: &str, name: &str, revoked: bool, kept: bool, data: DeviceData) -> DeviceView {
+        DeviceView {
+            device_id: id.into(),
+            name: name.into(),
+            paired_at: "2026-09-01T10:00:00Z".into(),
+            revoked,
+            data_kept: kept,
+            data,
+            ..DeviceView::default()
+        }
+    }
+
+    fn app_with_data(
+        dir: &std::path::Path,
+        devices: Vec<DeviceView>,
+    ) -> (
+        App,
+        mpsc::UnboundedReceiver<Command>,
+        watch::Sender<Snapshot>,
+    ) {
+        let snap = Snapshot {
+            devices,
+            ..Snapshot::default()
+        };
+        app_with(snap, dir.to_path_buf())
+    }
+
+    fn drain(rx: &mut mpsc::UnboundedReceiver<Command>) -> Vec<Command> {
+        let mut out = Vec::new();
+        while let Ok(cmd) = rx.try_recv() {
+            out.push(cmd);
+        }
+        out
+    }
+
+    fn only(area: Area) -> AreaSet {
+        [area].into_iter().collect()
+    }
+
+    #[test]
+    fn nada_marcado_manda_remove_device_vazio() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_data(
+            dir.path(),
+            vec![view("D1", "Pixel 7", false, false, data())],
+        );
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::RemoveContinue);
+        // Manter tudo e o padrao: nao ha passo 2.
+        assert_eq!(app.confirm_remove, None);
+        app.pending_removal.as_mut().unwrap().deadline = Instant::now();
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::RemoveDevice {
+                device_id: "D1".into(),
+                erase: AreaSet::default()
+            }]
+        );
+    }
+
+    #[test]
+    fn marcar_area_exige_o_passo_2_e_voltar_nao_envia_nada() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_data(
+            dir.path(),
+            vec![view("D1", "Pixel 7", false, false, data())],
+        );
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ToggleArea(Area::Budgets));
+        let dialog = app.confirm_remove.clone().unwrap();
+        assert_eq!(dialog.selected, only(Area::Budgets));
+        assert_eq!(dialog.step, RemoveStep::Choose);
+        // Mensagem fora de ordem: confirmar no passo 1 com area marcada nao apaga nada.
+        let _ = update(&mut app, Message::ConfirmRemove);
+        assert_eq!(app.pending_removal, None);
+        assert_eq!(
+            app.confirm_remove.as_ref().unwrap().step,
+            RemoveStep::Confirm
+        );
+        let _ = update(&mut app, Message::RemoveBack);
+        assert_eq!(
+            app.confirm_remove.as_ref().unwrap().step,
+            RemoveStep::Choose
+        );
+        let _ = update(&mut app, Message::RemoveContinue);
+        assert_eq!(
+            app.confirm_remove.as_ref().unwrap().step,
+            RemoveStep::Confirm
+        );
+        let _ = update(&mut app, Message::RemoveBack);
+        let _ = update(&mut app, Message::CancelRemove);
+        assert_eq!(app.confirm_remove, None);
+        assert_eq!(app.pending_removal, None);
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn area_sem_dados_fica_desabilitada() {
+        let dir = tempfile::tempdir().unwrap();
+        let only_budgets = DeviceData {
+            budgets: 2,
+            ..DeviceData::default()
+        };
+        let (mut app, _rx, _tx) = app_with_data(
+            dir.path(),
+            vec![view("D1", "Pixel 7", false, false, only_budgets)],
+        );
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ToggleArea(Area::Transactions));
+        assert!(app.confirm_remove.as_ref().unwrap().selected.is_empty());
+        let _ = update(&mut app, Message::ToggleArea(Area::Budgets));
+        assert_eq!(
+            app.confirm_remove.as_ref().unwrap().selected,
+            only(Area::Budgets)
+        );
+        // "Apagar tudo" marca so as que tem dados.
+        let _ = update(&mut app, Message::SelectNoAreas);
+        let _ = update(&mut app, Message::SelectAllAreas);
+        assert_eq!(
+            app.confirm_remove.as_ref().unwrap().selected,
+            only(Area::Budgets)
+        );
+    }
+
+    #[test]
+    fn apagar_tudo_marca_as_quatro_e_a_confirmacao_mostra_as_contagens() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_data(
+            dir.path(),
+            vec![view("D1", "Pixel 7", false, false, data())],
+        );
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::SelectAllAreas);
+        assert_eq!(
+            app.confirm_remove.as_ref().unwrap().selected,
+            AreaSet::all()
+        );
+        let _ = update(&mut app, Message::RemoveContinue);
+        // O passo 2 desenha sem panico e os textos trazem as contagens.
+        let _ = remove_view::dialog(&app).expect("modal aberto");
+        let selected = app.confirm_remove.as_ref().unwrap().selected;
+        let text = remove_view::confirm_text(&data(), selected);
+        assert!(text.contains("3 metas"), "{text}");
+        assert!(text.contains("100 lançamentos"), "{text}");
+        assert!(text.contains("2 reservas com 14 movimentos"), "{text}");
+        assert!(text.contains("1 recorrência com 2 reajustes"), "{text}");
+        assert_eq!(
+            remove_view::confirm_label(&data(), selected, false),
+            "Remover e apagar 122 itens"
+        );
+        let _ = update(&mut app, Message::ConfirmRemove);
+        assert!(
+            app.pending_removal
+                .as_ref()
+                .unwrap()
+                .toast
+                .ends_with("122 itens serão apagados")
+        );
+        assert!(drain(&mut rx).is_empty(), "nada sai antes do prazo");
+        app.pending_removal.as_mut().unwrap().deadline = Instant::now();
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::RemoveDevice {
+                device_id: "D1".into(),
+                erase: AreaSet::all()
+            }]
+        );
+    }
+
+    #[test]
+    fn desfazer_cancela_a_remocao_e_o_apagar() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_data(
+            dir.path(),
+            vec![view("D1", "Pixel 7", false, false, data())],
+        );
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::SelectAllAreas);
+        let _ = update(&mut app, Message::RemoveContinue);
+        let _ = update(&mut app, Message::ConfirmRemove);
+        assert_eq!(app.visible_people().count(), 0);
+        let _ = update(&mut app, Message::UndoRemove);
+        assert_eq!(app.pending_removal, None);
+        assert_eq!(app.visible_people().count(), 1);
+        let _ = update(&mut app, Message::Tick);
+        let _ = update(&mut app, Message::SelectScreen(Screen::Dashboard));
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn aviso_so_para_removido_com_dados_sem_decisao() {
+        let dir = tempfile::tempdir().unwrap();
+        let devices = vec![
+            view("ATIVO", "Ativo", false, false, data()),
+            view("ORFAO", "Orfao", true, false, data()),
+            view("MANTIDO", "Mantido", true, true, data()),
+            view("VAZIO", "Vazio", true, false, DeviceData::default()),
+        ];
+        let (mut app, _rx, _tx) = app_with_data(dir.path(), devices);
+        let ids: Vec<_> = app.orphans().iter().map(|d| d.device_id.clone()).collect();
+        assert_eq!(ids, vec!["ORFAO"]);
+        assert!(remove_view::orphan_banner(&app).is_some());
+        // Banco sem revogados: nada.
+        let (app2, _rx2, _tx2) = app_with_data(
+            dir.path(),
+            vec![view("ATIVO", "Ativo", false, false, data())],
+        );
+        assert!(app2.orphans().is_empty());
+        assert!(remove_view::orphan_banner(&app2).is_none());
+        // "Depois" esconde nesta sessao e nao grava nada.
+        let _ = update(&mut app, Message::PostponeOrphans);
+        assert!(remove_view::orphan_banner(&app).is_none());
+        assert_eq!(app.orphans().len(), 1);
+    }
+
+    #[test]
+    fn depois_nao_envia_comando_e_o_aviso_volta_na_reabertura() {
+        let dir = tempfile::tempdir().unwrap();
+        let orphan = view("ORFAO", "Orfao", true, false, data());
+        let (mut app, mut rx, _tx) = app_with_data(dir.path(), vec![orphan.clone()]);
+        let _ = update(&mut app, Message::PostponeOrphans);
+        assert!(drain(&mut rx).is_empty());
+        // Nova abertura: estado novo, mesmo banco.
+        let (app2, _rx2, _tx2) = app_with_data(dir.path(), vec![orphan]);
+        assert!(remove_view::orphan_banner(&app2).is_some());
+    }
+
+    #[test]
+    fn decidir_manter_tudo_de_removido_envia_keep_na_hora() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_data(
+            dir.path(),
+            vec![view("ORFAO", "Orfao", true, false, data())],
+        );
+        let _ = update(&mut app, Message::DecideOrphan);
+        assert_eq!(
+            app.confirm_remove.as_ref().map(|d| d.device_id.as_str()),
+            Some("ORFAO")
+        );
+        // Com o modal aberto o aviso some.
+        assert!(remove_view::orphan_banner(&app).is_none());
+        let _ = remove_view::dialog(&app).expect("modal aberto");
+        let _ = update(&mut app, Message::RemoveContinue);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::KeepDeviceData("ORFAO".into())]
+        );
+        assert_eq!(app.confirm_remove, None);
+        assert_eq!(app.pending_removal, None);
+    }
+
+    #[test]
+    fn decidir_apagar_de_removido_tem_desfazer_e_nao_revoga() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_data(
+            dir.path(),
+            vec![view("ORFAO", "Orfao", true, false, data())],
+        );
+        let _ = update(&mut app, Message::DecideOrphan);
+        let _ = update(&mut app, Message::ToggleArea(Area::Reserves));
+        let _ = update(&mut app, Message::RemoveContinue);
+        assert_eq!(
+            remove_view::confirm_label(&data(), only(Area::Reserves), true),
+            "Apagar 16 itens"
+        );
+        let _ = update(&mut app, Message::ConfirmRemove);
+        // O aparelho some do aviso na hora (apagar pendente), mas nada saiu.
+        assert!(app.orphans().is_empty());
+        assert!(drain(&mut rx).is_empty());
+        let _ = update(&mut app, Message::UndoRemove);
+        assert_eq!(app.orphans().len(), 1);
+        let _ = update(&mut app, Message::DecideOrphan);
+        let _ = update(&mut app, Message::ToggleArea(Area::Reserves));
+        let _ = update(&mut app, Message::RemoveContinue);
+        let _ = update(&mut app, Message::ConfirmRemove);
+        app.pending_removal.as_mut().unwrap().deadline = Instant::now();
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::EraseDeviceData {
+                device_id: "ORFAO".into(),
+                areas: only(Area::Reserves)
+            }]
+        );
     }
 
     #[test]
@@ -1137,6 +1613,7 @@ pub(super) mod tests {
             last_pull_at: None,
             revoked,
             user_id: None,
+            ..DeviceView::default()
         };
         let snap = Snapshot {
             devices: vec![

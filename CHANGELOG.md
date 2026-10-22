@@ -21,6 +21,33 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
   categoria apagada some e, com duas metas para a mesma categoria, vale a de `updatedAt` maior.
   Linha de meta fora do contrato (sem categoria, limite zero ou negativo) é ignorada e contada.
 
+### Alterado
+
+- **Remover um aparelho** abre um modal em dois passos com o que apagar dos dados que ele enviou,
+  por área do app: **metas**, **transferências** (lançamentos, com as transferências internas
+  contadas), **reservas** (com os movimentos) e **recorrências** (com os reajustes). Cada área
+  mostra a contagem; "Manter tudo" é o padrão e "Apagar tudo" marca as quatro. Marcar algo leva
+  a uma confirmação em vermelho com as contagens e um botão que nomeia a ação ("Remover e apagar
+  150 itens"). Categorias, formas de pagamento e o perfil nunca são apagados.
+- O "Desfazer" de 5 segundos cobre a remoção **e** o apagar: nada é enviado antes do prazo.
+- Apagar **propaga**: o hub grava a linha como apagada (tombstone, nunca `DELETE`), com um HLC
+  derivado da própria linha (sem usar o relógio do computador), e todos os celulares a recebem
+  no próximo sync. Um aparelho pareado de novo também perde os dados apagados; o diálogo avisa.
+  Remover e apagar acontecem na mesma transação do banco, e repetir não apaga de novo.
+- Critério provisório (ainda não confirmado) para uma linha ser "do aparelho": o aparelho foi
+  quem enviou a versão atual **e** quem a carimbou. Linha reenviada ou editada por outro aparelho
+  não é apagada.
+- Reserva só é apagada se todos os movimentos vivos dela forem do aparelho; senão ela é mantida
+  (e o modal avisa) e só os movimentos do aparelho caem. Recorrência apagada leva os reajustes
+  dela e não toca os lançamentos já gerados.
+- Aparelhos **já removidos** que ainda têm dados (inclusive os de versões antigas) geram um
+  aviso na primeira abertura, em qualquer tela, com "Decidir" e "Depois". "Depois" não grava
+  nada; decidir (apagar tudo ou manter tudo) tira o aviso. Não existe lista permanente de
+  aparelhos removidos.
+- Banco passa para o schema v3 (coluna `devices.data_kept_at`, índice por `origin` e um id do
+  próprio hub guardado em `meta`); a migração preserva aparelhos e linhas. Nenhuma mudança no
+  protocolo `/v1` nem exigência de versão nova do app.
+
 ## [0.0.5] - 2026-10-07
 
 Nenhuma mudança no protocolo `/v1` nem no banco: instalar por cima da 0.0.4 preserva `epoch`,

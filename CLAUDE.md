@@ -23,6 +23,13 @@ com um hub de verdade por curl.
 ## Restrições de produto (inegociáveis)
 
 - O hub **nunca edita dado**: toda mutação nasce num celular; o hub só aplica LWW por linha.
+  **Única exceção:** ao desconectar um aparelho (ou decidir sobre um já removido), a pedido
+  explícito do usuário, o hub grava *tombstones* das áreas que ele escolheu (metas,
+  transferências, reservas, recorrências; `store/erase.rs`). O tombstone tem HLC derivado da
+  própria linha (`protocol::hlc::tombstone_after`, sem relógio de parede), `origin` = id do hub
+  (`meta.hub_device_id`) e `seq` novo; nunca `DELETE`, nunca categorias, formas de pagamento nem
+  perfil, nunca por conta própria. O critério de "linha do aparelho" é **provisório, não
+  confirmado pelo dono**, e vive numa função só (`owned_by`).
 - **Nada fora da LAN.** Nenhuma dependência que telefone para casa, nenhum relay, nenhuma
   checagem de versão **pelo processo do hub**: abrir o navegador numa URL fixa é ação do
   usuário executada pelo sistema.
@@ -36,6 +43,9 @@ com um hub de verdade por curl.
   comparação semântica. Nunca parseie para comparar.
 - `id` são 26 caracteres Crockford — **não** ULID estrito: ids determinísticos do app usam o
   alfabeto inteiro na primeira posição.
+- A escrita do hub (apagar dados de aparelho) é uma transação `BEGIN IMMEDIATE` que revoga e
+  apaga juntos e é idempotente; a contagem do modal e a escrita saem do mesmo plano
+  (`store/erase.rs::plan`), para o número mostrado ser o número apagado.
 - `seq` só é atribuído a linha aceita, dentro da transação do lote, e só cresce.
 - `dirty` é removido ao armazenar e nunca devolvido.
 - `epoch` nasce com o banco e só muda se o banco for apagado.

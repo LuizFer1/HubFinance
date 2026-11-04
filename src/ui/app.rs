@@ -529,7 +529,10 @@ pub fn boot(
         if let Some(events) = events.borrow_mut().take() {
             tasks.push(Task::run(events, Message::Desktop));
         }
-        if open_window {
+        // Nucleo que ja falhou antes do boot (porta ocupada responde em milissegundos): o
+        // primeiro `Snapshot` nao seria uma transicao para `Failed`, e um boot so com o icone
+        // esconderia o erro.
+        if open_window || matches!(app.snapshot.status, Status::Failed(_)) {
             tasks.push(open_window_task(&mut app));
         }
         (app, Task::batch(tasks))
@@ -2164,6 +2167,31 @@ pub(super) mod tests {
             )();
             assert_eq!(app.window.is_some(), open);
         }
+    }
+
+    #[test]
+    fn boot_so_com_icone_abre_a_janela_se_o_nucleo_ja_falhou() {
+        let dir = tempfile::tempdir().unwrap();
+        let (cmd_tx, _rx) = mpsc::unbounded_channel();
+        let (_tx, snap_rx) = watch::channel(Snapshot {
+            status: Status::Failed("porta ocupada".into()),
+            ..Snapshot::default()
+        });
+        let handle = HubHandle {
+            commands: cmd_tx,
+            snapshot: snap_rx,
+        };
+        let (_etx, erx) = crate::desktop::channel();
+        let (app, _task) = boot(
+            handle,
+            UtcOffset::UTC,
+            UiPrefs::default(),
+            dir.path().to_path_buf(),
+            Rc::new(Fake::with_tray()),
+            erx,
+            false,
+        )();
+        assert!(app.window.is_some());
     }
 
     #[test]

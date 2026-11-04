@@ -60,9 +60,46 @@ impl Desktop for Headless {
     }
 }
 
-/// Monta a integracao do sistema atual. Preenchido na Tarefa 6; ate la, sem bandeja.
+/// Monta a integracao do sistema atual. No Windows cria a bandeja aqui, na thread principal;
+/// se ela nao subir, o hub segue sem bandeja (fechar a janela desliga, como na 1.0.0) e o
+/// motivo vai para o log.
+#[cfg(windows)]
+pub fn install(events: EventSender) -> Rc<dyn Desktop> {
+    match tray::install(events) {
+        Ok(tray) => Rc::new(Windows { tray }),
+        Err(e) => {
+            tracing::warn!("sem bandeja: {e}");
+            Rc::new(Headless)
+        }
+    }
+}
+
+#[cfg(not(windows))]
 pub fn install(_events: EventSender) -> Rc<dyn Desktop> {
     Rc::new(Headless)
+}
+
+/// Bandeja que nao subiu cai em `Headless`, que tambem esconde "Iniciar com o Windows": sem
+/// bandeja, iniciar com o sistema abriria a janela no login, e a opcao perderia o sentido.
+#[cfg(windows)]
+struct Windows {
+    tray: tray::Tray,
+}
+
+#[cfg(windows)]
+impl Desktop for Windows {
+    fn has_tray(&self) -> bool {
+        true
+    }
+    fn set_tooltip(&self, text: &str) {
+        self.tray.set_tooltip(text);
+    }
+    fn autostart(&self) -> Option<bool> {
+        autostart::is_enabled()
+    }
+    fn set_autostart(&self, enabled: bool) -> Result<(), String> {
+        autostart::set_enabled(enabled)
+    }
 }
 
 /// UTF-16 com NUL final, como toda API `W` do Win32 pede.

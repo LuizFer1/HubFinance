@@ -25,9 +25,7 @@ pub fn tooltip(status: &Status, active_devices: usize) -> String {
     format!("{} — {state}", crate::config::HUB_NAME)
 }
 
-// TEMPORARIO: `desktop::install` passa a usar na Tarefa 6.
 #[cfg(windows)]
-#[allow(unused_imports)]
 pub use win::{Tray, install};
 
 #[cfg(windows)]

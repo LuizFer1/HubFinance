@@ -553,6 +553,18 @@ fn open_or_focus(app: &mut App) -> Task<Message> {
     }
 }
 
+/// `iced::exit()` mais um "despertador". O `exit` so marca o laco do winit para sair; no
+/// Windows o laco confere a marca depois de acordar, e sem janela nada o acorda (nem redesenho,
+/// nem evento de janela): o "Desligar o hub" com a janela fechada so terminava quando o
+/// `ForceExit` de 5 s chegasse — e, se o nucleo travasse, nem ai. Uma mensagem qualquer logo
+/// depois acorda o laco, que ve a marca e sai.
+fn exit() -> Task<Message> {
+    Task::batch([
+        iced::exit(),
+        Task::perform(delay(Duration::from_millis(50)), |_| Message::Noop),
+    ])
+}
+
 /// Desligamento com ordem (o `CloseRequested` da 1.0.0): remocao pendente, `Shutdown`,
 /// `Stopped` ou 5 s. Idempotente por `closing`.
 fn begin_shutdown(app: &mut App) -> Task<Message> {
@@ -564,7 +576,7 @@ fn begin_shutdown(app: &mut App) -> Task<Message> {
     app.commit_pending();
     // Nucleo ja parado (ou morto): nao ha por que esperar o snapshot `Stopped`.
     if app.handle.commands.send(Command::Shutdown).is_err() {
-        return iced::exit();
+        return exit();
     }
     // Garantia: se o nucleo travar, o processo sai mesmo assim em 5 s.
     Task::perform(delay(Duration::from_secs(5)), |_| Message::ForceExit)
@@ -603,7 +615,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             app.sync_tooltip();
             if stopped && app.closing {
-                return iced::exit();
+                return exit();
             }
             // Boot por `--autostart` que falhou (porta ocupada, banco): sem janela ninguem
             // veria; o tooltip diz "com erro" e a janela abre sozinha. So na transicao para
@@ -670,7 +682,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::Desktop(DesktopEvent::Quit) => begin_shutdown(app),
         Message::Desktop(DesktopEvent::OpenWindow) => open_or_focus(app),
-        Message::ForceExit => iced::exit(),
+        Message::ForceExit => exit(),
         Message::WindowOpened(id) => {
             if app.window == Some(id) {
                 window::is_maximized(id).map(Message::Maximized)

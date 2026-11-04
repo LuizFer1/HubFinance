@@ -5,6 +5,7 @@
 
 mod config;
 mod dashboard;
+mod desktop;
 mod hub;
 mod logging;
 mod pairing;

@@ -1021,12 +1021,32 @@ fn local_today(offset: UtcOffset) -> String {
 
 /// Grava o `ui.json` fora da thread da UI (disco lento nao trava a janela). Falha so vira
 /// aviso: a preferencia e conforto, o tema ja trocou na tela.
+///
+/// Cada gravacao leva um numero tirado na thread da UI, na ordem dos cliques, e so escreve se
+/// for mais nova que a ultima escrita naquela pasta: duas threads nao tem ordem garantida, e
+/// sem isso trocar o tema logo depois de "Iniciar com o Windows" (ou o tema duas vezes) podia
+/// terminar com o arquivo da escolha anterior.
 fn save_prefs(prefs: UiPrefs, dir: PathBuf) -> futures::channel::oneshot::Receiver<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Mutex, OnceLock};
+
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    static WRITTEN: OnceLock<Mutex<HashMap<PathBuf, u64>>> = OnceLock::new();
+
+    let generation = NEXT.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = futures::channel::oneshot::channel();
     std::thread::spawn(move || {
-        if let Err(e) = prefs.save(&dir) {
-            tracing::warn!("nao foi possivel gravar ui.json em {}: {e}", dir.display());
+        let written = WRITTEN.get_or_init(Default::default);
+        // Envenenado = outra gravacao entrou em panico; a tabela continua coerente.
+        let mut written = written.lock().unwrap_or_else(|e| e.into_inner());
+        let last = written.entry(dir.clone()).or_insert(0);
+        if generation > *last {
+            if let Err(e) = prefs.save(&dir) {
+                tracing::warn!("nao foi possivel gravar ui.json em {}: {e}", dir.display());
+            }
+            *last = generation;
         }
+        drop(written);
         let _ = tx.send(());
     });
     rx
@@ -2287,6 +2307,30 @@ pub(super) mod tests {
         let _ = super::super::connection_view::view(&app);
         app.autostart_failed = true;
         let _ = super::super::connection_view::view(&app);
+    }
+
+    #[test]
+    fn gravacao_antiga_que_chega_depois_nao_sobrescreve_a_nova() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = save_prefs(
+            UiPrefs {
+                theme: ThemeMode::Dark,
+                ..UiPrefs::default()
+            },
+            dir.path().to_path_buf(),
+        );
+        let second = save_prefs(
+            UiPrefs {
+                theme: ThemeMode::Light,
+                ..UiPrefs::default()
+            },
+            dir.path().to_path_buf(),
+        );
+        futures::executor::block_on(async {
+            let _ = second.await;
+            let _ = first.await;
+        });
+        assert_eq!(UiPrefs::load(dir.path()).theme, ThemeMode::Light);
     }
 
     #[test]

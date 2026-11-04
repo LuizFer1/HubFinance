@@ -178,6 +178,8 @@ pub struct App {
     /// Bandeja, "iniciar com o Windows" (ou `Headless`, sem nada disso). `Rc`: o `TrayIcon`
     /// vive na thread principal, a mesma do `update`.
     pub(super) desktop: Rc<dyn Desktop>,
+    /// Ultimo texto mandado ao tooltip da bandeja.
+    pub(super) tooltip: String,
 }
 
 #[derive(Debug, Clone)]
@@ -302,10 +304,23 @@ impl App {
             user_avatars: HashMap::new(),
             releases_open_failed: false,
             desktop,
+            tooltip: String::new(),
         };
         app.refresh_people();
+        app.sync_tooltip();
         app.set_today(local_today(offset));
         app
+    }
+
+    /// Tooltip da bandeja a partir do snapshot; so manda ao sistema quando o texto muda
+    /// (`Shell_NotifyIcon` a cada snapshot seria desperdicio).
+    fn sync_tooltip(&mut self) {
+        let active = self.snapshot.devices.iter().filter(|d| !d.revoked).count();
+        let text = crate::desktop::tray::tooltip(&self.snapshot.status, active);
+        if text != self.tooltip {
+            self.desktop.set_tooltip(&text);
+            self.tooltip = text;
+        }
     }
 
     /// Mes escolhido no seletor.
@@ -565,6 +580,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     .and_then(|p| qr_code::Data::new(&p.qr_url).ok());
             }
             let stopped = s.status == Status::Stopped;
+            let was_failed = matches!(app.snapshot.status, Status::Failed(_));
             let people_changed = !std::sync::Arc::ptr_eq(&s.dashboard, &app.snapshot.dashboard)
                 || s.devices != app.snapshot.devices;
             app.snapshot = *s;
@@ -572,11 +588,18 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 app.refresh_people();
                 app.rebuild();
             }
+            app.sync_tooltip();
             if stopped && app.closing {
-                iced::exit()
-            } else {
-                Task::none()
+                return iced::exit();
             }
+            // Boot por `--autostart` que falhou (porta ocupada, banco): sem janela ninguem
+            // veria; o tooltip diz "com erro" e a janela abre sozinha. So na transicao para
+            // `Failed`: quem fechar a janela depois de ver o erro nao a ve voltar sozinha.
+            let failed = matches!(app.snapshot.status, Status::Failed(_));
+            if failed && !was_failed && app.window.is_none() && !app.closing {
+                return open_or_focus(app);
+            }
+            Task::none()
         }
         Message::IssueToken => {
             let _ = app.handle.commands.send(Command::IssuePairingToken);
@@ -2081,6 +2104,88 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::CloseRequested);
         assert!(app.closing);
         assert!(matches!(rx.try_recv(), Ok(Command::Shutdown)));
+    }
+
+    #[test]
+    fn desligar_pela_bandeja_manda_shutdown_uma_vez() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, mut rx) = with_tray(dir.path());
+        let _ = update(&mut app, Message::Desktop(DesktopEvent::Quit));
+        let _ = update(&mut app, Message::Desktop(DesktopEvent::Quit));
+        assert!(app.closing);
+        assert!(matches!(rx.try_recv(), Ok(Command::Shutdown)));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn stopped_so_sai_quando_esta_desligando() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        let stopped = Snapshot {
+            status: Status::Stopped,
+            ..Snapshot::default()
+        };
+        // Sem `closing`, um `Stopped` (nucleo caiu) nao encerra a bandeja: a pessoa ve o estado.
+        let _ = update(&mut app, Message::Snapshot(Box::new(stopped)));
+        assert!(!app.closing);
+    }
+
+    #[test]
+    fn tooltip_segue_o_snapshot_e_nao_repete() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        assert_eq!(fake.tooltip.borrow().as_str(), "HubFinance — iniciando");
+        let snap = Snapshot {
+            status: Status::Running,
+            devices: vec![
+                view("D1", "Pixel 7", false, false, DeviceData::default()),
+                view("D2", "Antigo", true, true, DeviceData::default()),
+            ],
+            ..Snapshot::default()
+        };
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap.clone())));
+        assert_eq!(
+            fake.tooltip.borrow().as_str(),
+            "HubFinance — ligado · 1 aparelho"
+        );
+        *fake.tooltip.borrow_mut() = String::new();
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert_eq!(
+            fake.tooltip.borrow().as_str(),
+            "",
+            "texto igual nao e reenviado"
+        );
+    }
+
+    #[test]
+    fn falha_do_nucleo_abre_a_janela_quando_nao_ha_uma() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        app.window = None;
+        let failed = Snapshot {
+            status: Status::Failed("porta ocupada".into()),
+            ..Snapshot::default()
+        };
+        let _ = update(&mut app, Message::Snapshot(Box::new(failed.clone())));
+        assert!(
+            app.window.is_some(),
+            "falha silenciosa no login e o pior resultado"
+        );
+        // A pessoa viu o erro e fechou: outro snapshot ainda `Failed` nao reabre.
+        app.window = None;
+        let _ = update(&mut app, Message::Snapshot(Box::new(failed.clone())));
+        assert!(app.window.is_none());
+        // Desligando: nao reabre.
+        let _ = update(
+            &mut app,
+            Message::Snapshot(Box::new(Snapshot {
+                status: Status::Running,
+                ..Snapshot::default()
+            })),
+        );
+        app.closing = true;
+        let _ = update(&mut app, Message::Snapshot(Box::new(failed)));
+        assert!(app.window.is_none());
     }
 
     #[test]

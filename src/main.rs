@@ -39,6 +39,8 @@ fn main() -> iced::Result {
     }
     let prefs = config::UiPrefs::load(&config.data_dir);
     let prefs_dir = config.data_dir.clone();
+    let (events_tx, events_rx) = desktop::channel();
+    let desktop = desktop::install(events_tx);
     let (handle, _nucleo) = hub::start(config);
-    ui::run(handle, offset, prefs, prefs_dir)
+    ui::run(handle, offset, prefs, prefs_dir, desktop, events_rx, true)
 }

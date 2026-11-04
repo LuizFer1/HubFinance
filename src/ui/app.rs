@@ -1,8 +1,10 @@
 //! Estado e mensagens da janela. O estado e o ultimo snapshot do nucleo mais o que e da
 //! propria tela: tela atual, tema, janela (id, maximizada), QR desenhado, se esta fechando.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use iced::widget::{canvas, image, qr_code};
@@ -23,6 +25,7 @@ use crate::dashboard::view::{
     DashboardView, ReservesView, TransactionsView, build_dashboard, build_reserves,
     build_transactions,
 };
+use crate::desktop::{Desktop, DesktopEvent, EventReceiver};
 use crate::hub::snapshot::{DeviceView, Snapshot, Status};
 use crate::hub::{Command, HubHandle};
 use crate::store::erase::{Area, AreaSet};
@@ -108,8 +111,8 @@ pub struct App {
     pub(super) closing: bool,
     /// Fuso local lido uma vez no `main`, antes de existirem outras threads.
     pub(super) offset: UtcOffset,
-    /// `None` ate o `window::oldest()` do boot responder; sem ele os botoes da barra de titulo
-    /// nao fazem nada (e o `warn!` sai uma vez so).
+    /// `None` enquanto nao ha janela (boot por `--autostart`, ou fechada); sem ela os botoes
+    /// da barra nao fazem nada (e o `warn!` sai uma vez so).
     pub(super) window: Option<window::Id>,
     pub(super) warned_no_window: bool,
     /// Maximizada, a moldura de redimensionar some: borda de janela maximizada nao arrasta.
@@ -172,6 +175,9 @@ pub struct App {
     pub(super) user_avatars: HashMap<String, Avatar>,
     /// `open::that_detached` falhou: a linha da versao mostra a URL com "Copiar".
     pub(super) releases_open_failed: bool,
+    /// Bandeja, "iniciar com o Windows" (ou `Headless`, sem nada disso). `Rc`: o `TrayIcon`
+    /// vive na thread principal, a mesma do `update`.
+    pub(super) desktop: Rc<dyn Desktop>,
 }
 
 #[derive(Debug, Clone)]
@@ -201,7 +207,13 @@ pub enum Message {
     ClearFilters,
     CloseRequested,
     ForceExit,
-    WindowId(Option<window::Id>),
+    /// `window::open` respondeu: a janela existe e pode ser consultada.
+    WindowOpened(window::Id),
+    /// O iced fechou a janela (`close_events`): o id morreu com ela.
+    WindowClosed(window::Id),
+    /// Bandeja, menu ou segunda execucao: abrir a janela (ou traze-la) e "Desligar o hub", o
+    /// unico caminho que encerra o processo quando ha bandeja.
+    Desktop(DesktopEvent),
     TitlePressed,
     TitleReleased,
     TitleMoved,
@@ -246,6 +258,7 @@ impl App {
         offset: UtcOffset,
         prefs: UiPrefs,
         prefs_dir: PathBuf,
+        desktop: Rc<dyn Desktop>,
     ) -> App {
         let snapshot = handle.snapshot.borrow().clone();
         let tokens = Tokens::for_mode(prefs.theme);
@@ -288,6 +301,7 @@ impl App {
             reserves_empty_cache: canvas::Cache::new(),
             user_avatars: HashMap::new(),
             releases_open_failed: false,
+            desktop,
         };
         app.refresh_people();
         app.set_today(local_today(offset));
@@ -465,16 +479,67 @@ pub fn boot(
     offset: UtcOffset,
     prefs: UiPrefs,
     prefs_dir: PathBuf,
+    desktop: Rc<dyn Desktop>,
+    events: EventReceiver,
+    open_window: bool,
 ) -> impl Fn() -> (App, Task<Message>) {
+    // `BootFn` e `Fn`, e o receptor nao clona: o primeiro boot o leva; um segundo (presets de
+    // teste do iced) nasce sem eventos da bandeja.
+    let events = RefCell::new(Some(events));
     move || {
         let rx = handle.snapshot.clone();
-        let app = App::new(handle.clone(), offset, prefs.clone(), prefs_dir.clone());
-        let task = Task::batch([
-            Task::run(snapshot_stream(rx), |s| Message::Snapshot(Box::new(s))),
-            window::oldest().map(Message::WindowId),
-        ]);
-        (app, task)
+        let mut app = App::new(
+            handle.clone(),
+            offset,
+            prefs.clone(),
+            prefs_dir.clone(),
+            desktop.clone(),
+        );
+        let mut tasks = vec![Task::run(snapshot_stream(rx), |s| {
+            Message::Snapshot(Box::new(s))
+        })];
+        if let Some(events) = events.borrow_mut().take() {
+            tasks.push(Task::run(events, Message::Desktop));
+        }
+        if open_window {
+            tasks.push(open_window_task(&mut app));
+        }
+        (app, Task::batch(tasks))
     }
+}
+
+/// Abre a janela e guarda o id na hora: os botoes da barra de titulo nao precisam esperar
+/// o `WindowOpened`.
+fn open_window_task(app: &mut App) -> Task<Message> {
+    let (id, task) = window::open(super::window_settings());
+    app.window = Some(id);
+    task.map(Message::WindowOpened)
+}
+
+/// Abre ou traz a janela. Com janela: desminimiza e pede foco (clique na bandeja e segunda
+/// execucao dao ao processo o direito de foco; se o Windows recusar, o botao pisca).
+fn open_or_focus(app: &mut App) -> Task<Message> {
+    match app.window {
+        Some(id) => Task::batch([window::minimize(id, false), window::gain_focus(id)]),
+        None => open_window_task(app),
+    }
+}
+
+/// Desligamento com ordem (o `CloseRequested` da 1.0.0): remocao pendente, `Shutdown`,
+/// `Stopped` ou 5 s. Idempotente por `closing`.
+fn begin_shutdown(app: &mut App) -> Task<Message> {
+    if app.closing {
+        return Task::none();
+    }
+    app.closing = true;
+    // Antes do `Shutdown`, no mesmo canal: o nucleo processa em ordem.
+    app.commit_pending();
+    // Nucleo ja parado (ou morto): nao ha por que esperar o snapshot `Stopped`.
+    if app.handle.commands.send(Command::Shutdown).is_err() {
+        return iced::exit();
+    }
+    // Garantia: se o nucleo travar, o processo sai mesmo assim em 5 s.
+    Task::perform(delay(Duration::from_secs(5)), |_| Message::ForceExit)
 }
 
 /// `watch` -> Stream. `Task::run` aceita qualquer `Stream + Send`; nao precisa de
@@ -557,23 +622,35 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::CloseRequested => {
-            if app.closing {
-                return Task::none();
+            // Sem bandeja (Linux/macOS, ou bandeja que nao subiu) nao haveria como voltar:
+            // fechar desliga, como na 1.0.0.
+            if !app.desktop.has_tray() {
+                return begin_shutdown(app);
             }
-            app.closing = true;
-            // Antes do `Shutdown`, no mesmo canal: o nucleo processa em ordem.
+            // Com bandeja, fechar e so fechar: o hub segue sincronizando. A remocao pendente
+            // sai agora para nao depender de a janela voltar.
             app.commit_pending();
-            // Nucleo ja parado (ou morto): nao ha por que esperar o snapshot `Stopped`.
-            if app.handle.commands.send(Command::Shutdown).is_err() {
-                return iced::exit();
-            }
-            // Garantia: se o nucleo travar, a janela fecha mesmo assim em 5 s.
-            Task::perform(delay(Duration::from_secs(5)), |_| Message::ForceExit)
+            app.with_window(window::close)
         }
+        Message::Desktop(DesktopEvent::Quit) => begin_shutdown(app),
+        Message::Desktop(DesktopEvent::OpenWindow) => open_or_focus(app),
         Message::ForceExit => iced::exit(),
-        Message::WindowId(id) => {
-            app.window = id;
-            app.with_window(|id| window::is_maximized(id).map(Message::Maximized))
+        Message::WindowOpened(id) => {
+            if app.window == Some(id) {
+                window::is_maximized(id).map(Message::Maximized)
+            } else {
+                Task::none()
+            }
+        }
+        Message::WindowClosed(id) => {
+            if app.window == Some(id) {
+                app.window = None;
+                app.maximized = false;
+                app.window_size = INITIAL_SIZE;
+                // A geometria em cache pertence ao compositor, que morreu com a janela.
+                app.clear_charts();
+            }
+            Task::none()
         }
         Message::TitlePressed => {
             app.title_pressed = true;
@@ -924,27 +1001,31 @@ fn ticks() -> futures::channel::mpsc::Receiver<()> {
 pub fn subscription(_app: &App) -> Subscription<Message> {
     Subscription::batch([
         window::close_requests().map(|_| Message::CloseRequested),
+        window::close_events().map(Message::WindowClosed),
         window::resize_events().map(|(_, size)| Message::Resized(size)),
         Subscription::run(ticks).map(|()| Message::Tick),
     ])
 }
 
-pub fn view(app: &App) -> Element<'_, Message> {
-    super::view::view(app)
+pub fn view(app: &App, window: window::Id) -> Element<'_, Message> {
+    super::view::view(app, window)
 }
 
 #[cfg(test)]
 pub(super) mod tests {
     use tokio::sync::mpsc;
 
+    use crate::desktop::{Fake, Headless};
     use crate::store::erase::DeviceData;
 
     use super::*;
 
-    /// App de teste com canais de verdade: o receptor de comandos fica com o teste.
-    pub(crate) fn app_with(
+    /// App de teste com canais de verdade e a integracao do sistema escolhida: o receptor de
+    /// comandos fica com o teste.
+    pub(crate) fn app_with_desktop(
         snapshot: Snapshot,
         prefs_dir: PathBuf,
+        desktop: Rc<dyn Desktop>,
     ) -> (
         App,
         mpsc::UnboundedReceiver<Command>,
@@ -956,8 +1037,37 @@ pub(super) mod tests {
             commands: cmd_tx,
             snapshot: snap_rx,
         };
-        let app = App::new(handle, UtcOffset::UTC, UiPrefs::default(), prefs_dir);
+        let app = App::new(
+            handle,
+            UtcOffset::UTC,
+            UiPrefs::default(),
+            prefs_dir,
+            desktop,
+        );
         (app, cmd_rx, snap_tx)
+    }
+
+    /// Sem bandeja: o comportamento da 1.0.0 (fechar desliga). Os testes antigos usam este.
+    pub(crate) fn app_with(
+        snapshot: Snapshot,
+        prefs_dir: PathBuf,
+    ) -> (
+        App,
+        mpsc::UnboundedReceiver<Command>,
+        watch::Sender<Snapshot>,
+    ) {
+        app_with_desktop(snapshot, prefs_dir, Rc::new(Headless))
+    }
+
+    /// Com bandeja (o `Fake`) e janela aberta.
+    pub(crate) fn with_tray(
+        dir: &std::path::Path,
+    ) -> (App, Rc<Fake>, mpsc::UnboundedReceiver<Command>) {
+        let fake = Rc::new(Fake::with_tray());
+        let (mut app, rx, _tx) =
+            app_with_desktop(Snapshot::default(), dir.to_path_buf(), fake.clone());
+        app.window = Some(window::Id::unique());
+        (app, fake, rx)
     }
 
     #[test]
@@ -976,6 +1086,7 @@ pub(super) mod tests {
                 ..UiPrefs::default()
             },
             dir.path().to_path_buf(),
+            Rc::new(Headless),
         );
         assert_eq!(app.screen, Screen::Dashboard);
         assert_eq!(app.theme, ThemeMode::Light);
@@ -1866,6 +1977,7 @@ pub(super) mod tests {
             UtcOffset::UTC,
             UiPrefs::default(),
             dir.path().to_path_buf(),
+            Rc::new(Headless),
         );
         // `new` ja chama `set_today` (que recalcula): o modelo nao e o `default()`, e o de um
         // hub sem reservas, com a janela de hoje.
@@ -1873,6 +1985,102 @@ pub(super) mod tests {
         assert_eq!(app.reserves.reserve_count, 0);
         assert_eq!(app.reserves.months.len(), 12);
         assert_eq!(app.reserves.emergency, None);
+    }
+
+    #[test]
+    fn com_bandeja_fechar_fecha_a_janela_e_nao_desliga() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, mut rx) = with_tray(dir.path());
+        let id = app.window.unwrap();
+        let _ = update(&mut app, Message::CloseRequested);
+        assert!(!app.closing);
+        assert!(
+            rx.try_recv().is_err(),
+            "nenhum comando, muito menos Shutdown"
+        );
+        // A janela so some quando o iced confirma (`close_events`).
+        assert_eq!(app.window, Some(id));
+        let _ = update(&mut app, Message::WindowClosed(window::Id::unique()));
+        assert_eq!(app.window, Some(id), "outra janela nao e a nossa");
+        app.maximized = true;
+        app.window_size = Size::new(800.0, 600.0);
+        let _ = update(&mut app, Message::WindowClosed(id));
+        assert_eq!(app.window, None);
+        assert!(!app.maximized);
+        assert_eq!(app.window_size, INITIAL_SIZE);
+    }
+
+    #[test]
+    fn com_bandeja_fechar_envia_a_remocao_pendente_sem_shutdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = Rc::new(Fake::with_tray());
+        let (mut app, mut rx, _tx) = app_with_desktop(
+            Snapshot {
+                devices: vec![view("D1", "Pixel 7", false, false, data())],
+                ..Snapshot::default()
+            },
+            dir.path().to_path_buf(),
+            fake,
+        );
+        app.window = Some(window::Id::unique());
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ConfirmRemove);
+        assert!(app.pending_removal.is_some());
+        let _ = update(&mut app, Message::CloseRequested);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Command::RemoveDevice { device_id, .. }) if device_id == "D1"
+        ));
+        assert!(rx.try_recv().is_err());
+        assert_eq!(app.pending_removal, None);
+        assert!(!app.closing);
+    }
+
+    #[test]
+    fn abrir_sem_janela_cria_uma_e_com_janela_mantem_a_mesma() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        app.window = None;
+        let _ = update(&mut app, Message::Desktop(DesktopEvent::OpenWindow));
+        let id = app.window.expect("janela aberta");
+        let _ = update(&mut app, Message::Desktop(DesktopEvent::OpenWindow));
+        assert_eq!(app.window, Some(id));
+    }
+
+    #[test]
+    fn boot_abre_a_janela_so_quando_pedido() {
+        let dir = tempfile::tempdir().unwrap();
+        for open in [true, false] {
+            let (cmd_tx, _rx) = mpsc::unbounded_channel();
+            let (_tx, snap_rx) = watch::channel(Snapshot::default());
+            let handle = HubHandle {
+                commands: cmd_tx,
+                snapshot: snap_rx,
+            };
+            let (_etx, erx) = crate::desktop::channel();
+            let (app, _task) = boot(
+                handle,
+                UtcOffset::UTC,
+                UiPrefs::default(),
+                dir.path().to_path_buf(),
+                Rc::new(Fake::with_tray()),
+                erx,
+                open,
+            )();
+            assert_eq!(app.window.is_some(), open);
+        }
+    }
+
+    #[test]
+    fn sem_bandeja_fechar_continua_desligando() {
+        // `fechar_manda_shutdown_uma_vez` e `fechar_com_remocao_pendente_revoga_antes_do_shutdown`
+        // ja cobrem; este fixa que `Headless` e o que os mantem validos.
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        assert!(!app.desktop.has_tray());
+        let _ = update(&mut app, Message::CloseRequested);
+        assert!(app.closing);
+        assert!(matches!(rx.try_recv(), Ok(Command::Shutdown)));
     }
 
     #[test]

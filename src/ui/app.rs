@@ -180,6 +180,14 @@ pub struct App {
     pub(super) desktop: Rc<dyn Desktop>,
     /// Ultimo texto mandado ao tooltip da bandeja.
     pub(super) tooltip: String,
+    /// "Iniciar com o Windows" como o sistema diz (cache do registro, lido no boot e depois de
+    /// cada troca); `None` = sistema sem a opcao, e a linha some do card.
+    pub(super) autostart: Option<bool>,
+    /// O que o `ui.json` lembra (`Some(false)` = desligado de proposito); vai junto em toda
+    /// gravacao do arquivo para trocar o tema nao apagar a decisao.
+    pub(super) autostart_pref: Option<bool>,
+    /// A ultima troca da opcao falhou no sistema: o card avisa.
+    pub(super) autostart_failed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +236,8 @@ pub enum Message {
     Resize(window::Direction),
     SelectScreen(Screen),
     SetTheme(ThemeMode),
+    /// "Iniciar com o Windows" do card "Sobre o hub".
+    SetAutostart(bool),
     Copy(CopyTarget),
     CopyExpired,
     /// "Versoes no GitHub" do card "Sobre o hub".
@@ -303,6 +313,9 @@ impl App {
             reserves_empty_cache: canvas::Cache::new(),
             user_avatars: HashMap::new(),
             releases_open_failed: false,
+            autostart: desktop.autostart(),
+            autostart_pref: prefs.autostart,
+            autostart_failed: false,
             desktop,
             tooltip: String::new(),
         };
@@ -767,12 +780,39 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 save_prefs(
                     UiPrefs {
                         theme: mode,
-                        ..UiPrefs::default()
+                        autostart: app.autostart_pref,
                     },
                     app.prefs_dir.clone(),
                 ),
                 |_| Message::Noop,
             )
+        }
+        Message::SetAutostart(enabled) => {
+            if app.autostart == Some(enabled) {
+                return Task::none();
+            }
+            match app.desktop.set_autostart(enabled) {
+                Ok(()) => {
+                    app.autostart = Some(enabled);
+                    app.autostart_pref = Some(enabled);
+                    app.autostart_failed = false;
+                    Task::perform(
+                        save_prefs(
+                            UiPrefs {
+                                theme: app.theme,
+                                autostart: Some(enabled),
+                            },
+                            app.prefs_dir.clone(),
+                        ),
+                        |_| Message::Noop,
+                    )
+                }
+                Err(err) => {
+                    tracing::warn!("iniciar com o Windows: {err}");
+                    app.autostart_failed = true;
+                    Task::none()
+                }
+            }
         }
         Message::Copy(target) => {
             let text = match target {
@@ -2186,6 +2226,67 @@ pub(super) mod tests {
         app.closing = true;
         let _ = update(&mut app, Message::Snapshot(Box::new(failed)));
         assert!(app.window.is_none());
+    }
+
+    #[test]
+    fn ligar_iniciar_com_o_windows_grava_no_sistema_e_no_ui_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        assert_eq!(app.autostart, Some(false));
+        let _ = update(&mut app, Message::SetAutostart(true));
+        assert_eq!(fake.autostart.get(), Some(true));
+        assert_eq!(app.autostart, Some(true));
+        assert_eq!(app.autostart_pref, Some(true));
+        assert!(!app.autostart_failed);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while UiPrefs::load(dir.path()).autostart != Some(true) {
+            assert!(std::time::Instant::now() < deadline, "ui.json nao gravado");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn falha_ao_gravar_mantem_o_estado_e_avisa() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        fake.fail_autostart.set(true);
+        let _ = update(&mut app, Message::SetAutostart(true));
+        assert_eq!(app.autostart, Some(false));
+        assert_eq!(app.autostart_pref, None);
+        assert!(app.autostart_failed);
+        assert_eq!(UiPrefs::load(dir.path()).autostart, None);
+    }
+
+    #[test]
+    fn trocar_o_tema_preserva_a_preferencia_de_autostart() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        fake.autostart.set(Some(true));
+        app.autostart = Some(true);
+        let _ = update(&mut app, Message::SetAutostart(false));
+        let _ = update(&mut app, Message::SetTheme(ThemeMode::Light));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let prefs = UiPrefs::load(dir.path());
+            if prefs.theme == ThemeMode::Light && prefs.autostart == Some(false) {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "ui.json: {prefs:?}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn sem_a_opcao_o_card_desenha_sem_ela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        assert_eq!(app.autostart, None);
+        let _ = super::super::connection_view::view(&app);
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        assert_eq!(app.autostart, Some(false));
+        let _ = super::super::connection_view::view(&app);
+        app.autostart_failed = true;
+        let _ = super::super::connection_view::view(&app);
     }
 
     #[test]

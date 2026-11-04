@@ -497,38 +497,23 @@ fn status_card(app: &App) -> Element<'_, Message> {
 }
 
 fn theme_switch(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
-    let option = |mode: ThemeMode, glyph: &'static str, label: &'static str| {
-        let active = app.theme == mode;
-        button(
-            container(
-                row![
-                    text(glyph).font(fonts::PHOSPHOR).size(12).line_height(1.0),
-                    text(label).size(12).font(fonts::INTER_MEDIUM),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .center_x(Length::Fill)
-            .height(26)
-            .align_y(Alignment::Center),
-        )
-        .padding(0)
-        .width(Length::Fill)
-        .style(theme::seg_option(t, active))
-        .on_press(Message::SetTheme(mode))
-    };
-    container(
-        row![
-            option(ThemeMode::Dark, icons::MOON, "Escuro"),
-            option(ThemeMode::Light, icons::SUN, "Claro"),
-        ]
-        .width(Length::Fill),
+    widgets::seg_switch(
+        app.tokens,
+        [
+            (
+                Some(icons::MOON),
+                "Escuro",
+                app.theme == ThemeMode::Dark,
+                Message::SetTheme(ThemeMode::Dark),
+            ),
+            (
+                Some(icons::SUN),
+                "Claro",
+                app.theme == ThemeMode::Light,
+                Message::SetTheme(ThemeMode::Light),
+            ),
+        ],
     )
-    .padding(3)
-    .width(Length::Fill)
-    .style(theme::outlined(t.divider(), 8.0))
-    .into()
 }
 
 // ---- conteudo ----

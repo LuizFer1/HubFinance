@@ -462,6 +462,39 @@ fn about_card(app: &App) -> Element<'_, Message> {
         .spacing(8)
         .align_y(Alignment::Center)
     };
+    let autostart: Option<Element<'_, Message>> = app.autostart.map(|enabled| {
+        let switch = container(widgets::seg_switch(
+            t,
+            [
+                (None, "Sim", enabled, Message::SetAutostart(true)),
+                (None, "Não", !enabled, Message::SetAutostart(false)),
+            ],
+        ))
+        .width(140);
+        let head = row![
+            text("Iniciar com o Windows").size(12).color(t.text),
+            Space::new().width(Length::Fill),
+            switch,
+        ]
+        .align_y(Alignment::Center);
+        let mut col = column![head].spacing(6);
+        if app.autostart_failed {
+            col = col.push(
+                text("Não foi possível alterar. Veja o log.")
+                    .size(12)
+                    .color(t.expense_fg),
+            );
+        }
+        col.push(
+            text(
+                "Com a opção ligada, o hub abre com o Windows sem mostrar a janela. Fechar a \
+                 janela não desliga o hub: use Desligar o hub no ícone ao lado do relógio.",
+            )
+            .size(12)
+            .color(t.text_alpha(0.55)),
+        )
+        .into()
+    });
     let footer = row![
         icons::icon(icons::HOUSE_SIMPLE, 12.0, t.text_alpha(0.55)),
         text("Este programa nunca consulta a internet.")
@@ -470,16 +503,19 @@ fn about_card(app: &App) -> Element<'_, Message> {
     ]
     .spacing(8)
     .align_y(Alignment::Center);
-    let body = column![
+    let mut body = column![
         widgets::card_title(t, "Sobre o hub", None),
         Space::new().height(4),
         version,
         path_row("Dados em ", lines.data_dir, CopyTarget::DataDir),
         path_row("Logs em ", lines.logs_dir, CopyTarget::LogsDir),
-        Space::new().height(4),
-        footer,
     ]
     .spacing(10);
+    // `Column` do iced 0.14 nao tem `push_maybe`.
+    if let Some(autostart) = autostart {
+        body = body.push(Space::new().height(4)).push(autostart);
+    }
+    let body = body.push(Space::new().height(4)).push(footer);
     container(body)
         .padding(24)
         .width(Length::Fill)

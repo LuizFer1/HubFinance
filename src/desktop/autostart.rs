@@ -6,11 +6,15 @@ use std::path::Path;
 
 use super::args::AUTOSTART_FLAG;
 
+// Fora do Windows nada grava o registro: o valor e so do caminho Windows (e dos testes).
+#[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 pub const VALUE_NAME: &str = "HubFinance";
+#[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 pub const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
 /// Entre aspas: a pasta de instalacao tem espacos, e sem elas o Windows tentaria
 /// `C:\Program` com o resto como argumentos.
+#[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 pub fn run_value(exe: &Path) -> String {
     format!("\"{}\" {AUTOSTART_FLAG}", exe.display())
 }

@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 /// `HubFinance-` + 16 hex do SHA-256 do caminho normalizado. Hash, e nao o caminho: nomes de
 /// objeto do kernel nao aceitam `\` e tem limite de tamanho; normalizado para a mesma pasta
 /// escrita de dois jeitos dar a mesma instancia.
+#[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 pub fn instance_key(data_dir: &Path) -> String {
     let mut path = data_dir.to_string_lossy().replace('\\', "/").to_lowercase();
     while path.len() > 1 && path.ends_with('/') {
@@ -21,14 +22,18 @@ pub fn instance_key(data_dir: &Path) -> String {
 
 /// `Local\`: por sessao de usuario. Dois usuarios logados tem pastas de dados diferentes e
 /// hubs diferentes.
+#[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 pub fn mutex_name(key: &str) -> String {
     format!("Local\\{key}")
 }
 
+#[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 pub fn event_name(key: &str) -> String {
     format!("Local\\{key}-abrir")
 }
 
+/// Fora do Windows `acquire` sempre consegue: as variantes so nascem no caminho Windows.
+#[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 #[derive(Debug, thiserror::Error)]
 pub enum InstanceError {
     #[error("ja ha um HubFinance aberto para esta pasta de dados")]
@@ -37,10 +42,8 @@ pub enum InstanceError {
     Os(String),
 }
 
-// TEMPORARIO: `main.rs` passa a usar na Tarefa 10.
 #[cfg(windows)]
-#[allow(unused_imports)]
-pub use win::{Instance, acquire, notify_running};
+pub use win::{acquire, notify_running};
 
 #[cfg(not(windows))]
 pub struct Instance;

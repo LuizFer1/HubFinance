@@ -3,9 +3,6 @@
 //! daqui so mensagens simples por canal. O que decide algo e funcao pura e testada; o que
 //! toca o sistema fica atras de `cfg(windows)` e do trait `Desktop`, para teste nenhum criar
 //! bandeja, mutex nem chave de registro.
-//!
-//! TEMPORARIO: removido na Tarefa 10, quando `main.rs` passa a usar tudo.
-#![allow(dead_code)]
 
 pub mod args;
 pub mod autostart;
@@ -15,6 +12,8 @@ pub mod tray;
 use std::rc::Rc;
 
 /// O que a bandeja, o menu ou uma segunda execucao pedem a janela.
+/// Fora do Windows ninguem manda eventos (sem bandeja nem segunda instancia que avise).
+#[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesktopEvent {
     /// Clique no icone, "Abrir o HubFinance" no menu, ou o programa aberto de novo.

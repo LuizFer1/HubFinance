@@ -4,7 +4,9 @@
 use crate::hub::snapshot::Status;
 
 /// Ids dos itens do menu; o handler os compara com `MenuId: PartialEq<&str>`.
+#[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 pub const MENU_OPEN: &str = "abrir";
+#[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 pub const MENU_QUIT: &str = "desligar";
 
 /// `active_devices` = aparelhos nao revogados. Curto de proposito: o Windows corta em 127

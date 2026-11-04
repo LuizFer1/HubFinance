@@ -664,7 +664,13 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             // As cores dos graficos estao gravadas na geometria em cache.
             app.clear_charts();
             Task::perform(
-                save_prefs(UiPrefs { theme: mode }, app.prefs_dir.clone()),
+                save_prefs(
+                    UiPrefs {
+                        theme: mode,
+                        ..UiPrefs::default()
+                    },
+                    app.prefs_dir.clone(),
+                ),
                 |_| Message::Noop,
             )
         }
@@ -967,6 +973,7 @@ pub(super) mod tests {
             UtcOffset::UTC,
             UiPrefs {
                 theme: ThemeMode::Light,
+                ..UiPrefs::default()
             },
             dir.path().to_path_buf(),
         );

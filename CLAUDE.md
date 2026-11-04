@@ -14,6 +14,11 @@ fora deste repositório. Leia `ARCHITECTURE.md` antes de tocar em `src/`.
 `<data_dir>/logs/hub.AAAA-MM-DD.log` (7 arquivos, rotação diária). Nunca logar chave, hash,
 token de pareamento nem linha inteira — a atividade da janela é espelhada no arquivo.
 `HUBFINANCE_DATA_DIR=<dir>` muda o diretório de dados (padrão: `%LOCALAPPDATA%\HubFinance\data`).
+`--autostart` é como o Windows abre o hub (valor `Run`): só o ícone na bandeja, sem janela; sai
+na hora se a opção "Iniciar com o Windows" estiver desligada. `cargo run` nunca registra o
+autostart sozinho (build debug ou `HUBFINANCE_DATA_DIR` definido contam como desenvolvimento);
+**nunca rode um build release de `target\` sem `HUBFINANCE_DATA_DIR`**: ele gravaria
+`target\release\hub_finance.exe` no `Run` da máquina.
 
 `scripts/freeze-inter.sh` e `scripts/oklch.py` são geração offline (fontes com `tnum` congelado
 e tabela de cores); o resultado é commitado e `assets/fonts` é vendorizado com as licenças. O
@@ -32,7 +37,8 @@ com um hub de verdade por curl.
   confirmado pelo dono**, e vive numa função só (`owned_by`).
 - **Nada fora da LAN.** Nenhuma dependência que telefone para casa, nenhum relay, nenhuma
   checagem de versão **pelo processo do hub**: abrir o navegador numa URL fixa é ação do
-  usuário executada pelo sistema.
+  usuário executada pelo sistema. A bandeja, o mutex de instância única e a chave `Run` são
+  Win32 local.
 - **Opcional.** App com sync desligado é completo; hub desligado não degrada nenhum celular.
 - **Uma regra para todas as tabelas.** Linhas são JSON opaco; tabela ou campo novo no celular
   sincroniza sem código novo aqui.
@@ -52,6 +58,11 @@ com um hub de verdade por curl.
 - A chave do aparelho nunca é gravada: só `sha256` hex.
 - Linha fora do contrato de campos é ignorada e contada no dashboard; nunca derruba sync nem
   janela.
+- Fechar a janela não desliga o hub quando há bandeja (Windows); só "Desligar o hub" no menu do
+  ícone. Sem bandeja (Linux/macOS, ou bandeja que não subiu) fechar desliga. A remoção pendente
+  ("Desfazer") sai antes de fechar a janela e antes do `Shutdown`. Para sair, use `exit()` de
+  `ui/app.rs`, nunca `iced::exit()` solto: sem janela o laço do winit não acorda para ver o
+  pedido de saída.
 - A versão é uma só: `version` do `Cargo.toml` (`config::VERSION`); a tag é `v<versão>` e
   `release.yml` falha se diferirem. Toda release tem seção no `CHANGELOG.md`.
 
@@ -61,9 +72,13 @@ com um hub de verdade por curl.
 `server/` o único com axum; `ui/` o único com iced. `dashboard/` é puro (sem rusqlite, axum,
 tokio, iced): contrato de campos, dataset e agregações; a UI deriva as telas dele. `hub/` liga
 tudo numa thread com runtime tokio e publica `Snapshot` por `watch`; a UI só renderiza o
-snapshot e envia `Command`. `logging.rs` e `main.rs` são os únicos com `tracing-subscriber`/
-`tracing-appender`; `ui/` abre o navegador só por `open::that_detached` com URL constante de
-`config.rs`.
+snapshot e envia `Command`. `desktop/` é o único com `tray-icon`, `image` e `windows-sys`
+(bandeja, instância única, chave `Run`), sem iced, rusqlite, axum nem tokio; fala com `ui/` por
+um trait (`Desktop`, com `Fake` nos testes) e por um canal de `DesktopEvent`. Tudo que é Win32
+fica em `cfg(windows)` com um caminho `not(windows)` que compila (o CI roda clippy nos três
+sistemas); nenhum teste cria bandeja, mutex nem valor no registro. `logging.rs` e `main.rs` são
+os únicos com `tracing-subscriber`/`tracing-appender`; `ui/` abre o navegador só por
+`open::that_detached` com URL constante de `config.rs`.
 
 ## Convenções
 

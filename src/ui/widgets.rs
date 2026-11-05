@@ -42,20 +42,21 @@ pub fn seg_switch<'a, M: Clone + 'a>(
         .into()
 }
 
-/// Rotulo em caixa alta (11 Medium a 55 %). O texto ja vem em maiusculas: o iced nao tem
-/// `text-transform` nem `letter-spacing`, entao o espacamento de 0,08 em fica de fora.
+/// Rotulo em frase normal ("Saldo do mês"), 12 Medium a 55 %. Desvio do handoff, que pede
+/// caixa alta com `letter-spacing`: sem o espacamento (o iced nao tem) a caixa alta ficava
+/// apertada e gritava mais que o valor embaixo. O texto vai como a tela passou.
 pub fn kicker<'a, M: 'a>(t: &'static Tokens, content: &str) -> Element<'a, M> {
-    text(content.to_uppercase())
-        .size(11)
+    text(content.to_string())
+        .size(12)
         .font(fonts::INTER_MEDIUM)
         .color(t.text_alpha(0.55))
         .into()
 }
 
-/// Rotulo em caixa alta no acento ("ENDEREÇO DO HUB", "CERTIFICADO DO HUB").
+/// Rotulo em frase normal no acento ("Endereço do hub", "Certificado do hub").
 pub fn kicker_accent<'a, M: 'a>(t: &'static Tokens, content: &str) -> Element<'a, M> {
-    text(content.to_uppercase())
-        .size(11)
+    text(content.to_string())
+        .size(12)
         .font(fonts::INTER_MEDIUM)
         .color(t.accent_300)
         .into()

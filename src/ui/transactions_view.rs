@@ -374,17 +374,17 @@ fn table(app: &App) -> Element<'_, Message> {
     let v = &app.transactions;
     let head = |label: &'static str| -> Element<'_, Message> {
         text(label)
-            .size(11)
+            .size(12)
             .font(fonts::INTER_MEDIUM)
             .color(t.text_alpha(0.55))
             .into()
     };
     let header = container(columns([
-        head("DESCRIÇÃO"),
-        head("CATEGORIA"),
-        head("AUTOR"),
-        head("PAGAMENTO"),
-        head("VALOR"),
+        head("Descrição"),
+        head("Categoria"),
+        head("Autor"),
+        head("Pagamento"),
+        head("Valor"),
     ]))
     .height(40)
     .padding([0, 20])

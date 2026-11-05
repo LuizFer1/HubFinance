@@ -247,8 +247,8 @@ fn sidebar(app: &App) -> Element<'_, Message> {
     });
 
     let group = container(
-        text("HUB")
-            .size(11)
+        text("Hub")
+            .size(12)
             .font(fonts::INTER_MEDIUM)
             .color(t.text_alpha(0.45)),
     )

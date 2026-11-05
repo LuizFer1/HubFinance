@@ -453,32 +453,29 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
     .spacing(12)
     .align_y(Alignment::Center);
     let parts = money_parts(e.balance_minor);
-    let goal = if e.goal_minor > 0 {
-        format!("de {}", format_brl(e.goal_minor))
-    } else {
-        "sem meta".to_string()
-    };
-    let balance = row![
-        widgets::money_big(
-            &format!("{}R$", parts.sign),
-            &parts.whole,
-            &parts.cents,
-            t.text,
-            t.text_alpha(0.55)
-        ),
-        container(
-            text(goal)
-                .size(13)
-                .line_height(1.0)
-                .color(t.text_alpha(0.55))
-        )
-        .padding(Padding {
-            bottom: 2.0,
-            ..Padding::ZERO
-        }),
-    ]
+    let mut balance = row![widgets::money_big(
+        &format!("{}R$", parts.sign),
+        &parts.whole,
+        &parts.cents,
+        t.text,
+        t.text_alpha(0.55)
+    )]
     .spacing(10)
     .align_y(Alignment::End);
+    if let Some(goal) = goal_note(e.goal_minor) {
+        balance = balance.push(
+            container(
+                text(goal)
+                    .size(13)
+                    .line_height(1.0)
+                    .color(t.text_alpha(0.55)),
+            )
+            .padding(Padding {
+                bottom: 2.0,
+                ..Padding::ZERO
+            }),
+        );
+    }
     let mut col = column![
         header,
         Space::new().height(16),
@@ -503,6 +500,12 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
         .push(Space::new().height(14))
         .push(eta);
     card(t, padding, col)
+}
+
+/// "de R$ 2.400,00" ao lado do saldo. Sem meta, nada: a pilula do cabecalho ja diz "Sem meta"
+/// e repetir ao lado do valor era a terceira vez no mesmo card.
+fn goal_note(goal_minor: i64) -> Option<String> {
+    (goal_minor > 0).then(|| format!("de {}", format_brl(goal_minor)))
 }
 
 /// "1", "2", …, "6 meses": um rotulo sob cada segmento, com a mesma largura.
@@ -1009,6 +1012,13 @@ mod tests {
     use super::super::app::tests::{app_with, app_with_reserves};
     use super::*;
     use crate::hub::snapshot::Snapshot;
+
+    #[test]
+    fn meta_ao_lado_do_saldo_so_quando_existe() {
+        assert_eq!(goal_note(240_000).as_deref(), Some("de R$ 2.400,00"));
+        assert_eq!(goal_note(0), None);
+        assert_eq!(goal_note(-1), None);
+    }
 
     #[test]
     fn constroi_vazia_e_com_dados_sem_panico() {

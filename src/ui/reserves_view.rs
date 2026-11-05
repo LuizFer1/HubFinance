@@ -393,14 +393,18 @@ fn year_card(app: &App) -> Element<'_, Message> {
         ),
     ]
     .spacing(6);
-    // "Nenhuma retirada" repetiria a linha de cima, que ja mostra R$ 0,00 em cinza.
-    if v.totals.withdrawal_count > 0 {
-        col = col.push(
+    // "Nenhuma retirada" repetiria a linha de cima, que ja mostra R$ 0,00 em cinza. O vao fica
+    // na altura da nota (12 x 1,3) para o card nao ficar mais baixo que os vizinhos: a linha de
+    // KPIs do iced nao iguala alturas.
+    col = if v.totals.withdrawal_count > 0 {
+        col.push(
             text(v.withdrawals_note.clone())
                 .size(12)
                 .color(t.text_alpha(0.60)),
-        );
-    }
+        )
+    } else {
+        col.push(Space::new().height(16))
+    };
     kpi_card(t, col)
 }
 

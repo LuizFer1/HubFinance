@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Space, button, column, container, mouse_area, qr_code, rich_text, row, span, stack, text,
+    Space, button, column, container, mouse_area, qr_code, rich_text, row, span, text,
 };
 use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
@@ -710,31 +710,20 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
 }
 
 fn empty_users<'a>(t: &'static Tokens) -> Element<'a, Message> {
-    // Borda solida: o iced nao traceja borda de container (desvio aceito na spec).
-    let circle = move |alpha: f32| {
-        container(Space::new())
-            .width(36)
-            .height(36)
-            .style(move |_: &Theme| container::Style {
-                border: Border {
-                    color: theme::alpha(t.neutral_700, alpha),
-                    width: 1.5,
-                    radius: 18.0.into(),
-                },
-                ..container::Style::default()
-            })
-    };
-    let circles = stack![
-        circle(1.0),
-        container(circle(0.6)).padding(Padding {
-            left: 26.0,
-            ..Padding::ZERO
-        }),
-    ]
-    .width(62)
-    .height(36);
+    // O handoff desenha dois circulos tracejados sobrepostos (dois aparelhos); com borda solida,
+    // que e o que o iced faz, eles viravam um interruptor. O celular num circulo diz o mesmo.
+    let device = container(icons::icon(icons::DEVICE_MOBILE, 20.0, t.neutral_700))
+        .center(44)
+        .style(move |_: &Theme| container::Style {
+            border: Border {
+                color: t.neutral_700,
+                width: 1.5,
+                radius: 22.0.into(),
+            },
+            ..container::Style::default()
+        });
     let body = column![
-        circles,
+        device,
         Space::new().height(6),
         text("Nenhum usuário conectado")
             .size(15)

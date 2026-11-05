@@ -547,7 +547,7 @@ fn about_card(app: &App) -> Element<'_, Message> {
     });
     let footer = row![
         icons::icon(icons::HOUSE_SIMPLE, 12.0, t.text_alpha(0.55)),
-        text("Este programa nunca consulta a internet.")
+        text("Este programa nunca consulta a internet")
             .size(12)
             .color(t.text_alpha(0.55)),
     ]
@@ -732,7 +732,7 @@ fn empty_users<'a>(t: &'static Tokens) -> Element<'a, Message> {
         container(
             text(
                 "Quando um celular abrir o endereço ao lado, a pessoa aparece aqui com o nome e \
-                 a cor que escolheu no app."
+                 a cor que escolheu no app"
             )
             .size(13)
             .line_height(1.5)
@@ -860,8 +860,7 @@ fn activity_card(app: &App) -> Element<'_, Message> {
         Space::new().height(8),
     ];
     if snap.activity.is_empty() {
-        col =
-            col.push(container(text("Nada ainda.").size(13).color(t.text_alpha(0.55))).height(28));
+        col = col.push(container(text("Nada ainda").size(13).color(t.text_alpha(0.55))).height(28));
     }
     for entry in snap.activity.iter().take(20) {
         let at = time::format_time(::time::OffsetDateTime::from(entry.at), app.offset);

@@ -475,7 +475,7 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
             column![
                 header,
                 Space::new().height(16),
-                text("Nenhuma reserva de emergência sincronizada.")
+                text("Nenhuma reserva de emergência sincronizada")
                     .size(13)
                     .color(t.text_alpha(0.55)),
             ],
@@ -596,7 +596,7 @@ fn essential_section<'a>(
         return column![
             title,
             Space::new().height(2),
-            text("Sem lançamentos suficientes para calcular o custo essencial.")
+            text("Sem lançamentos suficientes para calcular o custo essencial")
                 .size(12)
                 .color(muted),
         ]
@@ -619,7 +619,7 @@ fn essential_section<'a>(
         return column![
             header,
             Space::new().height(2),
-            text("Custo informado no app.").size(12).color(muted),
+            text("Custo informado no app").size(12).color(muted),
         ]
         .into();
     }
@@ -627,7 +627,7 @@ fn essential_section<'a>(
         return column![
             header,
             Space::new().height(2),
-            text("Nenhuma categoria essencial definida no app.")
+            text("Nenhuma categoria essencial definida no app")
                 .size(12)
                 .color(muted),
         ]
@@ -635,9 +635,9 @@ fn essential_section<'a>(
     }
     // "Média dos últimos 6 meses"; numa casa nova, os meses que ela tem.
     let note = if cost.months == 1 {
-        "Média do último mês nestas categorias.".to_string()
+        "Média do último mês nestas categorias".to_string()
     } else {
-        format!("Média dos últimos {} meses nestas categorias.", cost.months)
+        format!("Média dos últimos {} meses nestas categorias", cost.months)
     };
     let bar_parts: Vec<(i64, Color)> = cost
         .parts
@@ -706,7 +706,7 @@ fn pots_card(app: &App) -> Element<'_, Message> {
     if v.pots.is_empty() {
         col = col.push(widgets::hdivider(t)).push(
             container(
-                text("Nenhuma caixinha ainda.")
+                text("Nenhuma caixinha ainda")
                     .size(13)
                     .color(t.text_alpha(0.55)),
             )
@@ -841,7 +841,7 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
     };
     let quiet = v.series.iter().all(|s| s.balances.iter().all(|b| *b <= 0));
     let body: Element<'_, Message> = if quiet {
-        text("Nenhum saldo nos últimos 12 meses.")
+        text("Nenhum saldo nos últimos 12 meses")
             .size(13)
             .color(t.text_alpha(0.55))
             .into()
@@ -887,7 +887,7 @@ fn movements_card(app: &App) -> Element<'_, Message> {
     if v.movements.is_empty() {
         col = col.push(widgets::hdivider(t)).push(
             container(
-                text("Nenhuma movimentação nos últimos 12 meses.")
+                text("Nenhuma movimentação nos últimos 12 meses")
                     .size(13)
                     .color(t.text_alpha(0.55)),
             )

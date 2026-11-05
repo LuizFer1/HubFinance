@@ -398,13 +398,13 @@ pub(super) fn status_lines(app: &App) -> StatusLines {
             dot: t.amber,
             title: "Hub ligado · sem dados".into(),
             address: address(app),
-            detail: Some("Aguardando o primeiro sync de um celular pareado.".into()),
+            detail: Some("Aguardando o primeiro sync de um celular pareado".into()),
         },
         Status::NoNetwork => StatusLines {
             dot: t.amber,
             title: "Sem rede local".into(),
             address: Some(format!("porta {} aberta", snap.https_port)),
-            detail: Some("Conecte o computador ao Wi-Fi de casa.".into()),
+            detail: Some("Conecte o computador ao Wi-Fi de casa".into()),
         },
         Status::Starting => StatusLines {
             dot: t.neutral_600,

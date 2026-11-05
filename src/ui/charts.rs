@@ -18,8 +18,8 @@ use iced::widget::text::{Alignment as TextAlign, LineHeight, Shaping};
 use iced::{Color, Pixels, Point, Radians, Rectangle, Renderer, Size, Theme};
 
 use super::app::Message;
-use super::fonts;
 use super::theme::{Tokens, alpha};
+use super::{fonts, measure};
 use crate::dashboard::aggregate::{MonthTotals, Slice};
 use crate::dashboard::money::{axis_label, format_brl, signed_brl};
 use crate::dashboard::periods::{month_label, month_label_capitalized, month_short};
@@ -60,6 +60,16 @@ const DONUT_RADIUS: f32 = 40.0;
 const DONUT_STROKE: f32 = 11.0;
 const DONUT_STROKE_HOVER: f32 = 13.0;
 const DONUT_GAP: f32 = 1.2 / DONUT_RADIUS;
+/// Folga minima, em px, entre o valor do miolo e a borda de dentro do anel.
+const DONUT_CLEARANCE: f32 = 8.0;
+/// Tamanhos do valor do miolo, do design (17) para baixo.
+const DONUT_VALUE_SIZES: [f32; 6] = [17.0, 16.0, 15.0, 14.0, 13.0, 12.0];
+/// Meia altura do valor em em, a partir do centro da caixa de linha: digitos sobem 0,73 em da
+/// base e a virgula desce; 0,45 cobre os dois com a base onde a Inter a poe na linha de 1,3.
+const DONUT_VALUE_HALF_HEIGHT: f32 = 0.45;
+/// Nome da categoria no miolo (com hover): 14 caracteres de 11 px cabem na corda a 19 px do
+/// centro sem encostar no anel.
+const DONUT_NAME_CHARS: usize = 14;
 
 pub struct DonutProgram<'a> {
     pub slices: &'a [Slice],
@@ -68,6 +78,23 @@ pub struct DonutProgram<'a> {
     pub hover: Option<&'a str>,
     pub tokens: &'static Tokens,
     pub cache: &'a canvas::Cache,
+}
+
+/// Tamanho do valor do miolo para `value` caber no circulo de dentro com `DONUT_CLEARANCE` de
+/// folga, numa rosca de escala `scale` (lado / 100). Conta com o traco do hover, o mais grosso:
+/// o valor da fatia sob o mouse usa a mesma linha.
+pub fn donut_value_size(value: &str, scale: f32) -> f32 {
+    let limit = (DONUT_RADIUS - DONUT_STROKE_HOVER / 2.0) * scale - DONUT_CLEARANCE;
+    DONUT_VALUE_SIZES
+        .iter()
+        .copied()
+        .find(|size| {
+            let half_width = measure::medium_width(value, *size) / 2.0;
+            // O valor fica 1 px abaixo do centro.
+            let half_height = 1.0 + DONUT_VALUE_HALF_HEIGHT * size;
+            half_width.hypot(half_height) <= limit
+        })
+        .unwrap_or(DONUT_VALUE_SIZES[DONUT_VALUE_SIZES.len() - 1])
 }
 
 /// Angulos (inicio, fim) de cada fatia, em radianos, a partir das 12 h no sentido horario. A
@@ -142,14 +169,15 @@ impl canvas::Program<Message> for DonutProgram<'_> {
                 donut_center_lines(self.slices, self.total_minor, self.hover);
             let muted = t.text_alpha(0.55);
             frame.fill_text(label(
-                clip_chars(&top, 20),
+                clip_chars(&top, DONUT_NAME_CHARS),
                 Point::new(center.x, center.y - 19.0),
                 11.0,
                 muted,
             ));
+            let size = donut_value_size(&middle, s);
             frame.fill_text(Text {
                 font: fonts::INTER_MEDIUM,
-                ..label(middle, Point::new(center.x, center.y + 1.0), 17.0, t.text)
+                ..label(middle, Point::new(center.x, center.y + 1.0), size, t.text)
             });
             frame.fill_text(label(
                 bottom,
@@ -951,6 +979,22 @@ mod tests {
         let tiny = donut_angles(&[0.999, 0.001]);
         assert!(tiny[1].1 >= tiny[1].0);
         assert!(donut_angles(&[]).is_empty());
+    }
+
+    #[test]
+    fn valor_do_miolo_desce_ate_caber_com_folga() {
+        // Rosca de 184 px, como no Dashboard.
+        let scale = 1.84;
+        assert_eq!(donut_value_size("R$ 1.234,56", scale), 17.0);
+        assert_eq!(donut_value_size("R$ 390.071,31", scale), 14.0);
+        assert_eq!(donut_value_size("R$ 9.999.999,99", scale), 12.0);
+        let limit = (DONUT_RADIUS - DONUT_STROKE_HOVER / 2.0) * scale - DONUT_CLEARANCE;
+        for value in ["R$ 0,00", "R$ 390.071,31", "R$ 9.999.999,99"] {
+            let size = donut_value_size(value, scale);
+            let corner = (measure::medium_width(value, size) / 2.0)
+                .hypot(1.0 + DONUT_VALUE_HALF_HEIGHT * size);
+            assert!(corner <= limit, "{value} a {size}: {corner} > {limit}");
+        }
     }
 
     #[test]

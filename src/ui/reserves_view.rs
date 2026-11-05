@@ -255,43 +255,73 @@ fn total_card(app: &App) -> Element<'_, Message> {
     )
 }
 
+/// O que o KPI "Emergência coberta" mostra no lugar do numero.
+#[derive(Debug, PartialEq, Eq)]
+enum CoverageFigure<'a> {
+    /// "3,5" de "6 meses".
+    Months { value: &'a str, multiple: u8 },
+    /// Sem numero honesto para mostrar: um "—" grande parecia dado faltando, e "0 de 6 meses"
+    /// seria mentira com saldo guardado. A linha de baixo explica o motivo.
+    Missing(&'static str),
+}
+
+fn coverage_figure(emergency: Option<&EmergencyView>) -> CoverageFigure<'_> {
+    match emergency {
+        None => CoverageFigure::Missing("Sem reserva"),
+        // Sem custo essencial a cobertura nao existe (nao e zero).
+        Some(e) if e.coverage.is_none() => CoverageFigure::Missing("Sem meta"),
+        Some(e) => CoverageFigure::Months {
+            value: e.coverage_label.as_str(),
+            multiple: e.multiple,
+        },
+    }
+}
+
 fn coverage_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.reserves;
     let empty_segments = vec![0.0; usize::from(DEFAULT_MULTIPLE)];
-    let (coverage, multiple, remaining, segments) = match &v.emergency {
-        Some(e) => (
-            e.coverage_label.as_str(),
-            e.multiple,
-            e.remaining_label.as_str(),
-            e.segments.as_slice(),
-        ),
+    let (remaining, segments) = match &v.emergency {
+        Some(e) => (e.remaining_label.as_str(), e.segments.as_slice()),
         None => (
-            "—",
-            DEFAULT_MULTIPLE,
             "Nenhuma reserva de emergência no app",
             empty_segments.as_slice(),
         ),
     };
-    let value = row![
-        text(coverage.to_string())
-            .size(32)
-            .font(fonts::INTER_MEDIUM)
-            .line_height(1.0)
-            .color(t.text),
-        container(
-            text(format!("de {multiple} meses"))
-                .size(16)
+    let value: Element<'_, Message> = match coverage_figure(v.emergency.as_ref()) {
+        CoverageFigure::Months { value, multiple } => row![
+            text(value)
+                .size(32)
+                .font(fonts::INTER_MEDIUM)
                 .line_height(1.0)
-                .color(t.text_alpha(0.55))
+                .color(t.text),
+            container(
+                text(format!("de {multiple} meses"))
+                    .size(16)
+                    .line_height(1.0)
+                    .color(t.text_alpha(0.55))
+            )
+            .padding(Padding {
+                bottom: 2.0,
+                ..Padding::ZERO
+            }),
+        ]
+        .spacing(6)
+        .align_y(Alignment::End)
+        .into(),
+        // Um degrau abaixo do valor e na cor secundaria, na mesma altura de 32 para o card nao
+        // encolher: e um estado, nao um numero.
+        CoverageFigure::Missing(label) => container(
+            text(label)
+                .size(24)
+                .font(fonts::INTER_MEDIUM)
+                .line_height(1.0)
+                .color(t.text_alpha(0.55)),
         )
-        .padding(Padding {
-            bottom: 2.0,
-            ..Padding::ZERO
-        }),
-    ]
-    .spacing(6)
-    .align_y(Alignment::End);
+        .height(32)
+        .align_y(Alignment::End)
+        .into(),
+    };
     kpi_card(
         t,
         column![
@@ -1012,6 +1042,45 @@ mod tests {
     use super::super::app::tests::{app_with, app_with_reserves};
     use super::*;
     use crate::hub::snapshot::Snapshot;
+
+    fn emergency(coverage: Option<f64>, label: &str) -> EmergencyView {
+        EmergencyView {
+            id: "E".into(),
+            name: "Emergência".into(),
+            balance_minor: 1_880_000,
+            multiple: 6,
+            cost: None,
+            goal_minor: 0,
+            coverage,
+            coverage_label: label.into(),
+            pct_label: String::new(),
+            remaining_label: String::new(),
+            segments: vec![0.0; 6],
+            eta: crate::dashboard::reserves::EmergencyEta::NoGoal,
+            eta_label: String::new(),
+        }
+    }
+
+    #[test]
+    fn cobertura_sem_numero_vira_estado_e_nao_traco() {
+        assert_eq!(
+            coverage_figure(None),
+            CoverageFigure::Missing("Sem reserva")
+        );
+        let no_cost = emergency(None, "—");
+        assert_eq!(
+            coverage_figure(Some(&no_cost)),
+            CoverageFigure::Missing("Sem meta")
+        );
+        let covered = emergency(Some(3.5), "3,5");
+        assert_eq!(
+            coverage_figure(Some(&covered)),
+            CoverageFigure::Months {
+                value: "3,5",
+                multiple: 6
+            }
+        );
+    }
 
     #[test]
     fn meta_ao_lado_do_saldo_so_quando_existe() {

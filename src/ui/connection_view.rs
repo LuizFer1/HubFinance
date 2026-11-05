@@ -460,6 +460,20 @@ pub(super) fn about_lines(snap: &Snapshot) -> AboutLines {
     }
 }
 
+/// Caminho com um espaco de largura zero depois de cada separador: o iced so quebra linha em
+/// oportunidade de quebra do Unicode, e `\` nao e uma (com `Word` a quebra cairia no meio de
+/// um nome, com `Glyph` em qualquer letra). Assim ela cai entre pastas. So para exibir.
+fn breakable_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len() + 16);
+    for c in path.chars() {
+        out.push(c);
+        if c == '\\' || c == '/' {
+            out.push('\u{200B}');
+        }
+    }
+    out
+}
+
 fn about_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let lines = about_lines(&app.snapshot);
@@ -477,20 +491,26 @@ fn about_card(app: &App) -> Element<'_, Message> {
     .spacing(10)
     .height(32)
     .align_y(Alignment::Center);
-    // Quebra por glifo em vez de cortar: um caminho e uma palavra so, e a pessoa precisa le-lo
-    // inteiro para achar a pasta (o iced 0.14 nao tem reticencias).
-    let path_row = |label: &'static str, path: String, target: CopyTarget| {
-        row![
-            text(label).size(12).color(t.text_alpha(0.55)),
-            text(path)
+    // Rotulo e "Copiar" numa linha, o caminho inteiro embaixo na largura do card: a pessoa
+    // precisa le-lo todo para achar a pasta (o iced 0.14 nao tem reticencias). "Copiar" copia o
+    // caminho do snapshot, nao o texto exibido com as quebras.
+    let path_row = |label: &'static str, path: &str, target: CopyTarget| {
+        column![
+            row![
+                text(label)
+                    .size(12)
+                    .color(t.text_alpha(0.55))
+                    .width(Length::Fill),
+                copy_button(app, target, true),
+            ]
+            .align_y(Alignment::Center),
+            text(breakable_path(path))
                 .size(12)
-                .color(t.text)
-                .wrapping(Wrapping::Glyph)
+                .line_height(1.45)
+                .color(t.text_alpha(0.75))
+                .wrapping(Wrapping::WordOrGlyph)
                 .width(Length::Fill),
-            copy_button(app, target, true),
         ]
-        .spacing(8)
-        .align_y(Alignment::Center)
     };
     let autostart: Option<Element<'_, Message>> = app.autostart.map(|enabled| {
         let switch = container(widgets::seg_switch(
@@ -537,8 +557,8 @@ fn about_card(app: &App) -> Element<'_, Message> {
         widgets::card_title(t, "Sobre o hub", None),
         Space::new().height(4),
         version,
-        path_row("Dados em ", lines.data_dir, CopyTarget::DataDir),
-        path_row("Logs em ", lines.logs_dir, CopyTarget::LogsDir),
+        path_row("Dados em", &lines.data_dir, CopyTarget::DataDir),
+        path_row("Logs em", &lines.logs_dir, CopyTarget::LogsDir),
     ]
     .spacing(10);
     // `Column` do iced 0.14 nao tem `push_maybe`.
@@ -934,6 +954,18 @@ mod tests {
         }
         // Com espaco, fica no tamanho do design.
         assert_eq!(field_value_size(url, 600.0), 15.0);
+    }
+
+    #[test]
+    fn caminho_quebra_so_depois_do_separador() {
+        assert_eq!(
+            breakable_path(r"C:\Users\ana"),
+            "C:\\\u{200B}Users\\\u{200B}ana"
+        );
+        assert_eq!(breakable_path("/home/ana"), "/\u{200B}home/\u{200B}ana");
+        // Tirando o espaco de largura zero volta o caminho exato.
+        let path = r"C:\x\HubFinance\data\logs";
+        assert_eq!(breakable_path(path).replace('\u{200B}', ""), path);
     }
 
     #[test]

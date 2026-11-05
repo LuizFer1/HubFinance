@@ -342,11 +342,15 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
 fn year_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.reserves;
+    let muted = t.text_alpha(0.55);
     let line = |glyph: &'static str,
                 icon_color: Color,
+                color: Color,
                 label: &'static str,
-                value: String,
-                value_color: Color| {
+                sign: &str,
+                minor: i64| {
+        let (value, value_color) = flow_value(sign, minor, color, muted);
+        let icon_color = if minor == 0 { muted } else { icon_color };
         row![
             row![
                 icons::icon(glyph, 13.0, icon_color),
@@ -365,34 +369,49 @@ fn year_card(app: &App) -> Element<'_, Message> {
         .spacing(12)
         .align_y(Alignment::Center)
     };
-    kpi_card(
-        t,
-        column![
-            widgets::kicker(t, "Últimos 12 meses"),
-            container(line(
-                icons::ARROW_DOWN,
-                t.accent_300,
-                "Guardado",
-                format!("+{}", format_brl(v.totals.deposits_minor)),
-                t.text,
-            ))
-            .padding(Padding {
-                top: 4.0,
-                ..Padding::ZERO
-            }),
-            line(
-                icons::ARROW_UP,
-                t.expense_fg,
-                "Retirado",
-                format!("\u{2212}{}", format_brl(v.totals.withdrawals_minor)),
-                t.expense_fg,
-            ),
+    let mut col = column![
+        widgets::kicker(t, "Últimos 12 meses"),
+        container(line(
+            icons::ARROW_DOWN,
+            t.accent_300,
+            t.text,
+            "Guardado",
+            "+",
+            v.totals.deposits_minor,
+        ))
+        .padding(Padding {
+            top: 4.0,
+            ..Padding::ZERO
+        }),
+        line(
+            icons::ARROW_UP,
+            t.expense_fg,
+            t.expense_fg,
+            "Retirado",
+            "\u{2212}",
+            v.totals.withdrawals_minor,
+        ),
+    ]
+    .spacing(6);
+    // "Nenhuma retirada" repetiria a linha de cima, que ja mostra R$ 0,00 em cinza.
+    if v.totals.withdrawal_count > 0 {
+        col = col.push(
             text(v.withdrawals_note.clone())
                 .size(12)
                 .color(t.text_alpha(0.60)),
-        ]
-        .spacing(6),
-    )
+        );
+    }
+    kpi_card(t, col)
+}
+
+/// Valor e cor de uma linha do card "Últimos 12 meses". Zero sai sem sinal e na cor
+/// secundaria: "−R$ 0,00" no vermelho de despesa apontava uma retirada que nao houve.
+fn flow_value(sign: &str, minor: i64, color: Color, muted: Color) -> (String, Color) {
+    if minor == 0 {
+        (format_brl(0), muted)
+    } else {
+        (format!("{sign}{}", format_brl(minor)), color)
+    }
 }
 
 // ---- linha 2: emergencia e caixinhas ----
@@ -1079,6 +1098,24 @@ mod tests {
                 value: "3,5",
                 multiple: 6
             }
+        );
+    }
+
+    #[test]
+    fn zero_sem_sinal_e_na_cor_secundaria() {
+        let t = &theme::DARK;
+        let muted = t.text_alpha(0.55);
+        assert_eq!(
+            flow_value("\u{2212}", 0, t.expense_fg, muted),
+            ("R$ 0,00".to_string(), muted)
+        );
+        assert_eq!(
+            flow_value("\u{2212}", 12_345, t.expense_fg, muted),
+            ("\u{2212}R$ 123,45".to_string(), t.expense_fg)
+        );
+        assert_eq!(
+            flow_value("+", 920_000, t.text, muted),
+            ("+R$ 9.200,00".to_string(), t.text)
         );
     }
 

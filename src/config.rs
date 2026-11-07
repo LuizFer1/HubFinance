@@ -81,6 +81,12 @@ pub enum ThemeMode {
 pub struct UiPrefs {
     #[serde(default)]
     pub theme: ThemeMode,
+    /// "Iniciar com o Windows": `None` = nunca decidiu (e o que liga por padrao, uma vez);
+    /// `Some(false)` = a pessoa desligou de proposito e o boot nao religa. O estado real da
+    /// opcao e o registro; isto e so a memoria da decisao. Ausente nao vai para o arquivo,
+    /// para o `ui.json` da 1.0.0 continuar identico ate alguem mexer na opcao.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autostart: Option<bool>,
 }
 
 const UI_PREFS_FILE: &str = "ui.json";
@@ -134,6 +140,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let light = UiPrefs {
             theme: ThemeMode::Light,
+            ..UiPrefs::default()
         };
         light.save(dir.path()).unwrap();
         UiPrefs::default().save(dir.path()).unwrap();
@@ -155,6 +162,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let prefs = UiPrefs {
             theme: ThemeMode::Light,
+            ..UiPrefs::default()
         };
         prefs.save(dir.path()).unwrap();
         assert_eq!(UiPrefs::load(dir.path()), prefs);
@@ -169,6 +177,31 @@ mod tests {
         assert_eq!(UiPrefs::load(dir.path()), UiPrefs::default());
         std::fs::write(dir.path().join("ui.json"), r#"{"theme":"sepia"}"#).unwrap();
         assert_eq!(UiPrefs::load(dir.path()), UiPrefs::default());
+    }
+
+    #[test]
+    fn autostart_ausente_e_none_e_none_nao_vai_para_o_arquivo() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ui.json"), r#"{"theme":"light"}"#).unwrap();
+        let prefs = UiPrefs::load(dir.path());
+        assert_eq!(prefs.theme, ThemeMode::Light);
+        assert_eq!(prefs.autostart, None);
+        prefs.save(dir.path()).unwrap();
+        let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
+        assert!(!raw.contains("autostart"), "{raw}");
+    }
+
+    #[test]
+    fn autostart_desligado_de_proposito_sobrevive() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefs = UiPrefs {
+            autostart: Some(false),
+            ..UiPrefs::default()
+        };
+        prefs.save(dir.path()).unwrap();
+        assert_eq!(UiPrefs::load(dir.path()), prefs);
+        let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
+        assert!(raw.contains("\"autostart\": false"), "{raw}");
     }
 
     #[test]

@@ -6,6 +6,42 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+Nenhuma mudança no protocolo `/v1` nem no banco. Só no Windows; Linux e macOS continuam como na 1.0.0.
+
+### Adicionado
+
+- **Ícone ao lado do relógio** (Windows). Fechar a janela agora só fecha a janela: o hub
+  continua ligado e sincronizando. Clique no ícone abre a janela de volta; o botão direito tem
+  "Abrir o HubFinance" e "Desligar o hub" — que é o único jeito de encerrar o programa. O tooltip
+  mostra o estado ("ligado · 2 aparelhos", "sem rede", "com erro").
+- **Iniciar com o Windows**, no card "Sobre o hub" da tela Conexão. Ligado por padrão na
+  primeira abertura desta versão; grava um valor por usuário em
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (sem administrador) e o regrava a cada
+  abertura, para seguir o programa depois de uma atualização. Aberto pelo Windows, o hub sobe só
+  com o ícone, sem janela; se a opção estiver desligada e ainda assim for aberto assim (valor
+  esquecido por uma desinstalação), sai na hora.
+- **Uma instância só.** Abrir o HubFinance com ele já aberto traz a janela em vez de abrir um
+  segundo programa.
+- Se o hub falhar ao subir sem janela (porta ocupada, por exemplo), a janela abre sozinha com o
+  erro.
+
+### Alterado
+
+- O `ui.json` pode ter `"autostart": false` quando a pessoa desliga a opção; arquivos antigos
+  continuam válidos.
+- Atualizar: "feche o hub antes de instalar" agora é "Desligar o hub" no ícone ao lado do relógio.
+
+### Corrigido
+
+- Trocar o tema duas vezes seguidas (ou o tema logo depois de outra preferência) podia deixar no
+  `ui.json` a escolha anterior: as gravações agora respeitam a ordem dos cliques.
+
+### Conhecido
+
+- Desinstalar não remove o valor `Run`; no próximo login o Windows ignora o programa ausente.
+- Desabilitar a entrada em "Aplicativos de inicialização" do Gerenciador de Tarefas não muda a
+  opção no card (o Windows só a marca como desabilitada).
+
 ## [1.0.0] - 2026-10-21
 
 Nenhuma mudança no protocolo `/v1`. O banco sobe para o schema v3 na primeira abertura (a migração preserva aparelhos e linhas).

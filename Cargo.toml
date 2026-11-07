@@ -1,6 +1,6 @@
 [package]
 name = "hub_finance"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 description = "Hub de sync opcional do HomeFinance, so na rede local"
 license = "MIT"

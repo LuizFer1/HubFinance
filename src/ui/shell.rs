@@ -247,8 +247,8 @@ fn sidebar(app: &App) -> Element<'_, Message> {
     });
 
     let group = container(
-        text("HUB")
-            .size(11)
+        text("Hub")
+            .size(12)
             .font(fonts::INTER_MEDIUM)
             .color(t.text_alpha(0.45)),
     )
@@ -398,13 +398,13 @@ pub(super) fn status_lines(app: &App) -> StatusLines {
             dot: t.amber,
             title: "Hub ligado · sem dados".into(),
             address: address(app),
-            detail: Some("Aguardando o primeiro sync de um celular pareado.".into()),
+            detail: Some("Aguardando o primeiro sync de um celular pareado".into()),
         },
         Status::NoNetwork => StatusLines {
             dot: t.amber,
             title: "Sem rede local".into(),
             address: Some(format!("porta {} aberta", snap.https_port)),
-            detail: Some("Conecte o computador ao Wi-Fi de casa.".into()),
+            detail: Some("Conecte o computador ao Wi-Fi de casa".into()),
         },
         Status::Starting => StatusLines {
             dot: t.neutral_600,
@@ -616,11 +616,7 @@ pub(super) fn titles(app: &App) -> (&'static str, String) {
             if empty {
                 "Nada sincronizado ainda".into()
             } else {
-                format!(
-                    "{} sincronizados de {}",
-                    plural(transactions_count(app), "lançamento", "lançamentos"),
-                    plural(app.transactions.synced_devices, "aparelho", "aparelhos"),
-                )
+                synced_line(transactions_count(app), app.transactions.synced_devices)
             },
         ),
         Screen::Reserves => (
@@ -639,6 +635,26 @@ pub(super) fn titles(app: &App) -> (&'static str, String) {
 }
 
 /// "1 lançamento" / "1.234 lançamentos" (milhar com ponto, como o pt-BR do app).
+/// "4.688 lançamentos sincronizados de 2 aparelhos". Sem aparelho conhecido (todos removidos,
+/// ou linhas sem origem), sem o "de 0 aparelhos", que dizia que nada tinha vindo de lugar
+/// nenhum. O particípio concorda com o numero: "1 lançamento sincronizado".
+fn synced_line(rows: usize, devices: usize) -> String {
+    let rows = format!(
+        "{} {}",
+        plural(rows, "lançamento", "lançamentos"),
+        if rows == 1 {
+            "sincronizado"
+        } else {
+            "sincronizados"
+        }
+    );
+    if devices == 0 {
+        rows
+    } else {
+        format!("{rows} de {}", plural(devices, "aparelho", "aparelhos"))
+    }
+}
+
 pub(super) fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{} {}", thousands(n), if n == 1 { one } else { many })
 }
@@ -776,6 +792,21 @@ mod tests {
         assert_eq!(titles(&app).1, "13 lançamentos sincronizados de 1 aparelho");
         app.screen = Screen::Dashboard;
         assert_eq!(titles(&app).1, "Somente leitura · dados do último sync");
+    }
+
+    #[test]
+    fn linha_de_sincronizados_concorda_e_omite_zero_aparelho() {
+        assert_eq!(synced_line(4688, 0), "4.688 lançamentos sincronizados");
+        assert_eq!(
+            synced_line(4688, 1),
+            "4.688 lançamentos sincronizados de 1 aparelho"
+        );
+        assert_eq!(
+            synced_line(4688, 3),
+            "4.688 lançamentos sincronizados de 3 aparelhos"
+        );
+        assert_eq!(synced_line(1, 1), "1 lançamento sincronizado de 1 aparelho");
+        assert_eq!(synced_line(1, 0), "1 lançamento sincronizado");
     }
 
     #[test]

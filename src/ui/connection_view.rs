@@ -10,13 +10,13 @@ use std::time::{Duration, SystemTime};
 
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Space, button, column, container, mouse_area, qr_code, rich_text, row, span, stack, text,
+    Space, button, column, container, mouse_area, qr_code, rich_text, row, span, text,
 };
 use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
 use super::app::{App, CopyTarget, Message};
 use super::theme::{self, Tokens};
-use super::{fonts, icons, shell, time, widgets};
+use super::{fonts, icons, measure, shell, time, widgets};
 use crate::config;
 use crate::dashboard::people::{Person, presence};
 use crate::dashboard::periods::paired_label;
@@ -27,8 +27,13 @@ const GRID_MIN: f32 = 420.0;
 const GAP: f32 = 14.0;
 /// QR 168 + zona de silencio 14 de cada lado + contorno de 1 px.
 const QR_FRAME: f32 = 198.0;
-/// Coluna do endereco: minimo de 280 antes de ir para baixo do QR.
+/// Coluna dos passos: minimo de 280 antes de ir para baixo do QR.
 const INFO_MIN: f32 = 280.0;
+/// Moldura do campo em volta do valor: padding 14 + icone 15 + dois espacos de 10 + o botao
+/// na largura de "Copiado" (10 + 12 + 6 + 48 + 10) + padding 6.
+const FIELD_CHROME: f32 = 141.0;
+/// Tamanhos do valor do campo, do design (15) para baixo.
+const FIELD_SIZES: [f32; 3] = [15.0, 14.0, 13.0];
 
 /// `https://<ip>:<porta>`: o que se digita no app. Sem rede, nada.
 pub fn hub_url(snap: &Snapshot) -> Option<String> {
@@ -55,11 +60,7 @@ fn is_up(snap: &Snapshot) -> bool {
 pub fn view(app: &App) -> Element<'_, Message> {
     let width = shell::content_width(app);
     let two_columns = width >= 2.0 * GRID_MIN + GAP;
-    let card_width = if two_columns {
-        (width - GAP) / 2.0
-    } else {
-        width
-    };
+    let card_width = grid_card_width(width);
     // A spec pede "Sobre o hub" como terceiro card do grid (auto-fit, minimo 420). Fica sempre
     // em duas colunas, embaixo do endereco: o card de usuarios cresce com a lista e uma terceira
     // coluna o deixaria estreito demais para os nomes.
@@ -88,22 +89,41 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .into()
 }
 
+/// Largura de cada card da grade: metade (menos o vao) em duas colunas, inteira em uma.
+fn grid_card_width(width: f32) -> f32 {
+    if width >= 2.0 * GRID_MIN + GAP {
+        (width - GAP) / 2.0
+    } else {
+        width
+    }
+}
+
+/// Tamanho do valor de um campo de `field_width` px: o maior que mostra o valor inteiro. O
+/// iced 0.14 nao tem reticencias e um endereco cortado nao serve para digitar no app.
+fn field_value_size(value: &str, field_width: f32) -> f32 {
+    measure::fitting_size(value, field_width - FIELD_CHROME, &FIELD_SIZES)
+}
+
 // ---- card do endereco ----
 
+/// O campo do endereco fica em cima, na largura toda do card, e nao na coluna ao lado do QR
+/// como no handoff: ali sobravam ~150 px para o valor a 1440 px de janela, e
+/// "https://192.168.100.200:7777" pede 223 a 15 px. QR e passos continuam lado a lado embaixo.
 fn address_card(app: &App, card_width: f32) -> Element<'_, Message> {
     let t = app.tokens;
     let inner = card_width - 48.0;
     let side_by_side = inner >= QR_FRAME + 24.0 + INFO_MIN;
     let body: Element<'_, Message> = if side_by_side {
-        row![pairing_block(app), address_info(app)]
+        row![pairing_block(app), address_steps(app)]
             .spacing(24)
             .align_y(Alignment::Start)
             .into()
     } else {
-        column![pairing_block(app), address_info(app)]
+        column![pairing_block(app), address_steps(app)]
             .spacing(24)
             .into()
     };
+    let body = column![address_head(app, inner), Space::new().height(20), body];
     container(body)
         .padding(24)
         .width(Length::Fill)
@@ -235,9 +255,14 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
     col.into()
 }
 
-fn address_info(app: &App) -> Element<'_, Message> {
+/// Rotulo, campo do endereco e os outros enderecos, na largura `inner` do card.
+fn address_head(app: &App, inner: f32) -> Element<'_, Message> {
     let t = app.tokens;
     let snap = &app.snapshot;
+    let url = hub_url(snap);
+    let size = url
+        .as_deref()
+        .map_or(FIELD_SIZES[0], |u| field_value_size(u, inner));
     let mut col = column![
         widgets::kicker_accent(t, "Endereço do hub"),
         Space::new().height(10),
@@ -245,8 +270,9 @@ fn address_info(app: &App) -> Element<'_, Message> {
             app,
             icons::LOCK_SIMPLE,
             t.income_fg,
-            hub_url(snap),
-            CopyTarget::Address
+            url,
+            CopyTarget::Address,
+            size
         ),
     ];
     if snap.addresses.len() > 1 {
@@ -266,6 +292,12 @@ fn address_info(app: &App) -> Element<'_, Message> {
             }),
         );
     }
+    col.width(Length::Fill).into()
+}
+
+/// Passos do pareamento e o rodape, ao lado do QR (ou embaixo, sem espaco).
+fn address_steps(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
     let cert_step = rich_text::<(), _, _, _>([
         span("Instale o certificado do hub no celular (uma vez). "),
         span("Ver como ↓").color(t.accent_300),
@@ -304,26 +336,24 @@ fn address_info(app: &App) -> Element<'_, Message> {
     ]
     .spacing(8)
     .align_y(Alignment::Center);
-    col.push(Space::new().height(18))
-        .push(steps)
-        .push(Space::new().height(16))
-        .push(footer)
+    column![steps, Space::new().height(16), footer]
         .width(Length::Fill)
         .into()
 }
 
-/// Campo de 44 px com icone, valor (cortado se nao couber) e "Copiar".
+/// Campo de 44 px com icone, valor em `size` (cortado se ainda assim nao couber) e "Copiar".
 fn field<'a>(
     app: &'a App,
     glyph: &'static str,
     glyph_color: iced::Color,
     value: Option<String>,
     target: CopyTarget,
+    size: f32,
 ) -> Element<'a, Message> {
     let t = app.tokens;
     let enabled = value.is_some();
     let shown = match value {
-        Some(v) => text(v).size(15).font(fonts::INTER_MEDIUM).color(t.text),
+        Some(v) => text(v).size(size).font(fonts::INTER_MEDIUM).color(t.text),
         None => text("sem endereço de rede")
             .size(15)
             .color(t.text_alpha(0.55)),
@@ -430,6 +460,20 @@ pub(super) fn about_lines(snap: &Snapshot) -> AboutLines {
     }
 }
 
+/// Caminho com um espaco de largura zero depois de cada separador: o iced so quebra linha em
+/// oportunidade de quebra do Unicode, e `\` nao e uma (com `Word` a quebra cairia no meio de
+/// um nome, com `Glyph` em qualquer letra). Assim ela cai entre pastas. So para exibir.
+fn breakable_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len() + 16);
+    for c in path.chars() {
+        out.push(c);
+        if c == '\\' || c == '/' {
+            out.push('\u{200B}');
+        }
+    }
+    out
+}
+
 fn about_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let lines = about_lines(&app.snapshot);
@@ -447,20 +491,26 @@ fn about_card(app: &App) -> Element<'_, Message> {
     .spacing(10)
     .height(32)
     .align_y(Alignment::Center);
-    // Quebra por glifo em vez de cortar: um caminho e uma palavra so, e a pessoa precisa le-lo
-    // inteiro para achar a pasta (o iced 0.14 nao tem reticencias).
-    let path_row = |label: &'static str, path: String, target: CopyTarget| {
-        row![
-            text(label).size(12).color(t.text_alpha(0.55)),
-            text(path)
+    // Rotulo e "Copiar" numa linha, o caminho inteiro embaixo na largura do card: a pessoa
+    // precisa le-lo todo para achar a pasta (o iced 0.14 nao tem reticencias). "Copiar" copia o
+    // caminho do snapshot, nao o texto exibido com as quebras.
+    let path_row = |label: &'static str, path: &str, target: CopyTarget| {
+        column![
+            row![
+                text(label)
+                    .size(12)
+                    .color(t.text_alpha(0.55))
+                    .width(Length::Fill),
+                copy_button(app, target, true),
+            ]
+            .align_y(Alignment::Center),
+            text(breakable_path(path))
                 .size(12)
-                .color(t.text)
-                .wrapping(Wrapping::Glyph)
+                .line_height(1.45)
+                .color(t.text_alpha(0.75))
+                .wrapping(Wrapping::WordOrGlyph)
                 .width(Length::Fill),
-            copy_button(app, target, true),
         ]
-        .spacing(8)
-        .align_y(Alignment::Center)
     };
     let autostart: Option<Element<'_, Message>> = app.autostart.map(|enabled| {
         let switch = container(widgets::seg_switch(
@@ -497,7 +547,7 @@ fn about_card(app: &App) -> Element<'_, Message> {
     });
     let footer = row![
         icons::icon(icons::HOUSE_SIMPLE, 12.0, t.text_alpha(0.55)),
-        text("Este programa nunca consulta a internet.")
+        text("Este programa nunca consulta a internet")
             .size(12)
             .color(t.text_alpha(0.55)),
     ]
@@ -507,8 +557,8 @@ fn about_card(app: &App) -> Element<'_, Message> {
         widgets::card_title(t, "Sobre o hub", None),
         Space::new().height(4),
         version,
-        path_row("Dados em ", lines.data_dir, CopyTarget::DataDir),
-        path_row("Logs em ", lines.logs_dir, CopyTarget::LogsDir),
+        path_row("Dados em", &lines.data_dir, CopyTarget::DataDir),
+        path_row("Logs em", &lines.logs_dir, CopyTarget::LogsDir),
     ]
     .spacing(10);
     // `Column` do iced 0.14 nao tem `push_maybe`.
@@ -660,31 +710,20 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
 }
 
 fn empty_users<'a>(t: &'static Tokens) -> Element<'a, Message> {
-    // Borda solida: o iced nao traceja borda de container (desvio aceito na spec).
-    let circle = move |alpha: f32| {
-        container(Space::new())
-            .width(36)
-            .height(36)
-            .style(move |_: &Theme| container::Style {
-                border: Border {
-                    color: theme::alpha(t.neutral_700, alpha),
-                    width: 1.5,
-                    radius: 18.0.into(),
-                },
-                ..container::Style::default()
-            })
-    };
-    let circles = stack![
-        circle(1.0),
-        container(circle(0.6)).padding(Padding {
-            left: 26.0,
-            ..Padding::ZERO
-        }),
-    ]
-    .width(62)
-    .height(36);
+    // O handoff desenha dois circulos tracejados sobrepostos (dois aparelhos); com borda solida,
+    // que e o que o iced faz, eles viravam um interruptor. O celular num circulo diz o mesmo.
+    let device = container(icons::icon(icons::DEVICE_MOBILE, 20.0, t.neutral_700))
+        .center(44)
+        .style(move |_: &Theme| container::Style {
+            border: Border {
+                color: t.neutral_700,
+                width: 1.5,
+                radius: 22.0.into(),
+            },
+            ..container::Style::default()
+        });
     let body = column![
-        circles,
+        device,
         Space::new().height(6),
         text("Nenhum usuário conectado")
             .size(15)
@@ -693,7 +732,7 @@ fn empty_users<'a>(t: &'static Tokens) -> Element<'a, Message> {
         container(
             text(
                 "Quando um celular abrir o endereço ao lado, a pessoa aparece aqui com o nome e \
-                 a cor que escolheu no app."
+                 a cor que escolheu no app"
             )
             .size(13)
             .line_height(1.5)
@@ -796,7 +835,8 @@ fn certificate_card(app: &App, width: f32) -> Element<'_, Message> {
                 icons::CERTIFICATE,
                 t.accent_300,
                 ca_url(snap),
-                CopyTarget::CaLink
+                CopyTarget::CaLink,
+                FIELD_SIZES[0]
             ),
             Space::new().height(20),
             guides,
@@ -820,8 +860,7 @@ fn activity_card(app: &App) -> Element<'_, Message> {
         Space::new().height(8),
     ];
     if snap.activity.is_empty() {
-        col =
-            col.push(container(text("Nada ainda.").size(13).color(t.text_alpha(0.55))).height(28));
+        col = col.push(container(text("Nada ainda").size(13).color(t.text_alpha(0.55))).height(28));
     }
     for entry in snap.activity.iter().take(20) {
         let at = time::format_time(::time::OffsetDateTime::from(entry.at), app.offset);
@@ -886,6 +925,35 @@ mod tests {
             ca_url(&snap).as_deref(),
             Some("http://192.168.0.12:7778/ca.crt")
         );
+    }
+
+    #[test]
+    fn endereco_mais_longo_cabe_inteiro_de_1024_a_2560() {
+        let url = "https://192.168.100.200:7777";
+        for window in 1024..=2560 {
+            // Mesma conta de `shell::content_width` e do padding do card.
+            let content = window as f32 - 232.0 - 1.0 - 64.0;
+            let inner = grid_card_width(content) - 48.0;
+            let size = field_value_size(url, inner);
+            assert!(
+                measure::medium_width(url, size) <= inner - FIELD_CHROME,
+                "janela {window}: {size} px nao cabe em {inner}"
+            );
+        }
+        // Com espaco, fica no tamanho do design.
+        assert_eq!(field_value_size(url, 600.0), 15.0);
+    }
+
+    #[test]
+    fn caminho_quebra_so_depois_do_separador() {
+        assert_eq!(
+            breakable_path(r"C:\Users\ana"),
+            "C:\\\u{200B}Users\\\u{200B}ana"
+        );
+        assert_eq!(breakable_path("/home/ana"), "/\u{200B}home/\u{200B}ana");
+        // Tirando o espaco de largura zero volta o caminho exato.
+        let path = r"C:\x\HubFinance\data\logs";
+        assert_eq!(breakable_path(path).replace('\u{200B}', ""), path);
     }
 
     #[test]

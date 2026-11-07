@@ -6,6 +6,58 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [1.1.0] - 2026-11-07
+
+Nenhuma mudança no protocolo `/v1` nem no banco. Ícone na bandeja, início com o Windows e
+instância única são só do Windows; o polimento das telas vale para os três sistemas.
+
+### Adicionado
+
+- **Ícone ao lado do relógio** (Windows). Fechar a janela agora só fecha a janela: o hub
+  continua ligado e sincronizando. Clique no ícone abre a janela de volta; o botão direito tem
+  "Abrir o HubFinance" e "Desligar o hub" — que é o único jeito de encerrar o programa. O tooltip
+  mostra o estado ("ligado · 2 aparelhos", "sem rede", "com erro").
+- **Iniciar com o Windows**, no card "Sobre o hub" da tela Conexão. Ligado por padrão na
+  primeira abertura desta versão; grava um valor por usuário em
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (sem administrador) e o regrava a cada
+  abertura, para seguir o programa depois de uma atualização. Aberto pelo Windows, o hub sobe só
+  com o ícone, sem janela; se a opção estiver desligada e ainda assim for aberto assim (valor
+  esquecido por uma desinstalação), sai na hora.
+- **Uma instância só.** Abrir o HubFinance com ele já aberto traz a janela em vez de abrir um
+  segundo programa.
+- Se o hub falhar ao subir sem janela (porta ocupada, por exemplo), a janela abre sozinha com o
+  erro.
+
+### Alterado
+
+- O `ui.json` pode ter `"autostart": false` quando a pessoa desliga a opção; arquivos antigos
+  continuam válidos.
+- Atualizar: "feche o hub antes de instalar" agora é "Desligar o hub" no ícone ao lado do relógio.
+- Rótulos em frase normal em vez de caixa alta ("Saldo do mês", "Endereço do hub"), também no
+  cabeçalho da tabela de lançamentos e na barra lateral.
+- Tela Conexão: o endereço do hub fica num campo da largura do card, acima do QR, e aparece
+  inteiro mesmo com a janela na largura mínima. As pastas em "Sobre o hub" quebram só entre
+  pastas, cada uma na sua linha. O vazio de "Usuários conectados" usa o ícone de celular.
+- Dashboard: o total no centro da rosca diminui a fonte quando precisa, para não encostar no
+  anel; o nome da categoria mostrado ao passar o mouse corta em 14 caracteres.
+- Reservas: sem meta, o card da emergência diz "Sem meta" uma vez só, e "Emergência coberta"
+  mostra "Sem meta" no lugar de um traço. Retirada zerada aparece como "R$ 0,00" em cinza, sem
+  sinal nem a nota repetida. Os cards de resumo ficam na mesma altura.
+- Legendas e frases curtas sem ponto final.
+
+### Corrigido
+
+- Trocar o tema duas vezes seguidas (ou o tema logo depois de outra preferência) podia deixar no
+  `ui.json` a escolha anterior: as gravações agora respeitam a ordem dos cliques.
+- O subtítulo dos lançamentos não diz mais "sincronizados de 0 aparelhos", e "1 lançamento"
+  fica no singular.
+
+### Conhecido
+
+- Desinstalar não remove o valor `Run`; no próximo login o Windows ignora o programa ausente.
+- Desabilitar a entrada em "Aplicativos de inicialização" do Gerenciador de Tarefas não muda a
+  opção no card (o Windows só a marca como desabilitada).
+
 ## [1.0.0] - 2026-10-21
 
 Nenhuma mudança no protocolo `/v1`. O banco sobe para o schema v3 na primeira abertura (a migração preserva aparelhos e linhas).
@@ -170,7 +222,8 @@ campo da 0.0.2 acontece.
 - Scripts `scripts/e2e.sh` (roteiro curl de pareamento e sync) e `scripts/seed-dashboard.sh`
   (carga de exemplo do dashboard).
 
-[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.0.0...HEAD
+[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/LuizFer1/HubFinance/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/LuizFer1/HubFinance/compare/v0.0.5...v1.0.0
 [0.0.5]: https://github.com/LuizFer1/HubFinance/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/LuizFer1/HubFinance/compare/v0.0.3...v0.0.4

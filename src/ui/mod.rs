@@ -6,6 +6,7 @@ mod connection_view;
 mod dashboard_view;
 mod fonts;
 mod icons;
+mod measure;
 mod remove_view;
 mod reserves_view;
 mod shell;
@@ -16,10 +17,12 @@ mod view;
 mod widgets;
 
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use iced::{Size, window};
 
 use crate::config::UiPrefs;
+use crate::desktop::{Desktop, EventReceiver};
 use crate::hub::HubHandle;
 
 pub fn run(
@@ -27,9 +30,23 @@ pub fn run(
     offset: ::time::UtcOffset,
     prefs: UiPrefs,
     prefs_dir: PathBuf,
+    desktop: Rc<dyn Desktop>,
+    events: EventReceiver,
+    open_window: bool,
 ) -> iced::Result {
-    iced::application(
-        app::boot(handle, offset, prefs, prefs_dir),
+    // `daemon`, nao `application`: o programa e o hub, e a janela e opcional. O daemon nao
+    // abre janela sozinho (o `boot` abre, se for o caso) nem termina quando a ultima fecha;
+    // so `iced::exit()` — o "Desligar o hub" — encerra o processo.
+    iced::daemon(
+        app::boot(
+            handle,
+            offset,
+            prefs,
+            prefs_dir,
+            desktop,
+            events,
+            open_window,
+        ),
         app::update,
         app::view,
     )
@@ -41,19 +58,24 @@ pub fn run(
     .font(fonts::PHOSPHOR_BYTES)
     .default_font(fonts::INTER)
     .antialiasing(true)
-    .theme(|app: &app::App| app.iced_theme.clone())
-    .window(window::Settings {
+    .theme(|app: &app::App, _window: window::Id| app.iced_theme.clone())
+    .run()
+}
+
+/// Usado por `window::open` toda vez que a janela e (re)aberta.
+pub(super) fn window_settings() -> window::Settings {
+    window::Settings {
         size: app::INITIAL_SIZE,
         min_size: Some(Size::new(1024.0, 720.0)),
         // Barra de titulo propria (shell.rs), como o design desenha.
         decorations: false,
-        // Fechar desliga o hub com ordem: o X da barra manda `CloseRequested`, que manda
-        // `Shutdown`, e a janela so some quando o nucleo responde `Stopped` (ou em 5 s).
+        // O X da barra manda `CloseRequested`; com bandeja a UI fecha so a janela, sem
+        // bandeja desliga o hub com ordem (`Shutdown` -> `Stopped` ou 5 s). O iced nunca
+        // fecha por conta propria.
         exit_on_close_request: false,
         icon: window_icon(),
         ..window::Settings::default()
-    })
-    .run()
+    }
 }
 
 /// Gerado por `scripts/gen-icon.py`, o mesmo desenho dos instaladores.
@@ -77,5 +99,11 @@ mod tests {
     #[test]
     fn icone_da_janela_decodifica() {
         assert!(window_icon().is_some());
+    }
+
+    #[test]
+    fn janela_nunca_fecha_sozinha() {
+        assert!(!window_settings().exit_on_close_request);
+        assert!(!window_settings().decorations);
     }
 }

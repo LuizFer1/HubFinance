@@ -10,20 +10,53 @@ use super::fonts;
 use super::icons;
 use super::theme::{self, Tokens};
 
-/// Rotulo em caixa alta (11 Medium a 55 %). O texto ja vem em maiusculas: o iced nao tem
-/// `text-transform` nem `letter-spacing`, entao o espacamento de 0,08 em fica de fora.
+/// Controle segmentado de duas opcoes (o "toggle" do hub): `(glifo opcional, rotulo, ativo,
+/// mensagem)` para cada lado.
+pub fn seg_switch<'a, M: Clone + 'a>(
+    t: &'static Tokens,
+    options: [(Option<&'static str>, &'static str, bool, M); 2],
+) -> Element<'a, M> {
+    let option =
+        |(glyph, label, active, message): (Option<&'static str>, &'static str, bool, M)| {
+            let mut content = row![].spacing(6).align_y(Alignment::Center);
+            if let Some(glyph) = glyph {
+                content = content.push(text(glyph).font(fonts::PHOSPHOR).size(12).line_height(1.0));
+            }
+            content = content.push(text(label).size(12).font(fonts::INTER_MEDIUM));
+            button(
+                container(content)
+                    .center_x(Length::Fill)
+                    .height(26)
+                    .align_y(Alignment::Center),
+            )
+            .padding(0)
+            .width(Length::Fill)
+            .style(theme::seg_option(t, active))
+            .on_press(message)
+        };
+    let [a, b] = options;
+    container(row![option(a), option(b)].width(Length::Fill))
+        .padding(3)
+        .width(Length::Fill)
+        .style(theme::outlined(t.divider(), 8.0))
+        .into()
+}
+
+/// Rotulo em frase normal ("Saldo do mês"), 12 Medium a 55 %. Desvio do handoff, que pede
+/// caixa alta com `letter-spacing`: sem o espacamento (o iced nao tem) a caixa alta ficava
+/// apertada e gritava mais que o valor embaixo. O texto vai como a tela passou.
 pub fn kicker<'a, M: 'a>(t: &'static Tokens, content: &str) -> Element<'a, M> {
-    text(content.to_uppercase())
-        .size(11)
+    text(content.to_string())
+        .size(12)
         .font(fonts::INTER_MEDIUM)
         .color(t.text_alpha(0.55))
         .into()
 }
 
-/// Rotulo em caixa alta no acento ("ENDEREÇO DO HUB", "CERTIFICADO DO HUB").
+/// Rotulo em frase normal no acento ("Endereço do hub", "Certificado do hub").
 pub fn kicker_accent<'a, M: 'a>(t: &'static Tokens, content: &str) -> Element<'a, M> {
-    text(content.to_uppercase())
-        .size(11)
+    text(content.to_string())
+        .size(12)
         .font(fonts::INTER_MEDIUM)
         .color(t.accent_300)
         .into()

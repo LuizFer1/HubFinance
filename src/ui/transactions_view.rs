@@ -374,17 +374,17 @@ fn table(app: &App) -> Element<'_, Message> {
     let v = &app.transactions;
     let head = |label: &'static str| -> Element<'_, Message> {
         text(label)
-            .size(11)
+            .size(12)
             .font(fonts::INTER_MEDIUM)
             .color(t.text_alpha(0.55))
             .into()
     };
     let header = container(columns([
-        head("DESCRIÇÃO"),
-        head("CATEGORIA"),
-        head("AUTOR"),
-        head("PAGAMENTO"),
-        head("VALOR"),
+        head("Descrição"),
+        head("Categoria"),
+        head("Autor"),
+        head("Pagamento"),
+        head("Valor"),
     ]))
     .height(40)
     .padding([0, 20])
@@ -524,7 +524,7 @@ fn empty_copy(v: &TransactionsView, filters: &Filters) -> (String, String, bool)
         (
             "Nenhum lançamento sincronizado".to_string(),
             "Quando um celular pareado sincronizar, o histórico aparece aqui — só leitura, \
-             direto da rede de casa."
+             direto da rede de casa"
                 .to_string(),
             false,
         )
@@ -532,7 +532,7 @@ fn empty_copy(v: &TransactionsView, filters: &Filters) -> (String, String, bool)
         (
             "Nada com esses filtros".to_string(),
             format!(
-                "Nenhum lançamento em {} combina com a categoria, o autor e o tipo escolhidos.",
+                "Nenhum lançamento em {} combina com a categoria, o autor e o tipo escolhidos",
                 month_long(&v.month)
             ),
             true,
@@ -540,7 +540,7 @@ fn empty_copy(v: &TransactionsView, filters: &Filters) -> (String, String, bool)
     } else {
         (
             format!("Nada em {}", month_long(&v.month)),
-            "Nenhum lançamento neste mês.".to_string(),
+            "Nenhum lançamento neste mês".to_string(),
             false,
         )
     }
@@ -604,7 +604,7 @@ mod tests {
             empty_copy(&may, &none),
             (
                 "Nada em maio".to_string(),
-                "Nenhum lançamento neste mês.".to_string(),
+                "Nenhum lançamento neste mês".to_string(),
                 false
             )
         );

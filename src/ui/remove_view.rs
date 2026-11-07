@@ -359,7 +359,7 @@ fn choose_body<'a>(app: &'a App, who: &Subject<'a>, selected: AreaSet) -> Elemen
         .spacing(8),
     )
     .push(
-        text("Categorias, formas de pagamento e o perfil não são apagados.")
+        text("Categorias, formas de pagamento e o perfil não são apagados")
             .size(12)
             .color(t.text_alpha(0.55)),
     )
@@ -435,9 +435,9 @@ pub(super) fn orphan_banner(app: &App) -> Option<Element<'_, Message>> {
         return None;
     }
     let message = if n == 1 {
-        "1 aparelho removido ainda tem dados no hub.".to_string()
+        "1 aparelho removido ainda tem dados no hub".to_string()
     } else {
-        format!("{n} aparelhos removidos ainda têm dados no hub.")
+        format!("{n} aparelhos removidos ainda têm dados no hub")
     };
     let later = button(text("Depois").size(13).font(fonts::INTER_MEDIUM))
         .padding([6, 12])

@@ -59,6 +59,27 @@ your system will warn you the first time.
 3. Start **HubFinance** from the Start menu.
 4. When the Windows firewall asks, allow access on **private networks**.
 
+### Running in the background (Windows)
+
+On Windows the hub lives in the notification area (the icons next to the clock; it may be
+behind the **^**):
+
+- **Closing the window does not stop the hub.** It keeps syncing with the phones; the icon
+  stays. Click the icon (or open HubFinance from the Start menu again) to bring the window back.
+- **To stop the hub**, right-click the icon → **Desligar o hub**.
+- Hovering the icon shows the state (*ligado · 2 aparelhos*, *sem rede*, *com erro*).
+- **Start with Windows** (*Iniciar com o Windows*, in the **Sobre o hub** card of the
+  **Conexão** screen) is **on by default**. It is a per-user value named `HubFinance` under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` that launches the hub with
+  `--autostart`: icon only, no window. The hub rewrites it every time it opens, so it follows
+  the program after an update. Turning the option off removes the value; if the hub is still
+  launched with `--autostart` (a stale value), it exits right away. Disabling the entry in Task
+  Manager's *Startup apps* does not change the option shown in the card.
+- **One instance only.** Opening HubFinance while it is already running brings up the window of
+  the running one instead of starting a second program.
+
+On Linux and macOS there is no tray icon yet: closing the window stops the hub, as before.
+
 ### Linux
 
 **.deb:**
@@ -152,7 +173,9 @@ It contains `hub.sqlite` (the synced rows and paired devices), `tls/` (the hub's
 certificate authority and server certificate, **including private keys**), `ui.json`
 (window preferences) and `logs/` (daily `hub.<date>.log` files, last 7 days; the path is shown
 in the **Sobre o hub** card. Logs never contain keys, hashes or synced rows). Uninstalling the
-app does not delete this directory.
+app does not delete this directory. On Windows it also leaves the *Start with Windows* value
+behind (harmless: Windows silently skips a missing program at login); remove it with
+`reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v HubFinance /f` if you like.
 
 Set `HUBFINANCE_DATA_DIR` to use a different directory.
 
@@ -174,7 +197,9 @@ over `.exe`, `.msi` over `.msi`, `.deb` over `.deb`, replace the AppImage file, 
 `.app`. **Do not mix formats** on one computer: that leaves two installs pointing at the same
 data directory.
 
-**Close the hub before installing** (on Windows the installer asks).
+**Quit the hub before installing**: on Windows, right-click the tray icon → **Desligar o
+hub** (closing the window is not enough; the installer also asks). On Linux and macOS, close the
+window.
 
 **Verify the download.** Every release has a `SHA256SUMS.txt` next to the installers:
 

@@ -1,6 +1,6 @@
 [package]
 name = "hub_finance"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 description = "Hub de sync opcional do HomeFinance, so na rede local"
 license = "MIT"
@@ -37,6 +37,21 @@ open = "5"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+
+# Bandeja, instancia unica e chave Run: so no Windows. A tray-icon no Linux exige GTK e
+# libayatana-appindicator em tempo de build (e no .deb/AppImage), e o release.yml compila os
+# tres sistemas; fora do Windows o hub continua sem bandeja (fechar a janela desliga).
+[target.'cfg(windows)'.dependencies]
+tray-icon = { version = "0.26", default-features = false }
+# Decodifica o PNG do icone da bandeja; ja esta na arvore pela feature `image` do iced.
+image = { version = "0.25", default-features = false, features = ["png"] }
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Registry",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 # Icone e metadados embutidos no .exe (Explorer, atalhos do instalador, barra de tarefas antes
 # da janela abrir). So existe no build hospedado no Windows.

@@ -374,11 +374,11 @@ pub enum EmergencyEta {
 
 pub fn eta_label(eta: &EmergencyEta, recurring: Option<i64>) -> String {
     match eta {
-        EmergencyEta::NoGoal => "Sem custo essencial para projetar a meta.".to_string(),
-        EmergencyEta::Reached => "Meta alcançada.".to_string(),
-        EmergencyEta::NoRecurring => "Sem depósito mensal programado.".to_string(),
+        EmergencyEta::NoGoal => "Sem custo essencial para projetar a meta".to_string(),
+        EmergencyEta::Reached => "Meta alcançada".to_string(),
+        EmergencyEta::NoRecurring => "Sem depósito mensal programado".to_string(),
         EmergencyEta::Projected { month } => format!(
-            "Guardando {} por mês, a meta fecha em {}.",
+            "Guardando {} por mês, a meta fecha em {}",
             whole_brl(recurring.unwrap_or(0)),
             month_short_year(month)
         ),
@@ -1133,7 +1133,7 @@ mod tests {
         );
         assert_eq!(
             e.eta_label,
-            "Guardando R$ 500 por mês, a meta fecha em jan 2027."
+            "Guardando R$ 500 por mês, a meta fecha em jan 2027"
         );
     }
 
@@ -1172,7 +1172,7 @@ mod tests {
         );
         let e = emergency_view(&ds, &ds.reserves["RE1"], "2026-09");
         assert_eq!(e.eta, EmergencyEta::Reached);
-        assert_eq!(e.eta_label, "Meta alcançada.");
+        assert_eq!(e.eta_label, "Meta alcançada");
         assert_eq!(e.remaining_label, "Meta alcançada");
         // Percentual nao e limitado: o prototipo nao limita.
         assert_eq!(e.pct_label, "110% da meta");
@@ -1182,7 +1182,7 @@ mod tests {
             add_reserve(&mut ds, "RE1", emergency(json!(6), recurring));
             let e = emergency_view(&ds, &ds.reserves["RE1"], "2026-09");
             assert_eq!(e.eta, EmergencyEta::NoRecurring);
-            assert_eq!(e.eta_label, "Sem depósito mensal programado.");
+            assert_eq!(e.eta_label, "Sem depósito mensal programado");
         }
     }
 
@@ -1201,7 +1201,7 @@ mod tests {
         );
         assert_eq!(e.segments, vec![0.0; 6]);
         assert_eq!(e.eta, EmergencyEta::NoGoal);
-        assert_eq!(e.eta_label, "Sem custo essencial para projetar a meta.");
+        assert_eq!(e.eta_label, "Sem custo essencial para projetar a meta");
     }
 
     const NOW: &str = "2026-09";

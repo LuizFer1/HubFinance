@@ -337,7 +337,7 @@ fn donut_card(app: &App, body_height: Option<f32>) -> Element<'_, Message> {
         Some(categories_label(v.donut.len())),
     );
     let body: Element<'_, Message> = if v.donut.is_empty() {
-        text(format!("Nenhuma despesa em {}.", month_long(&v.month)))
+        text(format!("Nenhuma despesa em {}", month_long(&v.month)))
             .size(13)
             .color(t.text_alpha(0.55))
             .into()
@@ -540,7 +540,7 @@ fn bars_card(app: &App, body_height: Option<f32>) -> Element<'_, Message> {
         .iter()
         .all(|b| b.income_minor == 0 && b.expense_minor == 0);
     let body: Element<'_, Message> = if quiet {
-        text("Sem movimento nos últimos seis meses.")
+        text("Sem movimento nos últimos seis meses")
             .size(13)
             .color(t.text_alpha(0.55))
             .into()
@@ -574,11 +574,11 @@ fn bars_card(app: &App, body_height: Option<f32>) -> Element<'_, Message> {
     )
 }
 
-/// "Sobrou em média R$ 2.413,00 por mês entre abr e set." ou "Faltou em média …".
+/// "Sobrou em média R$ 2.413,00 por mês entre abr e set" ou "Faltou em média …".
 fn average_line(v: &DashboardView) -> String {
     let avg = v.average_surplus;
     format!(
-        "{} em média {} por mês {}.",
+        "{} em média {} por mês {}",
         if avg >= 0 { "Sobrou" } else { "Faltou" },
         format_brl(avg),
         v.bars_range_label
@@ -621,7 +621,7 @@ fn recent_card(app: &App) -> Element<'_, Message> {
     if v.recent.is_empty() {
         col = col.push(widgets::hdivider(t)).push(
             container(
-                text(format!("Nenhum lançamento em {}.", month_long(&v.month)))
+                text(format!("Nenhum lançamento em {}", month_long(&v.month)))
                     .size(13)
                     .color(t.text_alpha(0.55)),
             )
@@ -996,13 +996,13 @@ mod tests {
         let sep = build_dashboard(&ds, "2026-09-24", "2026-09");
         assert_eq!(
             average_line(&sep),
-            "Sobrou em média R$ 2.215,00 por mês entre abr e set."
+            "Sobrou em média R$ 2.215,00 por mês entre abr e set"
         );
         let mut negative = sep.clone();
         negative.average_surplus = -1234;
         assert_eq!(
             average_line(&negative),
-            "Faltou em média R$ 12,34 por mês entre abr e set."
+            "Faltou em média R$ 12,34 por mês entre abr e set"
         );
     }
 

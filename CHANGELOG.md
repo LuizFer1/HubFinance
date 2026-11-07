@@ -6,7 +6,8 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
-Nenhuma mudança no protocolo `/v1` nem no banco. Só no Windows; Linux e macOS continuam como na 1.0.0.
+Nenhuma mudança no protocolo `/v1` nem no banco. Ícone na bandeja, início com o Windows e
+instância única são só do Windows; o polimento das telas vale para os três sistemas.
 
 ### Adicionado
 
@@ -30,11 +31,24 @@ Nenhuma mudança no protocolo `/v1` nem no banco. Só no Windows; Linux e macOS 
 - O `ui.json` pode ter `"autostart": false` quando a pessoa desliga a opção; arquivos antigos
   continuam válidos.
 - Atualizar: "feche o hub antes de instalar" agora é "Desligar o hub" no ícone ao lado do relógio.
+- Rótulos em frase normal em vez de caixa alta ("Saldo do mês", "Endereço do hub"), também no
+  cabeçalho da tabela de lançamentos e na barra lateral.
+- Tela Conexão: o endereço do hub fica num campo da largura do card, acima do QR, e aparece
+  inteiro mesmo com a janela na largura mínima. As pastas em "Sobre o hub" quebram só entre
+  pastas, cada uma na sua linha. O vazio de "Usuários conectados" usa o ícone de celular.
+- Dashboard: o total no centro da rosca diminui a fonte quando precisa, para não encostar no
+  anel; o nome da categoria mostrado ao passar o mouse corta em 14 caracteres.
+- Reservas: sem meta, o card da emergência diz "Sem meta" uma vez só, e "Emergência coberta"
+  mostra "Sem meta" no lugar de um traço. Retirada zerada aparece como "R$ 0,00" em cinza, sem
+  sinal nem a nota repetida. Os cards de resumo ficam na mesma altura.
+- Legendas e frases curtas sem ponto final.
 
 ### Corrigido
 
 - Trocar o tema duas vezes seguidas (ou o tema logo depois de outra preferência) podia deixar no
   `ui.json` a escolha anterior: as gravações agora respeitam a ordem dos cliques.
+- O subtítulo dos lançamentos não diz mais "sincronizados de 0 aparelhos", e "1 lançamento"
+  fica no singular.
 
 ### Conhecido
 

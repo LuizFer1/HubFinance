@@ -563,10 +563,10 @@ impl Dataset {
                 .filter(|(_, t)| t.book == book)
                 .map(|(id, t)| {
                     let mut t = t.clone();
-                    if t.category_id.as_deref().is_some_and(&foreign_category) {
+                    if t.category_id.as_deref().is_some_and(foreign_category) {
                         t.category_id = None;
                     }
-                    if t.payment_method_id.as_deref().is_some_and(&foreign_method) {
+                    if t.payment_method_id.as_deref().is_some_and(foreign_method) {
                         t.payment_method_id = None;
                     }
                     (id.clone(), t)

@@ -17,7 +17,8 @@ use super::connection_view;
 use super::remove_view;
 use super::theme::Tokens;
 use crate::config::{self, ThemeMode, UiPrefs};
-use crate::dashboard::dataset::avatar_bytes;
+use crate::dashboard::contract::Book;
+use crate::dashboard::dataset::{Dataset, avatar_bytes};
 use crate::dashboard::list::{Filters, NONE_KEY, TypeFilter};
 use crate::dashboard::people::{DeviceInfo, Person, people};
 use crate::dashboard::periods::month_window;
@@ -152,6 +153,12 @@ pub struct App {
     pub(super) months: Vec<String>,
     /// Indice em `months`; 11 = mes corrente.
     pub(super) month_idx: usize,
+    /// Conta do dashboard (seletor Pessoal | Comercial). So estado de UI: nada e gravado, e a
+    /// janela sempre abre na pessoal.
+    pub(super) book: Book,
+    /// O dataset do snapshot visto por `book`: toda tela e contagem le daqui, nunca do total
+    /// (`Dataset::for_book`). Recalculado em `rebuild`, junto com os modelos de tela.
+    pub(super) scope: Dataset,
     /// Filtros da tela Lancamentos; sobrevivem a troca de mes.
     pub(super) filters: Filters,
     /// Modelos de tela, recalculados so quando dados, mes, filtros ou "hoje" mudam: desenhar
@@ -199,6 +206,8 @@ pub enum Message {
     Tick,
     PrevMonth,
     NextMonth,
+    /// Seletor Pessoal | Comercial.
+    SelectBook(Book),
     /// Mouse entrou numa linha da legenda da rosca.
     HoverCategory(String),
     /// Mouse saiu: so limpa se ainda for a mesma (a saida pode chegar depois da entrada na
@@ -300,6 +309,8 @@ impl App {
             today: String::new(),
             months: Vec::new(),
             month_idx: 0,
+            book: Book::Personal,
+            scope: Dataset::default(),
             filters: Filters::default(),
             dashboard: DashboardView::default(),
             transactions: TransactionsView::default(),
@@ -361,7 +372,13 @@ impl App {
 
     /// Recalcula as tres telas de dados a partir do snapshot atual.
     pub(super) fn rebuild(&mut self) {
-        let dataset = &self.snapshot.dashboard;
+        // A conta comercial pode sumir do hub (linha apagada) com ela selecionada: sem a
+        // linha o seletor desaparece, entao quem ficou nela nao teria como voltar.
+        if self.book == Book::Business && !self.snapshot.dashboard.has_business_book() {
+            self.select_book(Book::Personal);
+        }
+        self.scope = self.snapshot.dashboard.for_book(self.book);
+        let dataset = &self.scope;
         let month = self.month().to_string();
         self.dashboard = build_dashboard(dataset, &self.today, &month);
         self.transactions = build_transactions(dataset, &self.today, &month, &self.filters);
@@ -376,6 +393,18 @@ impl App {
         self.refresh_user_avatars();
         self.clear_charts();
         tracing::trace!("telas recalculadas para {month}");
+    }
+
+    /// Troca a conta. Os filtros de categoria apontam para linhas da conta anterior e a
+    /// escolha de categoria/autor nao faz sentido na outra, entao voltam ao padrao.
+    fn select_book(&mut self, book: Book) {
+        if self.book == book {
+            return;
+        }
+        self.book = book;
+        self.filters = Filters::default();
+        self.cat_menu_open = false;
+        self.hover_category = None;
     }
 
     /// Muda os filtros e recalcula so se mudaram de fato.
@@ -656,6 +685,16 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             if app.month_idx + 1 < app.months.len() {
                 app.month_idx += 1;
                 app.hover_category = None;
+                app.rebuild();
+            }
+            Task::none()
+        }
+        Message::SelectBook(book) => {
+            // Comercial so com a conta existindo: a mensagem vem de um botao que so existe
+            // nesse caso, mas o estado nao deve depender disso.
+            let allowed = book == Book::Personal || app.snapshot.dashboard.has_business_book();
+            if allowed && book != app.book {
+                app.select_book(book);
                 app.rebuild();
             }
             Task::none()
@@ -2381,5 +2420,148 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::CloseRequested);
         assert!(matches!(rx.try_recv(), Ok(Command::Shutdown)));
         assert!(rx.try_recv().is_err());
+    }
+
+    // ---- seletor Pessoal | Comercial ----
+
+    /// Fixtures (pessoais) mais a conta comercial com um lancamento de receita de R$ 900.
+    fn business_snapshot(with_book: bool, book_deleted: bool) -> Snapshot {
+        use crate::dashboard::dataset::{BOOKS, RawRow, TRANSACTIONS};
+        let mut ds = crate::dashboard::fixtures();
+        let row =
+            |table: &str, id: &str, deleted: Option<&str>, seq: i64, data: serde_json::Value| {
+                RawRow {
+                    table: table.into(),
+                    id: id.into(),
+                    deleted_at: deleted.map(Into::into),
+                    seq,
+                    data: data.to_string(),
+                }
+            };
+        let mut rows = vec![row(
+            TRANSACTIONS,
+            "TB1",
+            None,
+            1000,
+            serde_json::json!({
+                "kind": "income", "description": "Venda", "amountMinor": 90000,
+                "occurredOn": "2026-09-10", "book": "business"
+            }),
+        )];
+        if with_book {
+            rows.push(row(
+                BOOKS,
+                "B1",
+                book_deleted.then_some("x"),
+                1001,
+                serde_json::json!({
+                    "kind": "business", "name": "Padaria", "color": "amber", "icon": "storefront"
+                }),
+            ));
+        }
+        ds.apply(rows);
+        Snapshot {
+            dashboard: std::sync::Arc::new(ds),
+            ..Snapshot::default()
+        }
+    }
+
+    fn app_with_business(
+        dir: &std::path::Path,
+        with_book: bool,
+        book_deleted: bool,
+    ) -> (App, watch::Sender<Snapshot>) {
+        let (mut app, _rx, tx) = app_with(
+            business_snapshot(with_book, book_deleted),
+            dir.to_path_buf(),
+        );
+        app.set_today("2026-09-24".into());
+        // O `_rx` cai aqui: nenhum teste deste grupo envia comando.
+        (app, tx)
+    }
+
+    #[test]
+    fn seletor_de_conta_so_existe_com_linha_books_viva() {
+        let dir = tempfile::tempdir().unwrap();
+        for (with_book, deleted, visible) in [
+            (false, false, false),
+            (true, true, false),
+            (true, false, true),
+        ] {
+            let (app, _tx) = app_with_business(dir.path(), with_book, deleted);
+            assert_eq!(
+                super::super::shell::book_switch(&app).is_some(),
+                visible,
+                "books={with_book} apagada={deleted}"
+            );
+        }
+    }
+
+    #[test]
+    fn abre_na_pessoal_sem_misturar_o_comercial() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, _tx) = app_with_business(dir.path(), true, false);
+        assert_eq!(app.book, Book::Personal);
+        // As fixtures tem 7 lancamentos; o comercial nao entra na contagem nem na lista.
+        assert_eq!(app.transactions.list.count, 7);
+        assert_eq!(
+            super::super::shell::transactions_count(&app),
+            crate::dashboard::fixtures().alive_transactions().count()
+        );
+        let plain =
+            crate::dashboard::aggregate::month_summary(&crate::dashboard::fixtures(), "2026-09");
+        assert_eq!(app.dashboard.summary, plain);
+    }
+
+    #[test]
+    fn escolher_comercial_mostra_so_a_conta_comercial_e_volta() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), true, false);
+        let _ = update(&mut app, Message::SelectBook(Book::Business));
+        assert_eq!(app.book, Book::Business);
+        assert_eq!(app.dashboard.summary.current.income_minor, 90_000);
+        assert_eq!(app.dashboard.summary.current.expense_minor, 0);
+        assert_eq!(app.transactions.list.count, 1);
+        assert_eq!(super::super::shell::transactions_count(&app), 1);
+        assert_eq!(
+            super::super::shell::titles(&app).1,
+            "Padaria · somente leitura · dados do último sync"
+        );
+        let _ = update(&mut app, Message::SelectBook(Book::Personal));
+        assert_eq!(app.book, Book::Personal);
+        assert_eq!(app.transactions.list.count, 7);
+    }
+
+    #[test]
+    fn trocar_de_conta_limpa_os_filtros() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), true, false);
+        let _ = update(&mut app, Message::PickCategory(Some("C1".into())));
+        assert_eq!(app.filters.category.as_deref(), Some("C1"));
+        let _ = update(&mut app, Message::SelectBook(Book::Business));
+        assert_eq!(app.filters, Filters::default());
+    }
+
+    #[test]
+    fn comercial_sem_conta_e_recusado() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), false, false);
+        let _ = update(&mut app, Message::SelectBook(Book::Business));
+        assert_eq!(app.book, Book::Personal);
+        assert_eq!(app.transactions.list.count, 7);
+    }
+
+    #[test]
+    fn conta_comercial_apagada_com_ela_aberta_volta_para_a_pessoal() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), true, false);
+        let _ = update(&mut app, Message::SelectBook(Book::Business));
+        assert_eq!(app.book, Book::Business);
+        let _ = update(
+            &mut app,
+            Message::Snapshot(Box::new(business_snapshot(true, true))),
+        );
+        assert_eq!(app.book, Book::Personal);
+        assert_eq!(app.transactions.list.count, 7);
     }
 }

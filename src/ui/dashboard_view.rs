@@ -18,9 +18,12 @@ use super::reserves_view::fill_bar;
 use super::theme::{self, Tokens, alpha};
 use super::{fonts, icons, shell, time, widgets};
 use crate::dashboard::budgets::{BudgetLevel, BudgetStatus};
+use crate::dashboard::business::BusinessPanel;
 use crate::dashboard::contract::Kind;
 use crate::dashboard::list::{ListRow, RowAuthor};
-use crate::dashboard::money::{format_brl, group_thousands, money_parts, signed_brl_plus};
+use crate::dashboard::money::{
+    format_brl, group_thousands, money_parts, signed_brl, signed_brl_plus,
+};
 use crate::dashboard::periods::{month_long, month_short, shift_month, short_date};
 use crate::dashboard::view::DashboardView;
 
@@ -33,7 +36,11 @@ const BARS_HEIGHT: f32 = 210.0;
 
 pub fn view(app: &App) -> Element<'_, Message> {
     let v = &app.dashboard;
-    let mut col = column![summary_row(app)].spacing(GAP);
+    let mut col = column![].spacing(GAP);
+    if let Some(panel) = &app.business {
+        col = col.push(business_card(app, panel));
+    }
+    col = col.push(summary_row(app));
     if v.is_empty {
         col = col.push(empty_card(app));
     } else {
@@ -259,6 +266,104 @@ fn expense_card(app: &App) -> Element<'_, Message> {
             Space::new().height(SPLIT_BAR_SPACE),
         ]
         .spacing(6),
+    )
+}
+
+// ---- negocio ----
+
+/// Largura minima de um valor do bloco "Negócio": cabe "R$ 1.234.567,89" em 22 px.
+const BUSINESS_TILE_MIN: f32 = 200.0;
+/// Padding horizontal do card (ver `card`), descontado da largura do conteudo.
+const CARD_PADDING_X: f32 = 40.0;
+
+/// Valores do bloco "Negócio" em colunas que cabem na largura, a ultima linha completada com
+/// vazio para as colunas nao esticarem (o `auto-fit` do prototipo, que o iced nao tem).
+fn tile_grid<'a>(width: f32, tiles: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    let gap = GAP;
+    let columns = (((width + gap) / (BUSINESS_TILE_MIN + gap)).floor() as usize).clamp(1, 3);
+    let mut rows = column![].spacing(gap + 4.0);
+    let mut tiles = tiles.into_iter().peekable();
+    while tiles.peek().is_some() {
+        let mut line = row![].spacing(gap);
+        for _ in 0..columns {
+            line = match tiles.next() {
+                Some(tile) => line.push(container(tile).width(Length::FillPortion(1))),
+                None => line.push(Space::new().width(Length::FillPortion(1))),
+            };
+        }
+        rows = rows.push(line);
+    }
+    rows.into()
+}
+
+fn business_tile<'a>(
+    t: &'static Tokens,
+    label: &str,
+    value: String,
+    color: Color,
+) -> Element<'a, Message> {
+    column![
+        widgets::kicker(t, label),
+        text(value)
+            .size(22)
+            .font(fonts::INTER_MEDIUM)
+            .line_height(1.1)
+            .color(color),
+    ]
+    .spacing(6)
+    .into()
+}
+
+/// Bloco "Negócio" da conta comercial: resultado do mes, capital aplicado por tipo e dividas.
+/// Bens e dividas nao sao receita nem despesa, por isso ficam numa segunda secao, separada do
+/// resultado, e o capital nao depende do mes escolhido.
+fn business_card<'a>(app: &'a App, p: &BusinessPanel) -> Element<'a, Message> {
+    let t = app.tokens;
+    let width = (shell::content_width(app) - CARD_PADDING_X).max(BUSINESS_TILE_MIN);
+    let result_color = if p.result_minor < 0 {
+        t.expense_fg
+    } else {
+        t.income_fg
+    };
+    let month_tiles = vec![
+        business_tile(t, "Receitas", format_brl(p.income_minor), t.income_fg),
+        business_tile(t, "Despesas", format_brl(p.expense_minor), t.text),
+        business_tile(t, "Resultado", signed_brl(p.result_minor), result_color),
+    ];
+    let capital_tiles = vec![
+        business_tile(t, "Investimentos", format_brl(p.investment_minor), t.text),
+        business_tile(
+            t,
+            "Capital em estoque",
+            format_brl(p.inventory_minor),
+            t.text,
+        ),
+        business_tile(
+            t,
+            "Capital em equipamento",
+            format_brl(p.equipment_minor),
+            t.text,
+        ),
+        business_tile(
+            t,
+            "Capital total aplicado",
+            format_brl(p.capital_minor),
+            t.text,
+        ),
+        business_tile(t, "Dívidas totais", format_brl(p.debt_minor), t.expense_fg),
+    ];
+    card(
+        t,
+        column![
+            widgets::card_title(t, "Negócio", Some(app.dashboard.month_label.clone())),
+            tile_grid(width, month_tiles),
+            widgets::hdivider(t),
+            tile_grid(width, capital_tiles),
+            text("Bens e dívidas não entram em receita nem em despesa.")
+                .size(12)
+                .color(t.text_alpha(0.55)),
+        ]
+        .spacing(16),
     )
 }
 

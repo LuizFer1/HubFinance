@@ -17,6 +17,7 @@ use super::connection_view;
 use super::remove_view;
 use super::theme::Tokens;
 use crate::config::{self, ThemeMode, UiPrefs};
+use crate::dashboard::business::{BusinessPanel, business_panel};
 use crate::dashboard::contract::Book;
 use crate::dashboard::dataset::{Dataset, avatar_bytes};
 use crate::dashboard::list::{Filters, NONE_KEY, TypeFilter};
@@ -159,6 +160,9 @@ pub struct App {
     /// O dataset do snapshot visto por `book`: toda tela e contagem le daqui, nunca do total
     /// (`Dataset::for_book`). Recalculado em `rebuild`, junto com os modelos de tela.
     pub(super) scope: Dataset,
+    /// Bloco "Negócio" do Dashboard: só existe com a conta comercial selecionada (a pessoal
+    /// nunca mostra capital nem dívidas). Recalculado em `rebuild`.
+    pub(super) business: Option<BusinessPanel>,
     /// Filtros da tela Lancamentos; sobrevivem a troca de mes.
     pub(super) filters: Filters,
     /// Modelos de tela, recalculados so quando dados, mes, filtros ou "hoje" mudam: desenhar
@@ -311,6 +315,7 @@ impl App {
             month_idx: 0,
             book: Book::Personal,
             scope: Dataset::default(),
+            business: None,
             filters: Filters::default(),
             dashboard: DashboardView::default(),
             transactions: TransactionsView::default(),
@@ -381,6 +386,7 @@ impl App {
         let dataset = &self.scope;
         let month = self.month().to_string();
         self.dashboard = build_dashboard(dataset, &self.today, &month);
+        self.business = (self.book == Book::Business).then(|| business_panel(dataset, &month));
         self.transactions = build_transactions(dataset, &self.today, &month, &self.filters);
         self.reserves = build_reserves(dataset, &self.today);
         // "N lançamentos sincronizados de K aparelhos": so aparelhos ativos que ja enviaram.
@@ -2426,7 +2432,7 @@ pub(super) mod tests {
 
     /// Fixtures (pessoais) mais a conta comercial com um lancamento de receita de R$ 900.
     fn business_snapshot(with_book: bool, book_deleted: bool) -> Snapshot {
-        use crate::dashboard::dataset::{BOOKS, RawRow, TRANSACTIONS};
+        use crate::dashboard::dataset::{ASSETS, BOOKS, DEBTS, RawRow, TRANSACTIONS};
         let mut ds = crate::dashboard::fixtures();
         let row =
             |table: &str, id: &str, deleted: Option<&str>, seq: i64, data: serde_json::Value| {
@@ -2448,6 +2454,50 @@ pub(super) mod tests {
                 "occurredOn": "2026-09-10", "book": "business"
             }),
         )];
+        // Capital 3.000 (2.000 equipamento + 1.000 estoque) e divida 500 do negocio; o bem sem
+        // `book` e pessoal e nao pode aparecer no painel.
+        rows.extend([
+            row(
+                ASSETS,
+                "AB1",
+                None,
+                1002,
+                serde_json::json!({
+                    "kind": "equipment", "name": "Forno", "valueMinor": 200000,
+                    "acquiredOn": "2026-08-01", "book": "business"
+                }),
+            ),
+            row(
+                ASSETS,
+                "AB2",
+                None,
+                1003,
+                serde_json::json!({
+                    "kind": "inventory", "name": "Farinha", "valueMinor": 100000,
+                    "acquiredOn": "2026-09-01", "book": "business"
+                }),
+            ),
+            row(
+                ASSETS,
+                "AP1",
+                None,
+                1004,
+                serde_json::json!({
+                    "kind": "investment", "name": "CDB", "valueMinor": 777700,
+                    "acquiredOn": "2026-09-01"
+                }),
+            ),
+            row(
+                DEBTS,
+                "DB1",
+                None,
+                1005,
+                serde_json::json!({
+                    "name": "Banco", "principalMinor": 900000, "balanceMinor": 50000,
+                    "book": "business"
+                }),
+            ),
+        ]);
         if with_book {
             rows.push(row(
                 BOOKS,
@@ -2530,6 +2580,32 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::SelectBook(Book::Personal));
         assert_eq!(app.book, Book::Personal);
         assert_eq!(app.transactions.list.count, 7);
+    }
+
+    #[test]
+    fn bloco_negocio_so_aparece_na_conta_comercial() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), true, false);
+        assert_eq!(app.business, None);
+        let _ = update(&mut app, Message::SelectBook(Book::Business));
+        let panel = app.business.expect("painel na conta comercial");
+        // Mesmos numeros do resumo da conta, e bens/dividas fora de receita e despesa.
+        assert_eq!(
+            panel.income_minor,
+            app.dashboard.summary.current.income_minor
+        );
+        assert_eq!(
+            panel.expense_minor,
+            app.dashboard.summary.current.expense_minor
+        );
+        assert_eq!((panel.income_minor, panel.result_minor), (90_000, 90_000));
+        assert_eq!(panel.equipment_minor, 200_000);
+        assert_eq!(panel.inventory_minor, 100_000);
+        assert_eq!(panel.investment_minor, 0);
+        assert_eq!(panel.capital_minor, 300_000);
+        assert_eq!(panel.debt_minor, 50_000);
+        let _ = update(&mut app, Message::SelectBook(Book::Personal));
+        assert_eq!(app.business, None);
     }
 
     #[test]

@@ -6,6 +6,33 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+Nenhuma mudança no protocolo `/v1` nem no banco: o hub continua guardando JSON opaco.
+
+### Adicionado
+
+- **Conta pessoal e comercial no dashboard.** O app passa a marcar cada linha com `book`
+  (`personal` ou `business`; ausente, nulo ou desconhecido vale `personal`) e a sincronizar as
+  tabelas `books`, `assets` e `debts`. O hub lê o campo e calcula cada tela sobre as linhas de
+  **uma** conta: os totais pessoais não incluem mais lançamentos do comércio, nem o contrário.
+  Categoria ou forma de pagamento de outra conta aparece como "Sem categoria" / "Sem forma de
+  pagamento". O perfil (`users`) vale nas duas contas.
+- **Seletor Pessoal | Comercial** no cabeçalho do dashboard, de lançamentos e de reservas. Só
+  aparece quando o app criou a conta comercial (uma linha `books` viva do tipo `business`);
+  abre sempre em Pessoal e a escolha não é gravada.
+- **Bloco "Negócio" no dashboard da conta comercial** (somente leitura), acima do resumo: receitas,
+  despesas e resultado do mês selecionado; investimentos, capital em estoque, capital em
+  equipamento e capital total aplicado (a soma dos três); e dívidas totais (saldo devedor das
+  dívidas vivas). Bens e dívidas nunca entram em receita nem em despesa, linhas apagadas ficam
+  fora das somas e a conta pessoal não mostra o bloco. O hub lê `assets` e `debts` e conta como
+  "linhas ignoradas" as que fugirem do contrato (tipo de bem desconhecido, saldo que não é
+  inteiro).
+
+### Atualizar nesta ordem
+
+Atualize o hub **antes** de criar a conta comercial no app. Um hub antigo ignora `book` e soma
+tudo junto; um app antigo não envia `book`, e o hub novo trata tudo como pessoal (o comportamento
+de hoje).
+
 ## [1.1.0] - 2026-11-07
 
 Nenhuma mudança no protocolo `/v1` nem no banco. Ícone na bandeja, início com o Windows e

@@ -9,7 +9,9 @@ use std::time::SystemTime;
 
 use base64::Engine;
 
-use super::contract::{self, ContractError, Kind, MovementKind, ReportState, ReserveKind};
+use super::contract::{
+    self, AssetKind, Book, ContractError, Kind, MovementKind, ReportState, ReserveKind,
+};
 
 /// Uma linha como a store guarda: `id` e `deleted_at` vem das colunas ja validadas pela
 /// fatia 1; `data` e o JSON opaco do app.
@@ -36,6 +38,8 @@ pub struct Transaction {
     pub recurrence_id: Option<String>,
     /// `None` = conta normalmente (inclui valor que esta versao nao conhece).
     pub report_state: Option<ReportState>,
+    /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
+    pub book: Book,
 }
 
 impl Transaction {
@@ -55,6 +59,8 @@ pub struct Category {
     pub icon: String,
     /// So vale em tombstone; ver `resolve_category_id`.
     pub merged_into: Option<String>,
+    /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
+    pub book: Book,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,6 +80,8 @@ pub struct PaymentMethod {
     pub icon: String,
     /// So vale em tombstone; ver `resolve_payment_method_id`.
     pub merged_into: Option<String>,
+    /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
+    pub book: Book,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,6 +89,8 @@ pub struct Recurrence {
     pub id: String,
     pub deleted: bool,
     pub frequency: String,
+    /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
+    pub book: Book,
 }
 
 /// Meta mensal de uma categoria. Pode haver mais de uma por categoria (cada aparelho escreve a
@@ -94,6 +104,8 @@ pub struct Budget {
     pub limit_minor: i64,
     /// HLC da linha; `None` perde para qualquer versao conhecida.
     pub updated_at: Option<String>,
+    /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
+    pub book: Book,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,6 +129,8 @@ pub struct Reserve {
     pub recurring_since: Option<String>,
     /// Custo essencial digitado no app quando nao havia historico.
     pub essential_override_minor: Option<i64>,
+    /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
+    pub book: Book,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,6 +145,48 @@ pub struct ReserveMovement {
     pub description: Option<String>,
     /// Nulo no JSON vira `false`: sem a tag "Mensal".
     pub recurring: bool,
+    /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
+    pub book: Book,
+}
+
+/// Linha de `books`: a conta comercial (nome, cor e icone). Existe uma linha viva `business`
+/// quando o app criou a conta; e ela que liga o seletor Pessoal | Comercial da janela.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BookAccount {
+    pub id: String,
+    pub deleted: bool,
+    pub kind: Book,
+    pub name: String,
+    pub color: String,
+    pub icon: String,
+}
+
+/// Bem do negocio (`assets`). Nunca e receita nem despesa.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Asset {
+    pub id: String,
+    pub deleted: bool,
+    pub kind: AssetKind,
+    pub name: String,
+    pub value_minor: i64,
+    pub acquired_on: String,
+    pub note: Option<String>,
+    /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
+    pub book: Book,
+}
+
+/// Divida do negocio (`debts`): `balance_minor` e o saldo devedor atual.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Debt {
+    pub id: String,
+    pub deleted: bool,
+    pub name: String,
+    pub creditor: Option<String>,
+    pub principal_minor: i64,
+    pub balance_minor: i64,
+    pub due_on: Option<String>,
+    /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
+    pub book: Book,
 }
 
 /// O que um `apply` fez: linhas aplicadas (validas ou nao) e total de ignoradas depois dele.
@@ -152,6 +208,11 @@ pub struct Dataset {
     pub reserves: HashMap<String, Reserve>,
     pub reserve_movements: HashMap<String, ReserveMovement>,
     pub budgets: HashMap<String, Budget>,
+    /// So a H2 (painel "Negocio") le estas tres; entram aqui junto com o contrato para a linha
+    /// fora dele ser contada desde ja.
+    pub books: HashMap<String, BookAccount>,
+    pub assets: HashMap<String, Asset>,
+    pub debts: HashMap<String, Debt>,
     /// Tabela -> ids cuja versao mais nova esta fora do contrato. Conjunto, nao contador: uma
     /// versao valida depois tira a linha daqui.
     pub ignored: BTreeMap<String, BTreeSet<String>>,
@@ -172,6 +233,10 @@ pub const RESERVES: &str = "reserves";
 pub const RESERVE_MOVEMENTS: &str = "reserveMovements";
 /// Metas por categoria (`budget.ts` do app).
 pub const BUDGETS: &str = "budgets";
+/// Conta comercial e seus bens e dividas (`book.ts`, `asset.ts`, `debt.ts` do app).
+pub const BOOKS: &str = "books";
+pub const ASSETS: &str = "assets";
+pub const DEBTS: &str = "debts";
 
 /// Teto da cadeia de `mergedInto` (o mesmo de `resolve.ts` do app). Nenhuma fusao produz ciclo,
 /// mas as linhas sao eternas e podem trazer um; sem o teto, a janela travaria num laco.
@@ -202,6 +267,7 @@ impl Dataset {
             let result: Result<(), ContractError> = match row.table.as_str() {
                 TRANSACTIONS => contract::parse_transaction(&row.data).map(|f| {
                     let report_state = f.report_state();
+                    let book = f.book();
                     self.transactions.insert(
                         id.clone(),
                         Transaction {
@@ -216,10 +282,12 @@ impl Dataset {
                             user_id: f.user_id,
                             recurrence_id: f.recurrence_id,
                             report_state,
+                            book,
                         },
                     );
                 }),
                 CATEGORIES => contract::parse_category(&row.data).map(|f| {
+                    let book = f.book();
                     self.categories.insert(
                         id.clone(),
                         Category {
@@ -229,6 +297,7 @@ impl Dataset {
                             color: f.color,
                             icon: f.icon,
                             merged_into: f.merged_into,
+                            book,
                         },
                     );
                 }),
@@ -245,6 +314,7 @@ impl Dataset {
                     );
                 }),
                 PAYMENT_METHODS => contract::parse_payment_method(&row.data).map(|f| {
+                    let book = f.book();
                     self.payment_methods.insert(
                         id.clone(),
                         PaymentMethod {
@@ -253,22 +323,26 @@ impl Dataset {
                             name: f.name,
                             icon: f.icon,
                             merged_into: f.merged_into,
+                            book,
                         },
                     );
                 }),
                 RECURRENCES => contract::parse_recurrence(&row.data).map(|f| {
+                    let book = f.book();
                     self.recurrences.insert(
                         id.clone(),
                         Recurrence {
                             id: id.clone(),
                             deleted,
                             frequency: f.frequency,
+                            book,
                         },
                     );
                 }),
                 RESERVES => contract::parse_reserve(&row.data).map(|f| {
                     let recurring_amount_minor = f.recurring_amount_minor();
                     let recurring_since = f.recurring_since().map(str::to_string);
+                    let book = f.book();
                     self.reserves.insert(
                         id.clone(),
                         Reserve {
@@ -285,6 +359,7 @@ impl Dataset {
                             recurring_amount_minor,
                             recurring_since,
                             essential_override_minor: f.essential_override_minor,
+                            book,
                         },
                     );
                 }),
@@ -301,10 +376,12 @@ impl Dataset {
                             user_id: f.user_id,
                             description: f.description,
                             recurring: f.recurring.unwrap_or(false),
+                            book: f.book,
                         },
                     );
                 }),
                 BUDGETS => contract::parse_budget(&row.data).map(|f| {
+                    let book = f.book();
                     self.budgets.insert(
                         id.clone(),
                         Budget {
@@ -313,6 +390,53 @@ impl Dataset {
                             category_id: f.category_id,
                             limit_minor: f.limit_minor,
                             updated_at: f.updated_at,
+                            book,
+                        },
+                    );
+                }),
+                BOOKS => contract::parse_book(&row.data).map(|f| {
+                    let kind = f.kind();
+                    self.books.insert(
+                        id.clone(),
+                        BookAccount {
+                            id: id.clone(),
+                            deleted,
+                            kind,
+                            name: f.name,
+                            color: f.color,
+                            icon: f.icon,
+                        },
+                    );
+                }),
+                ASSETS => contract::parse_asset(&row.data).map(|f| {
+                    let book = f.book();
+                    self.assets.insert(
+                        id.clone(),
+                        Asset {
+                            id: id.clone(),
+                            deleted,
+                            kind: f.kind,
+                            name: f.name,
+                            value_minor: f.value_minor,
+                            acquired_on: f.acquired_on,
+                            note: f.note,
+                            book,
+                        },
+                    );
+                }),
+                DEBTS => contract::parse_debt(&row.data).map(|f| {
+                    let book = f.book();
+                    self.debts.insert(
+                        id.clone(),
+                        Debt {
+                            id: id.clone(),
+                            deleted,
+                            name: f.name,
+                            creditor: f.creditor,
+                            principal_minor: f.principal_minor,
+                            balance_minor: f.balance_minor,
+                            due_on: f.due_on,
+                            book,
                         },
                     );
                 }),
@@ -368,7 +492,108 @@ impl Dataset {
             BUDGETS => {
                 self.budgets.remove(id);
             }
+            BOOKS => {
+                self.books.remove(id);
+            }
+            ASSETS => {
+                self.assets.remove(id);
+            }
+            DEBTS => {
+                self.debts.remove(id);
+            }
             _ => {}
+        }
+    }
+
+    /// Existe linha `books` viva de uma conta comercial: so entao a janela mostra o seletor
+    /// Pessoal | Comercial. Derivado das linhas (como no app), nao de flag local: um hub que
+    /// recebeu a linha pelo sync ja mostra a conta.
+    pub fn has_business_book(&self) -> bool {
+        self.books
+            .values()
+            .any(|b| !b.deleted && b.kind == Book::Business)
+    }
+
+    /// Linha `books` viva da conta comercial. Mais de uma (dois aparelhos criaram antes de
+    /// sincronizar) nao acontece porque o id e estavel por `kind`; se acontecer, a de menor id
+    /// vence para o nome nao oscilar entre quadros.
+    pub fn business_book(&self) -> Option<&BookAccount> {
+        self.books
+            .values()
+            .filter(|b| !b.deleted && b.kind == Book::Business)
+            .min_by(|a, b| a.id.cmp(&b.id))
+    }
+
+    /// A visao de UMA conta: so as linhas dela, e e sobre este `Dataset` que `aggregate`,
+    /// `budgets`, `list`, `reserves` e `periods` calculam. Sem isso, lancamento comercial
+    /// entraria nos totais pessoais (e o contrario).
+    ///
+    /// `users`, `books` e `ignored` passam inteiros: o perfil e a pessoa e vale nas duas contas,
+    /// `books` liga o seletor, e uma linha fora do contrato nao tem `book` confiavel para ser
+    /// atribuida a uma conta. Referencia a categoria ou forma de pagamento de *outra* conta
+    /// vira `None` (os rotulos "Sem categoria" / "Sem forma de pagamento"), nunca "removida":
+    /// a linha existe, so nao e desta conta, e o app mostra o mesmo porque o estado filtrado
+    /// dele tambem nao a tem.
+    pub fn for_book(&self, book: Book) -> Dataset {
+        let foreign_category = |id: &str| {
+            let resolved = self.resolve_category_id(Some(id)).unwrap_or(id);
+            [id, resolved]
+                .iter()
+                .any(|i| self.categories.get(*i).is_some_and(|c| c.book != book))
+        };
+        let foreign_method = |id: &str| {
+            let resolved = self.resolve_payment_method_id(Some(id)).unwrap_or(id);
+            [id, resolved]
+                .iter()
+                .any(|i| self.payment_methods.get(*i).is_some_and(|p| p.book != book))
+        };
+        fn only<T: Clone>(
+            rows: &HashMap<String, T>,
+            keep: impl Fn(&T) -> bool,
+        ) -> HashMap<String, T> {
+            rows.iter()
+                .filter(|(_, r)| keep(r))
+                .map(|(id, r)| (id.clone(), r.clone()))
+                .collect()
+        }
+        Dataset {
+            transactions: self
+                .transactions
+                .iter()
+                .filter(|(_, t)| t.book == book)
+                .map(|(id, t)| {
+                    let mut t = t.clone();
+                    if t.category_id.as_deref().is_some_and(foreign_category) {
+                        t.category_id = None;
+                    }
+                    if t.payment_method_id.as_deref().is_some_and(foreign_method) {
+                        t.payment_method_id = None;
+                    }
+                    (id.clone(), t)
+                })
+                .collect(),
+            categories: only(&self.categories, |r| r.book == book),
+            users: self.users.clone(),
+            payment_methods: only(&self.payment_methods, |r| r.book == book),
+            recurrences: only(&self.recurrences, |r| r.book == book),
+            reserves: self
+                .reserves
+                .iter()
+                .filter(|(_, r)| r.book == book)
+                .map(|(id, r)| {
+                    let mut r = r.clone();
+                    r.essential_category_ids.retain(|c| !foreign_category(c));
+                    (id.clone(), r)
+                })
+                .collect(),
+            reserve_movements: only(&self.reserve_movements, |r| r.book == book),
+            budgets: only(&self.budgets, |r| r.book == book),
+            books: self.books.clone(),
+            assets: only(&self.assets, |r| r.book == book),
+            debts: only(&self.debts, |r| r.book == book),
+            ignored: self.ignored.clone(),
+            loaded_seq: self.loaded_seq,
+            refreshed_at: self.refreshed_at,
         }
     }
 
@@ -1148,6 +1373,301 @@ mod tests {
         assert_eq!(report.ignored_total, 1);
         assert!(ds.ignored[CATEGORIES].contains("C6"));
         assert!(!ds.categories.contains_key("C6"));
+    }
+
+    // ---- conta pessoal x comercial ----
+
+    use crate::dashboard::aggregate::{expense_by_category, month_summary};
+
+    const BIZ_C: &str = "01HZZZZZZZZZZZZZZZZZZZZZC9";
+    const BIZ_M: &str = "01HZZZZZZZZZZZZZZZZZZZZZM9";
+
+    fn biz(mut v: Value) -> Value {
+        v["book"] = json!("business");
+        v
+    }
+
+    fn tx_in(kind: &str, amount: i64, category: Option<&str>, method: Option<&str>) -> Value {
+        json!({
+            "kind": kind, "description": "x", "amountMinor": amount,
+            "occurredOn": "2026-09-14", "categoryId": category, "paymentMethodId": method
+        })
+    }
+
+    /// Duas contas povoadas: pessoal (receita 5.000, despesa 1.000) e comercial (receita 90.000,
+    /// despesa 30.000), cada uma com a sua categoria e forma de pagamento.
+    fn two_books() -> Dataset {
+        let mut ds = Dataset::default();
+        ds.apply([
+            raw(CATEGORIES, C1, None, 1, category("Mercado")),
+            raw(CATEGORIES, BIZ_C, None, 2, biz(category("Vendas"))),
+            raw(
+                PAYMENT_METHODS,
+                "01HZZZZZZZZZZZZZZZZZZZZZM1",
+                None,
+                3,
+                json!({ "name": "Pix", "icon": "zap" }),
+            ),
+            raw(
+                PAYMENT_METHODS,
+                BIZ_M,
+                None,
+                4,
+                biz(json!({ "name": "Maquininha", "icon": "card" })),
+            ),
+            raw(
+                TRANSACTIONS,
+                "T01",
+                None,
+                5,
+                tx_in("income", 5_000, Some(C1), None),
+            ),
+            raw(
+                TRANSACTIONS,
+                "T02",
+                None,
+                6,
+                tx_in("expense", 1_000, Some(C1), None),
+            ),
+            raw(
+                TRANSACTIONS,
+                "T03",
+                None,
+                7,
+                biz(tx_in("income", 90_000, Some(BIZ_C), Some(BIZ_M))),
+            ),
+            raw(
+                TRANSACTIONS,
+                "T04",
+                None,
+                8,
+                biz(tx_in("expense", 30_000, Some(BIZ_C), None)),
+            ),
+            raw(USERS, "01HZZZZZZZZZZZZZZZZZZZZZP1", None, 9, user("Ana")),
+        ]);
+        ds
+    }
+
+    #[test]
+    fn book_da_linha_vem_do_contrato_e_degrada_para_pessoal() {
+        let mut ds = Dataset::default();
+        let mut future = tx("a");
+        future["book"] = json!("filial");
+        ds.apply([
+            raw(TRANSACTIONS, "A", None, 1, tx("a")),
+            raw(TRANSACTIONS, "B", None, 2, biz(tx("b"))),
+            raw(TRANSACTIONS, "C", None, 3, future),
+        ]);
+        assert_eq!(ds.transactions["A"].book, Book::Personal);
+        assert_eq!(ds.transactions["B"].book, Book::Business);
+        assert_eq!(ds.transactions["C"].book, Book::Personal);
+    }
+
+    #[test]
+    fn totais_pessoais_nao_mudam_com_linhas_comerciais_presentes() {
+        let both = two_books();
+        let mut only_personal = Dataset::default();
+        only_personal.apply([
+            raw(CATEGORIES, C1, None, 1, category("Mercado")),
+            raw(
+                TRANSACTIONS,
+                "T01",
+                None,
+                5,
+                tx_in("income", 5_000, Some(C1), None),
+            ),
+            raw(
+                TRANSACTIONS,
+                "T02",
+                None,
+                6,
+                tx_in("expense", 1_000, Some(C1), None),
+            ),
+        ]);
+        let with_business = month_summary(&both.for_book(Book::Personal), "2026-09");
+        let without = month_summary(&only_personal, "2026-09");
+        assert_eq!(with_business, without);
+        assert_eq!(with_business.current.income_minor, 5_000);
+        assert_eq!(with_business.current.expense_minor, 1_000);
+    }
+
+    #[test]
+    fn totais_comerciais_so_somam_business() {
+        let view = two_books().for_book(Book::Business);
+        let s = month_summary(&view, "2026-09");
+        assert_eq!(s.current.income_minor, 90_000);
+        assert_eq!(s.current.expense_minor, 30_000);
+        assert_eq!(view.alive_transactions().count(), 2);
+        assert_eq!(view.categories.len(), 1);
+        assert_eq!(view.payment_methods.len(), 1);
+    }
+
+    #[test]
+    fn linha_sem_book_e_pessoal_na_visao_pessoal() {
+        let ds = two_books();
+        assert_eq!(ds.for_book(Book::Personal).alive_transactions().count(), 2);
+        assert!(ds.for_book(Book::Personal).categories.contains_key(C1));
+        assert!(!ds.for_book(Book::Business).categories.contains_key(C1));
+    }
+
+    #[test]
+    fn referencia_de_outra_conta_resolve_para_sem_categoria() {
+        let mut ds = two_books();
+        ds.apply([
+            // Lancamento comercial apontando para categoria e forma pessoais.
+            raw(
+                TRANSACTIONS,
+                "X1",
+                None,
+                10,
+                biz(tx_in(
+                    "expense",
+                    700,
+                    Some(C1),
+                    Some("01HZZZZZZZZZZZZZZZZZZZZZM1"),
+                )),
+            ),
+            // E o contrario.
+            raw(
+                TRANSACTIONS,
+                "X2",
+                None,
+                11,
+                tx_in("expense", 800, Some(BIZ_C), Some(BIZ_M)),
+            ),
+        ]);
+        let business = ds.for_book(Book::Business);
+        let x1 = &business.transactions["X1"];
+        assert_eq!(
+            business.category_name(x1.category_id.as_deref()),
+            "Sem categoria"
+        );
+        assert_eq!(
+            business.payment_method_name(x1.payment_method_id.as_deref()),
+            "Sem forma de pagamento"
+        );
+        let slices = expense_by_category(&business, "2026-09");
+        let sem = slices.iter().find(|s| s.name == "Sem categoria").unwrap();
+        assert_eq!(sem.amount_minor, 700);
+
+        let personal = ds.for_book(Book::Personal);
+        let x2 = &personal.transactions["X2"];
+        assert_eq!(
+            personal.category_name(x2.category_id.as_deref()),
+            "Sem categoria"
+        );
+        assert_eq!(
+            personal.payment_method_name(x2.payment_method_id.as_deref()),
+            "Sem forma de pagamento"
+        );
+        // Referencia morta da propria conta continua "removida": so a de outra conta e "sem".
+        assert_eq!(
+            personal.category_name(Some("ausente")),
+            "Categoria removida"
+        );
+    }
+
+    #[test]
+    fn perfil_e_compartilhado_e_linha_ignorada_nao_some_da_visao() {
+        let mut ds = two_books();
+        let mut bad = tx("ruim");
+        bad["amountMinor"] = json!("x");
+        ds.apply([raw(TRANSACTIONS, "BAD", None, 20, biz(bad))]);
+        for book in [Book::Personal, Book::Business] {
+            let view = ds.for_book(book);
+            assert_eq!(view.alive_users().len(), 1);
+            assert_eq!(view.ignored_total(), 1);
+            assert_eq!(view.loaded_seq, 20);
+        }
+    }
+
+    #[test]
+    fn reservas_e_movimentos_ficam_na_propria_conta() {
+        let mut ds = Dataset::default();
+        let reserve = json!({ "kind": "goal", "name": "Caixa", "icon": "i", "color": "c" });
+        let movement = |reserve_id: &str| json!({ "reserveId": reserve_id, "amountMinor": 500, "occurredOn": "2026-09-01" });
+        ds.apply([
+            raw(RESERVES, "R1", None, 1, reserve.clone()),
+            raw(RESERVES, "R2", None, 2, biz(reserve)),
+            raw(RESERVE_MOVEMENTS, "M1", None, 3, movement("R1")),
+            raw(RESERVE_MOVEMENTS, "M2", None, 4, biz(movement("R2"))),
+        ]);
+        let personal = ds.for_book(Book::Personal);
+        assert_eq!(personal.alive_reserves().count(), 1);
+        assert_eq!(personal.alive_reserve_movements().count(), 1);
+        let business = ds.for_book(Book::Business);
+        assert_eq!(business.alive_reserves().count(), 1);
+        assert_eq!(business.alive_reserve_movements().count(), 1);
+        assert!(business.reserves.contains_key("R2"));
+    }
+
+    #[test]
+    fn conta_comercial_so_existe_com_linha_books_viva() {
+        let mut ds = Dataset::default();
+        assert!(!ds.has_business_book());
+        let book = json!({ "kind": "business", "name": "Padaria", "color": "amber", "icon": "s" });
+        ds.apply([raw(BOOKS, "B1", Some("x"), 1, book.clone())]);
+        assert!(!ds.has_business_book());
+        ds.apply([raw(BOOKS, "B1", None, 2, book)]);
+        assert!(ds.has_business_book());
+        assert_eq!(ds.business_book().map(|b| b.name.as_str()), Some("Padaria"));
+        // `kind` de versao futura nao abre o seletor.
+        let mut other = Dataset::default();
+        other.apply([raw(
+            BOOKS,
+            "B2",
+            None,
+            1,
+            json!({ "kind": "filial", "name": "F", "color": "c", "icon": "i" }),
+        )]);
+        assert!(!other.has_business_book());
+        // A visao carrega `books`: o seletor nao some ao trocar de conta.
+        assert!(ds.for_book(Book::Business).has_business_book());
+        assert!(ds.for_book(Book::Personal).has_business_book());
+    }
+
+    #[test]
+    fn bens_e_dividas_entram_e_linha_fora_do_contrato_e_contada() {
+        let mut ds = Dataset::default();
+        let asset = |kind: &str| {
+            json!({
+                "kind": kind, "name": "n", "valueMinor": 1000,
+                "acquiredOn": "2026-09-01", "book": "business"
+            })
+        };
+        let report = ds.apply([
+            raw(ASSETS, "A1", None, 1, asset("equipment")),
+            raw(ASSETS, "A2", None, 2, asset("imovel")),
+            raw(
+                DEBTS,
+                "D1",
+                None,
+                3,
+                json!({ "name": "d", "principalMinor": 10, "balanceMinor": 5, "book": "business" }),
+            ),
+            raw(
+                DEBTS,
+                "D2",
+                None,
+                4,
+                json!({ "name": "d", "principalMinor": 10, "balanceMinor": "5" }),
+            ),
+            raw(BOOKS, "B1", None, 5, json!({ "kind": "business" })),
+        ]);
+        assert_eq!(report.applied, 5);
+        assert_eq!(ds.assets.len(), 1);
+        assert_eq!(ds.debts.len(), 1);
+        assert!(ds.books.is_empty());
+        assert_eq!(report.ignored_total, 3);
+        assert!(ds.ignored[ASSETS].contains("A2"));
+        assert!(ds.ignored[DEBTS].contains("D2"));
+        assert!(ds.ignored[BOOKS].contains("B1"));
+        // Bens e dividas nao sao lancamentos: nao movem total nenhum.
+        assert!(ds.is_empty());
+        let business = ds.for_book(Book::Business);
+        assert_eq!((business.assets.len(), business.debts.len()), (1, 1));
+        let personal = ds.for_book(Book::Personal);
+        assert_eq!((personal.assets.len(), personal.debts.len()), (0, 0));
     }
 
     #[test]

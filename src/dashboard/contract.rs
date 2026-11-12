@@ -49,6 +49,41 @@ impl ReportState {
     }
 }
 
+/// Conta a que uma linha pertence (`domain/model/book.ts` do app).
+///
+/// Ausente, `null` e qualquer valor que esta versao nao conhece valem `Personal`, como o
+/// `bookOf` do app: linha antiga (de antes da conta comercial) continua sendo pessoal, e um
+/// valor de versao futura degrada para a conta de sempre em vez de derrubar a linha. O erro
+/// seguro e a linha aparecer na conta pessoal, nunca sumir.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Book {
+    #[default]
+    Personal,
+    Business,
+}
+
+impl Book {
+    pub fn from_value(value: &serde_json::Value) -> Self {
+        match value.as_str() {
+            Some("business") => Self::Business,
+            _ => Self::Personal,
+        }
+    }
+
+    /// `Option` porque o campo e anulavel; ver `from_value`.
+    pub fn from_field(value: Option<&serde_json::Value>) -> Self {
+        value.map_or(Self::Personal, Self::from_value)
+    }
+
+    /// Rotulo do seletor da janela.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Personal => "Pessoal",
+            Self::Business => "Comercial",
+        }
+    }
+}
+
 /// `src/domain/model/transaction.ts`. Nao lidos: `currency`, `cashbackMinor`, `occurrenceKey`.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,9 +105,17 @@ pub struct TransactionFields {
     /// de qualquer tipo, nao pode fazer a *linha* ser ignorada; ver `ReportState::from_value`.
     #[serde(default)]
     pub report_state: Option<serde_json::Value>,
+    /// `book` do app; ver `Book::from_field`. `Value` e nao `Book` para valor desconhecido (ou
+    /// de outro tipo JSON) nao fazer a *linha* ser ignorada.
+    #[serde(default)]
+    pub book: Option<serde_json::Value>,
 }
 
 impl TransactionFields {
+    pub fn book(&self) -> Book {
+        Book::from_field(self.book.as_ref())
+    }
+
     pub fn report_state(&self) -> Option<ReportState> {
         self.report_state.as_ref().and_then(ReportState::from_value)
     }
@@ -91,6 +134,16 @@ pub struct CategoryFields {
     /// segue o campo ao resolver referencias; o sync nao o conhece.
     #[serde(default)]
     pub merged_into: Option<String>,
+    /// `book` do app; ver `Book::from_field`. `Value` e nao `Book` para valor desconhecido (ou
+    /// de outro tipo JSON) nao fazer a *linha* ser ignorada.
+    #[serde(default)]
+    pub book: Option<serde_json::Value>,
+}
+
+impl CategoryFields {
+    pub fn book(&self) -> Book {
+        Book::from_field(self.book.as_ref())
+    }
 }
 
 /// `src/domain/model/user.ts`. `avatar` e um data URI; decodificar e problema da tela.
@@ -114,6 +167,16 @@ pub struct PaymentMethodFields {
     /// segue o campo ao resolver referencias; o sync nao o conhece.
     #[serde(default)]
     pub merged_into: Option<String>,
+    /// `book` do app; ver `Book::from_field`. `Value` e nao `Book` para valor desconhecido (ou
+    /// de outro tipo JSON) nao fazer a *linha* ser ignorada.
+    #[serde(default)]
+    pub book: Option<serde_json::Value>,
+}
+
+impl PaymentMethodFields {
+    pub fn book(&self) -> Book {
+        Book::from_field(self.book.as_ref())
+    }
 }
 
 /// `src/domain/model/recurrence.ts`: so a frequencia, para o rotulo da tag ("Mensal").
@@ -121,6 +184,16 @@ pub struct PaymentMethodFields {
 #[serde(rename_all = "camelCase")]
 pub struct RecurrenceFields {
     pub frequency: String,
+    /// `book` do app; ver `Book::from_field`. `Value` e nao `Book` para valor desconhecido (ou
+    /// de outro tipo JSON) nao fazer a *linha* ser ignorada.
+    #[serde(default)]
+    pub book: Option<serde_json::Value>,
+}
+
+impl RecurrenceFields {
+    pub fn book(&self) -> Book {
+        Book::from_field(self.book.as_ref())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -169,6 +242,10 @@ pub struct ReserveFields {
     /// linha pelo proprio serde, como os outros campos: o hub nao adivinha o que o app quis dizer.
     #[serde(default)]
     pub recurring: Option<RecurringFields>,
+    /// `book` do app; ver `Book::from_field`. `Value` e nao `Book` para valor desconhecido (ou
+    /// de outro tipo JSON) nao fazer a *linha* ser ignorada.
+    #[serde(default)]
+    pub book: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -184,6 +261,10 @@ pub struct RecurringFields {
 }
 
 impl ReserveFields {
+    pub fn book(&self) -> Book {
+        Book::from_field(self.book.as_ref())
+    }
+
     pub fn recurring_amount_minor(&self) -> Option<i64> {
         self.recurring.as_ref().map(|r| r.amount_minor)
     }
@@ -211,6 +292,97 @@ pub struct BudgetFields {
     pub limit_minor: i64,
     #[serde(default)]
     pub updated_at: Option<String>,
+    /// `book` do app; ver `Book::from_field`. `Value` e nao `Book` para valor desconhecido (ou
+    /// de outro tipo JSON) nao fazer a *linha* ser ignorada.
+    #[serde(default)]
+    pub book: Option<serde_json::Value>,
+}
+
+impl BudgetFields {
+    pub fn book(&self) -> Book {
+        Book::from_field(self.book.as_ref())
+    }
+}
+
+/// Linha de `books` (`book.ts` do app): nome, cor e icone da conta comercial, sincronizados
+/// (o `meta` do app e local). So a conta `business` tem linha; a pessoal e implicita.
+///
+/// `kind` e texto para valor desconhecido nao derrubar a linha: vira `Personal`, que nao abre
+/// o seletor (so uma linha `business` viva o abre).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookFields {
+    pub kind: String,
+    pub name: String,
+    pub color: String,
+    pub icon: String,
+}
+
+impl BookFields {
+    pub fn kind(&self) -> Book {
+        match self.kind.as_str() {
+            "business" => Book::Business,
+            _ => Book::Personal,
+        }
+    }
+}
+
+/// Tipo de bem (`assets`). Fechado: tipo desconhecido derruba a linha (ignorada e contada),
+/// porque somar um bem que esta versao nao sabe classificar falsearia o capital por tipo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AssetKind {
+    Investment,
+    Inventory,
+    Equipment,
+}
+
+/// Linha de `assets`: capital do negocio por tipo, sem itens nem quantidades. Nao e receita
+/// nem despesa e nunca entra nessas somas.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetFields {
+    pub kind: AssetKind,
+    pub name: String,
+    /// Inteiro JSON, como `amountMinor`.
+    pub value_minor: i64,
+    pub acquired_on: String,
+    #[serde(default)]
+    pub note: Option<String>,
+    /// `book` do app; ver `Book::from_field`. `Value` e nao `Book` para valor desconhecido (ou
+    /// de outro tipo JSON) nao fazer a *linha* ser ignorada.
+    #[serde(default)]
+    pub book: Option<serde_json::Value>,
+}
+
+impl AssetFields {
+    pub fn book(&self) -> Book {
+        Book::from_field(self.book.as_ref())
+    }
+}
+
+/// Linha de `debts`: cadastro simples com saldo devedor editavel (sem parcelas nem juros).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DebtFields {
+    pub name: String,
+    #[serde(default)]
+    pub creditor: Option<String>,
+    pub principal_minor: i64,
+    /// Saldo devedor atual: e o que soma em "dividas totais".
+    pub balance_minor: i64,
+    #[serde(default)]
+    pub due_on: Option<String>,
+    /// `book` do app; ver `Book::from_field`. `Value` e nao `Book` para valor desconhecido (ou
+    /// de outro tipo JSON) nao fazer a *linha* ser ignorada.
+    #[serde(default)]
+    pub book: Option<serde_json::Value>,
+}
+
+impl DebtFields {
+    pub fn book(&self) -> Book {
+        Book::from_field(self.book.as_ref())
+    }
 }
 
 /// Linha de `reserveMovements` ja traduzida. Nao lido: `reason` (o motivo da retirada e regra
@@ -226,6 +398,7 @@ pub struct ReserveMovementFields {
     pub user_id: Option<String>,
     pub description: Option<String>,
     pub recurring: Option<bool>,
+    pub book: Book,
 }
 
 /// Forma crua do app. Sem `deny_unknown_fields`: um `kind` legado vira campo desconhecido e e
@@ -242,6 +415,8 @@ struct RawMovementFields {
     description: Option<String>,
     #[serde(default)]
     recurring: Option<bool>,
+    #[serde(default)]
+    book: Option<serde_json::Value>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -262,6 +437,10 @@ pub enum ContractError {
     /// O app so grava meta positiva; zero ou negativo nao tem barra para desenhar.
     #[error("limitMinor deve ser positivo")]
     LimitNotPositive,
+    #[error("acquiredOn fora do formato YYYY-MM-DD")]
+    AcquiredOnShape,
+    #[error("dueOn fora do formato YYYY-MM-DD")]
+    DueOnShape,
 }
 
 pub fn parse_transaction(data: &str) -> Result<TransactionFields, ContractError> {
@@ -292,6 +471,26 @@ pub fn parse_budget(data: &str) -> Result<BudgetFields, ContractError> {
     let fields: BudgetFields = serde_json::from_str(data)?;
     if fields.limit_minor <= 0 {
         return Err(ContractError::LimitNotPositive);
+    }
+    Ok(fields)
+}
+
+pub fn parse_book(data: &str) -> Result<BookFields, ContractError> {
+    Ok(serde_json::from_str(data)?)
+}
+
+pub fn parse_asset(data: &str) -> Result<AssetFields, ContractError> {
+    let fields: AssetFields = serde_json::from_str(data)?;
+    if !is_iso_date(&fields.acquired_on) {
+        return Err(ContractError::AcquiredOnShape);
+    }
+    Ok(fields)
+}
+
+pub fn parse_debt(data: &str) -> Result<DebtFields, ContractError> {
+    let fields: DebtFields = serde_json::from_str(data)?;
+    if fields.due_on.as_deref().is_some_and(|d| !is_iso_date(d)) {
+        return Err(ContractError::DueOnShape);
     }
     Ok(fields)
 }
@@ -336,6 +535,7 @@ pub fn parse_reserve_movement(data: &str) -> Result<ReserveMovementFields, Contr
         user_id: raw.user_id,
         description: raw.description,
         recurring: raw.recurring,
+        book: Book::from_field(raw.book.as_ref()),
     })
 }
 
@@ -963,5 +1163,140 @@ mod tests {
         ] {
             assert!(parse_budget(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn book_ausente_nulo_e_desconhecido_valem_pessoal() {
+        let t = parse_transaction(&tx().to_string()).unwrap();
+        assert_eq!(t.book(), Book::Personal);
+        for value in [Value::Null, json!("personal"), json!("futuro"), json!(7)] {
+            let t = parse_transaction(&with(tx(), "book", value)).unwrap();
+            assert_eq!(t.book(), Book::Personal);
+        }
+        let t = parse_transaction(&with(tx(), "book", json!("business"))).unwrap();
+        assert_eq!(t.book(), Book::Business);
+    }
+
+    #[test]
+    fn book_e_lido_em_todas_as_tabelas_com_o_campo() {
+        let biz = |mut v: Value| {
+            v["book"] = json!("business");
+            v.to_string()
+        };
+        assert_eq!(
+            parse_category(&biz(json!({"name":"Vendas","color":"green","icon":"x"})))
+                .unwrap()
+                .book(),
+            Book::Business
+        );
+        assert_eq!(
+            parse_payment_method(&biz(json!({"name":"Pix","icon":"x"})))
+                .unwrap()
+                .book(),
+            Book::Business
+        );
+        assert_eq!(
+            parse_recurrence(&biz(json!({"frequency":"monthly"})))
+                .unwrap()
+                .book(),
+            Book::Business
+        );
+        assert_eq!(
+            parse_budget(&biz(json!({"categoryId":"C1","limitMinor":5})))
+                .unwrap()
+                .book(),
+            Book::Business
+        );
+        let reserve = json!({"kind":"goal","name":"R","icon":"i","color":"c"});
+        assert_eq!(
+            parse_reserve(&biz(reserve.clone())).unwrap().book(),
+            Book::Business
+        );
+        assert_eq!(
+            parse_reserve(&reserve.to_string()).unwrap().book(),
+            Book::Personal
+        );
+        let movement = json!({"reserveId":"R1","amountMinor":100,"occurredOn":"2026-09-01"});
+        assert_eq!(
+            parse_reserve_movement(&biz(movement.clone())).unwrap().book,
+            Book::Business
+        );
+        assert_eq!(
+            parse_reserve_movement(&movement.to_string()).unwrap().book,
+            Book::Personal
+        );
+        let unknown = with(movement, "book", json!("outra"));
+        assert_eq!(
+            parse_reserve_movement(&unknown).unwrap().book,
+            Book::Personal
+        );
+    }
+
+    #[test]
+    fn conta_comercial_le_nome_cor_e_icone() {
+        let b = parse_book(
+            r#"{"kind":"business","name":"Padaria","color":"amber","icon":"storefront","x":1}"#,
+        )
+        .unwrap();
+        assert_eq!(b.kind(), Book::Business);
+        assert_eq!(b.name, "Padaria");
+        let b = parse_book(r#"{"kind":"futuro","name":"N","color":"c","icon":"i"}"#).unwrap();
+        assert_eq!(b.kind(), Book::Personal);
+        assert!(parse_book(r#"{"name":"N","color":"c","icon":"i"}"#).is_err());
+    }
+
+    #[test]
+    fn bem_valido_e_fora_do_contrato() {
+        let asset = json!({
+            "kind": "inventory", "name": "Farinha", "valueMinor": 150000,
+            "acquiredOn": "2026-09-01", "book": "business"
+        });
+        let a = parse_asset(&asset.to_string()).unwrap();
+        assert_eq!(a.kind, AssetKind::Inventory);
+        assert_eq!(a.value_minor, 150_000);
+        assert_eq!(a.note, None);
+        assert_eq!(a.book(), Book::Business);
+        for (key, value) in [
+            ("kind", json!("imovel")),
+            ("kind", json!(3)),
+            ("valueMinor", json!(12.5)),
+            ("valueMinor", json!("10")),
+            ("acquiredOn", json!("01/09/2026")),
+            ("name", Value::Null),
+        ] {
+            assert!(
+                parse_asset(&with(asset.clone(), key, value)).is_err(),
+                "{key}"
+            );
+        }
+        assert!(parse_asset(&without(asset, "valueMinor")).is_err());
+    }
+
+    #[test]
+    fn divida_valida_e_fora_do_contrato() {
+        let debt = json!({
+            "name": "Fornecedor", "principalMinor": 500000, "balanceMinor": 320000
+        });
+        let d = parse_debt(&debt.to_string()).unwrap();
+        assert_eq!((d.principal_minor, d.balance_minor), (500_000, 320_000));
+        assert_eq!((d.creditor.as_deref(), d.due_on.as_deref()), (None, None));
+        assert_eq!(d.book(), Book::Personal);
+        let full = with(debt.clone(), "dueOn", json!("2026-12-31"));
+        assert_eq!(
+            parse_debt(&full).unwrap().due_on.as_deref(),
+            Some("2026-12-31")
+        );
+        for (key, value) in [
+            ("balanceMinor", json!("x")),
+            ("balanceMinor", json!(1.5)),
+            ("dueOn", json!("amanha")),
+            ("name", json!(1)),
+        ] {
+            assert!(
+                parse_debt(&with(debt.clone(), key, value)).is_err(),
+                "{key}"
+            );
+        }
+        assert!(parse_debt(&without(debt, "principalMinor")).is_err());
     }
 }

@@ -15,6 +15,7 @@ use super::{
     transactions_view, widgets,
 };
 use crate::config::ThemeMode;
+use crate::dashboard::contract::Book;
 use crate::dashboard::money::group_thousands;
 use crate::hub::snapshot::Status;
 
@@ -315,12 +316,12 @@ fn sidebar(app: &App) -> Element<'_, Message> {
 
 /// Lancamentos vivos no total.
 pub(super) fn transactions_count(app: &App) -> usize {
-    app.snapshot.dashboard.alive_transactions().count()
+    app.scope.alive_transactions().count()
 }
 
 /// Reservas vivas no total.
 pub(super) fn reserves_count(app: &App) -> usize {
-    app.snapshot.dashboard.reserve_count()
+    app.scope.reserve_count()
 }
 
 /// Aparelhos ativos: e o numero de linhas da lista "Usuarios conectados" (sem a remocao
@@ -435,12 +436,12 @@ pub(super) fn status_lines(app: &App) -> StatusLines {
 
 /// Ha lancamento ou reserva viva no hub: uma casa que so sincronizou reservas tem dados.
 pub(super) fn has_data(app: &App) -> bool {
-    has_transactions(app) || app.snapshot.dashboard.has_reserves()
+    has_transactions(app) || app.scope.has_reserves()
 }
 
 /// Ha lancamento vivo: o estado vazio do Dashboard e de Lancamentos e sobre lancamentos.
 pub(super) fn has_transactions(app: &App) -> bool {
-    !app.snapshot.dashboard.is_empty()
+    !app.scope.is_empty()
 }
 
 /// "Último sync há 2 min · Pixel da Ana": o maior entre envio e recebimento de todos os
@@ -572,6 +573,9 @@ fn header(app: &App) -> Element<'_, Message> {
     let mut line = row![container(widgets::page_title(t, title, &subtitle)).width(Length::Fill)]
         .spacing(24)
         .align_y(Alignment::End);
+    if let Some(switch) = book_switch(app) {
+        line = line.push(switch);
+    }
     // Reservas nao tem seletor de mes: saldos sao acumulados ate hoje.
     if matches!(app.screen, Screen::Dashboard | Screen::Transactions) {
         line = line.push(month_controls(app));
@@ -582,6 +586,33 @@ fn header(app: &App) -> Element<'_, Message> {
             ..Padding::ZERO
         })
         .into()
+}
+
+/// Largura do seletor Pessoal | Comercial: dois rotulos de 12 px e o respiro do segmento.
+const BOOK_SWITCH_WIDTH: f32 = 200.0;
+
+/// Seletor de conta. So aparece com uma linha `books` viva de conta comercial (derivado das
+/// linhas, como no app) e fora da Conexao, que e do hub e nao de uma conta.
+pub(super) fn book_switch(app: &App) -> Option<Element<'_, Message>> {
+    if app.screen == Screen::Connection || !app.snapshot.dashboard.has_business_book() {
+        return None;
+    }
+    let option = |book: Book| {
+        (
+            None,
+            book.label(),
+            app.book == book,
+            Message::SelectBook(book),
+        )
+    };
+    Some(
+        container(widgets::seg_switch(
+            app.tokens,
+            [option(Book::Personal), option(Book::Business)],
+        ))
+        .width(BOOK_SWITCH_WIDTH)
+        .into(),
+    )
 }
 
 /// Tag "Parcial · até 24 set" (so no mes corrente e com dados) e o seletor de mes. As setas
@@ -607,6 +638,13 @@ pub(super) fn titles(app: &App) -> (&'static str, String) {
             "Dashboard",
             if empty {
                 "Nada sincronizado ainda".into()
+            } else if let Some(business) = app
+                .snapshot
+                .dashboard
+                .business_book()
+                .filter(|_| app.book == Book::Business)
+            {
+                format!("{} · somente leitura · dados do último sync", business.name)
             } else {
                 "Somente leitura · dados do último sync".into()
             },

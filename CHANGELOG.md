@@ -6,6 +6,8 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [1.2.0] - 2026-11-12
+
 Nenhuma mudança no protocolo `/v1` nem no banco: o hub continua guardando JSON opaco.
 
 ### Adicionado
@@ -249,7 +251,8 @@ campo da 0.0.2 acontece.
 - Scripts `scripts/e2e.sh` (roteiro curl de pareamento e sync) e `scripts/seed-dashboard.sh`
   (carga de exemplo do dashboard).
 
-[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.1.0...HEAD
+[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/LuizFer1/HubFinance/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/LuizFer1/HubFinance/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/LuizFer1/HubFinance/compare/v0.0.5...v1.0.0
 [0.0.5]: https://github.com/LuizFer1/HubFinance/compare/v0.0.4...v0.0.5

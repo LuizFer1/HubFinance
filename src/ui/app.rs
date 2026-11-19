@@ -199,6 +199,8 @@ pub struct App {
     pub(super) autostart_pref: Option<bool>,
     /// A ultima troca da opcao falhou no sistema: o card avisa.
     pub(super) autostart_failed: bool,
+    /// "Ocultar valores" do Dashboard, lembrado no `ui.json` como o tema.
+    pub(super) hide_values: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -332,6 +334,7 @@ impl App {
             autostart: desktop.autostart(),
             autostart_pref: prefs.autostart,
             autostart_failed: false,
+            hide_values: prefs.hide_values,
             desktop,
             tooltip: String::new(),
         };
@@ -339,6 +342,16 @@ impl App {
         app.sync_tooltip();
         app.set_today(local_today(offset));
         app
+    }
+
+    /// O que vai para o `ui.json`. Toda gravacao leva o arquivo inteiro: montar `UiPrefs` campo
+    /// a campo em cada mensagem fazia trocar o tema apagar a escolha de outra opcao.
+    fn prefs(&self) -> UiPrefs {
+        UiPrefs {
+            theme: self.theme,
+            autostart: self.autostart_pref,
+            hide_values: self.hide_values,
+        }
     }
 
     /// Tooltip da bandeja a partir do snapshot; so manda ao sistema quando o texto muda
@@ -836,16 +849,9 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.iced_theme = app.tokens.iced_theme();
             // As cores dos graficos estao gravadas na geometria em cache.
             app.clear_charts();
-            Task::perform(
-                save_prefs(
-                    UiPrefs {
-                        theme: mode,
-                        autostart: app.autostart_pref,
-                    },
-                    app.prefs_dir.clone(),
-                ),
-                |_| Message::Noop,
-            )
+            Task::perform(save_prefs(app.prefs(), app.prefs_dir.clone()), |_| {
+                Message::Noop
+            })
         }
         Message::SetAutostart(enabled) => {
             if app.autostart == Some(enabled) {
@@ -856,16 +862,9 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.autostart = Some(enabled);
                     app.autostart_pref = Some(enabled);
                     app.autostart_failed = false;
-                    Task::perform(
-                        save_prefs(
-                            UiPrefs {
-                                theme: app.theme,
-                                autostart: Some(enabled),
-                            },
-                            app.prefs_dir.clone(),
-                        ),
-                        |_| Message::Noop,
-                    )
+                    Task::perform(save_prefs(app.prefs(), app.prefs_dir.clone()), |_| {
+                        Message::Noop
+                    })
                 }
                 Err(err) => {
                     tracing::warn!("iniciar com o Windows: {err}");

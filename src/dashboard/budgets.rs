@@ -395,6 +395,86 @@ mod tests {
         assert_eq!(budget_report(&s.dataset(), MONTH)[0].limit_minor, 20_000);
     }
 
+    /// Regra R na meta (spec 2026-11-19-id-estavel-colisao, secoes 4.3 e 8), com os mesmos
+    /// vetores do app (P1-2). `current_budgets` ja seguia a regra; estes testes a fixam, nas
+    /// duas ordens de chegada das linhas.
+    mod regra_r {
+        use super::*;
+
+        const CATEGORY: &str = "01JZ0000000000000000000CT1";
+        const ID_A: &str = "01JZ000000000000000000BGTA";
+        const ID_B: &str = "01JZ000000000000000000BGTB";
+        const H1: &str = "1793000000000-0000-01JZ0000000000000000000DV1";
+        const H2: &str = "1793000000000-0001-01JZ0000000000000000000DV2";
+
+        type Line = (&'static str, Option<&'static str>, i64, bool);
+
+        fn push(s: &mut Seed, (id, updated_at, limit, deleted): Line) {
+            let mut data = json!({ "categoryId": CATEGORY, "limitMinor": limit });
+            if let Some(version) = updated_at {
+                data["updatedAt"] = json!(version);
+            }
+            s.push(BUDGETS, id, deleted, data);
+        }
+
+        fn winner(a: Line, b: Line) -> i64 {
+            let limit = |first: Line, second: Line| {
+                let mut s = Seed::new();
+                s.category(CATEGORY, "Mercado");
+                push(&mut s, first);
+                push(&mut s, second);
+                let ds = s.dataset();
+                let current = current_budgets(&ds);
+                assert_eq!(current.len(), 1);
+                current[0].0.limit_minor
+            };
+            let forward = limit(a, b);
+            assert_eq!(forward, limit(b, a), "a ordem mudou o vencedor");
+            forward
+        }
+
+        #[test]
+        fn r1_updated_at_maior_vence_mesmo_com_id_menor() {
+            assert_eq!(
+                winner(
+                    (ID_A, Some(H2), 20_000, false),
+                    (ID_B, Some(H1), 30_000, false)
+                ),
+                20_000
+            );
+        }
+
+        #[test]
+        fn r2_empate_de_updated_at_vence_o_id_maior() {
+            assert_eq!(
+                winner(
+                    (ID_A, Some(H1), 20_000, false),
+                    (ID_B, Some(H1), 30_000, false)
+                ),
+                30_000
+            );
+        }
+
+        #[test]
+        fn r3_sem_updated_at_perde_mesmo_com_id_maior() {
+            assert_eq!(
+                winner((ID_A, Some(H1), 20_000, false), (ID_B, None, 30_000, false)),
+                20_000
+            );
+        }
+
+        #[test]
+        fn r4_apagada_nao_concorre_mesmo_mais_nova() {
+            assert_eq!(
+                winner(
+                    (ID_A, Some(H2), 20_000, true),
+                    (ID_B, Some(H1), 30_000, false)
+                ),
+                30_000
+            );
+        }
+    }
+
     #[test]
     fn categoria_fundida_reune_gasto_e_metas() {
         let mut s = Seed::new();

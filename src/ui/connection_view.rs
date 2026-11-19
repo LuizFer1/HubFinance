@@ -158,8 +158,9 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
                 ..container::Style::default()
             })
     };
-    let placeholder =
-        || -> Element<'static, Message> { icons::icon(icons::QR_CODE, 64.0, t.neutral_700) };
+    let placeholder = || -> Element<'static, Message> {
+        icons::icon(icons::QR_CODE, 64.0, theme::DARK.neutral_700)
+    };
 
     let mut col = column![]
         .spacing(8)

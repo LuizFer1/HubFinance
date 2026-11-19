@@ -17,17 +17,13 @@ use super::connection_view;
 use super::remove_view;
 use super::theme::Tokens;
 use crate::config::{self, ThemeMode, UiPrefs};
-use crate::dashboard::business::{BusinessPanel, business_panel};
 use crate::dashboard::contract::Book;
 use crate::dashboard::dataset::{Dataset, avatar_bytes};
 use crate::dashboard::grafite::{GrafiteView, build_grafite};
 use crate::dashboard::list::{Filters, NONE_KEY, TypeFilter};
 use crate::dashboard::people::{DeviceInfo, Person, people};
 use crate::dashboard::periods::month_window;
-use crate::dashboard::view::{
-    DashboardView, ReservesView, TransactionsView, build_dashboard, build_reserves,
-    build_transactions,
-};
+use crate::dashboard::view::{ReservesView, TransactionsView, build_reserves, build_transactions};
 use crate::desktop::{Desktop, DesktopEvent, EventReceiver};
 use crate::hub::snapshot::{DeviceView, Snapshot, Status};
 use crate::hub::{Command, HubHandle};
@@ -161,27 +157,23 @@ pub struct App {
     /// O dataset do snapshot visto por `book`: toda tela e contagem le daqui, nunca do total
     /// (`Dataset::for_book`). Recalculado em `rebuild`, junto com os modelos de tela.
     pub(super) scope: Dataset,
-    /// Bloco "Negócio" do Dashboard: só existe com a conta comercial selecionada (a pessoal
-    /// nunca mostra capital nem dívidas). Recalculado em `rebuild`.
-    pub(super) business: Option<BusinessPanel>,
     /// Filtros da tela Lancamentos; sobrevivem a troca de mes.
     pub(super) filters: Filters,
     /// Modelos de tela, recalculados so quando dados, mes, filtros ou "hoje" mudam: desenhar
     /// um quadro nunca percorre o dataset.
-    pub(super) dashboard: DashboardView,
-    /// Modelo do Dashboard Grafite. Na H4a a casca (lateral e cabecalho) ja le daqui; o corpo
-    /// passa a ler na H4b, que apaga o `dashboard` antigo.
-    pub(super) grafite: GrafiteView,
+    pub(super) dashboard: GrafiteView,
+    /// "Ver todas as N" de "Próximas saídas" abriu a lista no lugar. Volta a fechar ao trocar
+    /// de mes ou de conta, nao a cada sync (fecharia na cara de quem esta lendo).
+    pub(super) upcoming_expanded: bool,
     pub(super) transactions: TransactionsView,
     /// Tela Reservas: sem mes escolhido (saldos sao acumulados), so depende de dados e "hoje".
     pub(super) reserves: ReservesView,
     /// Menu de categoria da tela Lancamentos aberto.
     pub(super) cat_menu_open: bool,
-    /// Categoria sob o mouse na legenda da rosca.
-    pub(super) hover_category: Option<String>,
-    /// Geometria dos graficos; limpa quando dados, mes, hover da legenda ou tema mudam.
-    pub(super) donut_cache: canvas::Cache,
-    pub(super) bars_cache: canvas::Cache,
+    /// Geometria dos graficos; limpa quando dados, mes, tema ou "Ocultar valores" mudam (os
+    /// rotulos em R$ ficam gravados nela).
+    pub(super) pace_cache: canvas::Cache,
+    pub(super) history_cache: canvas::Cache,
     pub(super) empty_cache: canvas::Cache,
     /// Grafico empilhado e esqueleto vazio da tela Reservas.
     pub(super) reserves_cache: canvas::Cache,
@@ -220,11 +212,8 @@ pub enum Message {
     SelectBook(Book),
     /// Olho do cabecalho do Dashboard: "Ocultar valores" / "Mostrar valores".
     ToggleHideValues,
-    /// Mouse entrou numa linha da legenda da rosca.
-    HoverCategory(String),
-    /// Mouse saiu: so limpa se ainda for a mesma (a saida pode chegar depois da entrada na
-    /// vizinha).
-    UnhoverCategory(String),
+    /// "Ver todas as N" de "Próximas saídas": abre a lista inteira no card.
+    ExpandUpcoming,
     /// Abre ou fecha o menu de categoria (o botao alterna, como no prototipo).
     ToggleCategoryMenu,
     CloseCategoryMenu,
@@ -323,16 +312,14 @@ impl App {
             month_idx: 0,
             book: Book::Personal,
             scope: Dataset::default(),
-            business: None,
             filters: Filters::default(),
-            dashboard: DashboardView::default(),
-            grafite: GrafiteView::default(),
+            dashboard: GrafiteView::default(),
+            upcoming_expanded: false,
             transactions: TransactionsView::default(),
             reserves: ReservesView::default(),
             cat_menu_open: false,
-            hover_category: None,
-            donut_cache: canvas::Cache::new(),
-            bars_cache: canvas::Cache::new(),
+            pace_cache: canvas::Cache::new(),
+            history_cache: canvas::Cache::new(),
             empty_cache: canvas::Cache::new(),
             reserves_cache: canvas::Cache::new(),
             reserves_empty_cache: canvas::Cache::new(),
@@ -405,11 +392,9 @@ impl App {
         self.scope = self.snapshot.dashboard.for_book(self.book);
         let dataset = &self.scope;
         let month = self.month().to_string();
-        self.dashboard = build_dashboard(dataset, &self.today, &month);
-        self.business = (self.book == Book::Business).then(|| business_panel(dataset, &month));
         self.transactions = build_transactions(dataset, &self.today, &month, &self.filters);
         self.reserves = build_reserves(dataset, &self.today);
-        self.rebuild_grafite();
+        self.rebuild_dashboard();
         // "N lançamentos sincronizados de K aparelhos": so aparelhos ativos que ja enviaram.
         self.transactions.synced_devices = self
             .snapshot
@@ -422,9 +407,9 @@ impl App {
         tracing::trace!("telas recalculadas para {month}");
     }
 
-    /// So o modelo Grafite: ocultar valores muda o texto de cada R$, nada das outras telas.
-    fn rebuild_grafite(&mut self) {
-        self.grafite = build_grafite(
+    /// So o Dashboard: ocultar valores muda o texto de cada R$, nada das outras telas.
+    fn rebuild_dashboard(&mut self) {
+        self.dashboard = build_grafite(
             &self.scope,
             &self.today,
             self.month(),
@@ -442,7 +427,7 @@ impl App {
         self.book = book;
         self.filters = Filters::default();
         self.cat_menu_open = false;
-        self.hover_category = None;
+        self.upcoming_expanded = false;
     }
 
     /// Muda os filtros e recalcula so se mudaram de fato.
@@ -477,8 +462,8 @@ impl App {
     }
 
     fn clear_charts(&self) {
-        self.donut_cache.clear();
-        self.bars_cache.clear();
+        self.pace_cache.clear();
+        self.history_cache.clear();
         self.empty_cache.clear();
         self.reserves_cache.clear();
         self.reserves_empty_cache.clear();
@@ -714,7 +699,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::PrevMonth => {
             if app.month_idx > 0 {
                 app.month_idx -= 1;
-                app.hover_category = None;
+                app.upcoming_expanded = false;
                 app.rebuild();
             }
             Task::none()
@@ -722,7 +707,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::NextMonth => {
             if app.month_idx + 1 < app.months.len() {
                 app.month_idx += 1;
-                app.hover_category = None;
+                app.upcoming_expanded = false;
                 app.rebuild();
             }
             Task::none()
@@ -737,16 +722,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::HoverCategory(key) => {
-            app.hover_category = Some(key);
-            app.donut_cache.clear();
-            Task::none()
-        }
-        Message::UnhoverCategory(key) => {
-            if app.hover_category.as_ref() == Some(&key) {
-                app.hover_category = None;
-                app.donut_cache.clear();
-            }
+        Message::ExpandUpcoming => {
+            app.upcoming_expanded = true;
             Task::none()
         }
         Message::CloseRequested => {
@@ -861,7 +838,9 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ToggleHideValues => {
             app.hide_values = !app.hide_values;
-            app.rebuild_grafite();
+            app.rebuild_dashboard();
+            // Os rotulos em R$ dos graficos estao gravados na geometria em cache.
+            app.clear_charts();
             Task::perform(save_prefs(app.prefs(), app.prefs_dir.clone()), |_| {
                 Message::Noop
             })
@@ -1275,18 +1254,18 @@ pub(super) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
         assert!(!app.hide_values);
-        assert!(!app.grafite.hidden);
-        assert_eq!(app.grafite.header.hide_toggle, "Ocultar valores");
-        let shown = format!("{:?}", app.grafite.how_am_i);
+        assert!(!app.dashboard.hidden);
+        assert_eq!(app.dashboard.header.hide_toggle, "Ocultar valores");
+        let shown = format!("{:?}", app.dashboard.how_am_i);
         assert!(shown.contains("R$ "), "{shown}");
 
         let _ = update(&mut app, Message::ToggleHideValues);
         assert!(app.hide_values);
-        assert!(app.grafite.hidden);
-        assert_eq!(app.grafite.header.hide_toggle, "Mostrar valores");
+        assert!(app.dashboard.hidden);
+        assert_eq!(app.dashboard.header.hide_toggle, "Mostrar valores");
         // O mes e a conta continuam: so o texto dos valores muda.
-        assert_eq!(app.grafite.month, app.month());
-        let hidden = format!("{:?}", app.grafite.how_am_i);
+        assert_eq!(app.dashboard.month, app.month());
+        let hidden = format!("{:?}", app.dashboard.how_am_i);
         assert!(hidden.contains("•••"), "{hidden}");
         wait_prefs(dir.path(), |p| p.hide_values);
 
@@ -1296,7 +1275,7 @@ pub(super) mod tests {
         assert!(UiPrefs::load(dir.path()).hide_values);
 
         let _ = update(&mut app, Message::ToggleHideValues);
-        assert!(!app.grafite.hidden);
+        assert!(!app.dashboard.hidden);
         wait_prefs(dir.path(), |p| !p.hide_values);
         assert_eq!(UiPrefs::load(dir.path()).theme, ThemeMode::Light);
     }
@@ -1323,8 +1302,8 @@ pub(super) mod tests {
             Rc::new(Headless),
         );
         assert!(app.hide_values);
-        assert!(app.grafite.hidden);
-        assert_eq!(app.grafite.header.hide_toggle, "Mostrar valores");
+        assert!(app.dashboard.hidden);
+        assert_eq!(app.dashboard.header.hide_toggle, "Mostrar valores");
     }
 
     #[test]
@@ -1990,7 +1969,10 @@ pub(super) mod tests {
         assert_eq!(app.month(), "2026-09");
         assert_eq!(app.dashboard.month, "2026-09");
         assert!(app.dashboard.is_current);
-        assert_eq!(app.dashboard.partial_until.as_deref(), Some("24 set"));
+        assert_eq!(
+            app.dashboard.header.partial.as_deref(),
+            Some("Parcial · até 24 set")
+        );
         assert_eq!(app.transactions.list.count, 7);
         // So D1: D2 nunca enviou, D3 foi revogado.
         assert_eq!(app.transactions.synced_devices, 1);
@@ -2006,7 +1988,8 @@ pub(super) mod tests {
         assert_eq!(app.month(), "2026-08");
         assert_eq!(app.dashboard.month, "2026-08");
         assert!(!app.dashboard.is_current);
-        assert_eq!(app.dashboard.partial_until, None);
+        assert_eq!(app.dashboard.header.partial, None);
+        assert!(app.dashboard.whats_next.is_none());
         assert_eq!(app.transactions.month, "2026-08");
         for _ in 0..20 {
             let _ = update(&mut app, Message::PrevMonth);
@@ -2046,22 +2029,81 @@ pub(super) mod tests {
         };
         let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
         assert!(!app.dashboard.is_empty);
-        assert_eq!(app.dashboard.recent.len(), 6);
+        assert_eq!(
+            app.dashboard.recent.lines.len(),
+            crate::dashboard::grafite::RECENT_LINES
+        );
     }
 
     #[test]
-    fn hover_da_legenda_tolera_saida_atrasada_e_some_ao_trocar_de_mes() {
+    fn ver_todas_abre_no_lugar_sobrevive_ao_sync_e_fecha_ao_trocar_de_mes() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
-        let _ = update(&mut app, Message::HoverCategory("C1".into()));
-        let _ = update(&mut app, Message::HoverCategory("C2".into()));
-        let _ = update(&mut app, Message::UnhoverCategory("C1".into()));
-        assert_eq!(app.hover_category.as_deref(), Some("C2"));
-        let _ = update(&mut app, Message::UnhoverCategory("C2".into()));
-        assert_eq!(app.hover_category, None);
-        let _ = update(&mut app, Message::HoverCategory("C2".into()));
+        assert!(!app.upcoming_expanded);
+        let _ = update(&mut app, Message::ExpandUpcoming);
+        assert!(app.upcoming_expanded);
+        // Um sync novo recalcula a tela mas nao fecha a lista de quem esta lendo.
+        let snap = Snapshot {
+            dashboard: std::sync::Arc::new(crate::dashboard::fixtures()),
+            ..Snapshot::default()
+        };
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert!(app.upcoming_expanded);
         let _ = update(&mut app, Message::PrevMonth);
-        assert_eq!(app.hover_category, None);
+        assert!(!app.upcoming_expanded);
+    }
+
+    /// Monta a arvore do Dashboard nos estados da spec 7 e nas larguras dos dois lados de 1100:
+    /// pega indice fora da lista, divisao por zero em layout e secao esquecida sem abrir janela.
+    fn view_all_widths(app: &mut App) {
+        for content in [1400.0, 1100.0, 1099.0, 900.0, 700.0] {
+            app.window_size = Size::new(content + 232.0 + 64.0, 900.0);
+            let _ = super::super::dashboard_view::view(app);
+        }
+    }
+
+    #[test]
+    fn dashboard_monta_em_todos_os_estados_e_larguras() {
+        use crate::dashboard::grafite::{HistoryBody, HistoryChart, HistoryColumn, Section};
+        let dir = tempfile::tempdir().unwrap();
+        let snap = Snapshot {
+            dashboard: std::sync::Arc::new(crate::dashboard::fixtures_grafite()),
+            ..Snapshot::default()
+        };
+        let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
+        app.set_today("2026-11-19".into());
+        assert!(app.dashboard.sections().contains(&Section::WhatsNext));
+        view_all_widths(&mut app);
+        let _ = update(&mut app, Message::ExpandUpcoming);
+        view_all_widths(&mut app);
+        let _ = update(&mut app, Message::ToggleHideValues);
+        assert!(app.dashboard.hidden);
+        view_all_widths(&mut app);
+        // Mes fechado: sem "O que vem".
+        let _ = update(&mut app, Message::PrevMonth);
+        assert!(!app.dashboard.sections().contains(&Section::WhatsNext));
+        view_all_widths(&mut app);
+        // Doze meses em grafico (o modelo decide a partir do 4o mes).
+        app.dashboard.history.body = HistoryBody::Chart(HistoryChart {
+            columns: (0..12)
+                .map(|i| HistoryColumn {
+                    label: "out".into(),
+                    existed: i > 3,
+                    partial: i == 11,
+                    income: 0.8,
+                    expense: 0.5,
+                    rate: (i > 3).then_some(0.4),
+                    tooltip: (i > 3).then(|| "out 2026 · receitas R$ •••".into()),
+                })
+                .collect(),
+            ..HistoryChart::default()
+        });
+        view_all_widths(&mut app);
+        // Hub sem dados.
+        let (mut empty, _rx2, _tx2) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        empty.set_today("2026-11-19".into());
+        assert_eq!(empty.dashboard.sections(), vec![Section::Empty]);
+        view_all_widths(&mut empty);
     }
 
     #[test]
@@ -2649,9 +2691,14 @@ pub(super) mod tests {
             super::super::shell::transactions_count(&app),
             crate::dashboard::fixtures().alive_transactions().count()
         );
-        let plain =
-            crate::dashboard::aggregate::month_summary(&crate::dashboard::fixtures(), "2026-09");
-        assert_eq!(app.dashboard.summary, plain);
+        let plain = crate::dashboard::grafite::build_grafite(
+            &crate::dashboard::fixtures(),
+            "2026-09-24",
+            "2026-09",
+            Book::Personal,
+            false,
+        );
+        assert_eq!(app.dashboard.how_am_i, plain.how_am_i);
     }
 
     #[test]
@@ -2660,8 +2707,8 @@ pub(super) mod tests {
         let (mut app, _tx) = app_with_business(dir.path(), true, false);
         let _ = update(&mut app, Message::SelectBook(Book::Business));
         assert_eq!(app.book, Book::Business);
-        assert_eq!(app.dashboard.summary.current.income_minor, 90_000);
-        assert_eq!(app.dashboard.summary.current.expense_minor, 0);
+        assert_eq!(app.dashboard.how_am_i.income.value, "R$ 900,00");
+        assert_eq!(app.dashboard.how_am_i.expense.value, "R$ 0,00");
         assert_eq!(app.transactions.list.count, 1);
         assert_eq!(super::super::shell::transactions_count(&app), 1);
         assert_eq!(
@@ -2677,18 +2724,21 @@ pub(super) mod tests {
     fn bloco_negocio_so_aparece_na_conta_comercial() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _tx) = app_with_business(dir.path(), true, false);
-        assert_eq!(app.business, None);
+        assert_eq!(app.dashboard.business, None);
         let _ = update(&mut app, Message::SelectBook(Book::Business));
-        let panel = app.business.expect("painel na conta comercial");
+        let block = app
+            .dashboard
+            .business
+            .clone()
+            .expect("bloco na conta comercial");
         // Mesmos numeros do resumo da conta, e bens/dividas fora de receita e despesa.
+        assert_eq!(block.income.value, app.dashboard.how_am_i.income.value);
+        assert_eq!(block.expense.value, app.dashboard.how_am_i.expense.value);
         assert_eq!(
-            panel.income_minor,
-            app.dashboard.summary.current.income_minor
+            app.dashboard.sections().first(),
+            Some(&crate::dashboard::grafite::Section::Business)
         );
-        assert_eq!(
-            panel.expense_minor,
-            app.dashboard.summary.current.expense_minor
-        );
+        let panel = crate::dashboard::business::business_panel(&app.scope, app.month());
         assert_eq!((panel.income_minor, panel.result_minor), (90_000, 90_000));
         assert_eq!(panel.equipment_minor, 200_000);
         assert_eq!(panel.inventory_minor, 100_000);
@@ -2696,7 +2746,15 @@ pub(super) mod tests {
         assert_eq!(panel.capital_minor, 300_000);
         assert_eq!(panel.debt_minor, 50_000);
         let _ = update(&mut app, Message::SelectBook(Book::Personal));
-        assert_eq!(app.business, None);
+        assert_eq!(app.dashboard.business, None);
+    }
+
+    #[test]
+    fn dashboard_comercial_monta_com_o_negocio_primeiro() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), true, false);
+        let _ = update(&mut app, Message::SelectBook(Book::Business));
+        view_all_widths(&mut app);
     }
 
     #[test]

@@ -22,9 +22,6 @@ pub const CARET_RIGHT: &str = "\u{E13A}";
 pub const CARET_DOWN: &str = "\u{E136}";
 pub const TREND_UP: &str = "\u{E4AE}";
 pub const TREND_DOWN: &str = "\u{E4AC}";
-pub const ARROW_DOWN_LEFT: &str = "\u{E040}";
-pub const ARROW_UP_RIGHT: &str = "\u{E092}";
-pub const ARROW_RIGHT: &str = "\u{E06C}";
 pub const CHECK: &str = "\u{E182}";
 pub const FUNNEL_X: &str = "\u{E26C}";
 pub const REPEAT: &str = "\u{E3F6}";
@@ -89,7 +86,7 @@ pub const EYE_SLASH: &str = "\u{E224}";
 
 /// Todas as constantes, para o teste garantir que nenhuma ficou vazia.
 #[cfg(test)]
-pub const ALL: [&str; 70] = [
+pub const ALL: [&str; 67] = [
     HOUSE_LINE,
     CHART_PIE_SLICE,
     LIST_BULLETS,
@@ -102,9 +99,6 @@ pub const ALL: [&str; 70] = [
     CARET_DOWN,
     TREND_UP,
     TREND_DOWN,
-    ARROW_DOWN_LEFT,
-    ARROW_UP_RIGHT,
-    ARROW_RIGHT,
     CHECK,
     FUNNEL_X,
     REPEAT,

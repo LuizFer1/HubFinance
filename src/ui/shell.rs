@@ -310,12 +310,12 @@ pub(super) fn nav_entries(app: &App) -> [NavEntry; 4] {
 
 /// Lancamentos vivos da conta escolhida (do modelo do Dashboard, que ja os contou).
 pub(super) fn transactions_count(app: &App) -> usize {
-    app.grafite.sidebar.transactions
+    app.dashboard.sidebar.transactions
 }
 
 /// Reservas vivas da conta escolhida.
 pub(super) fn reserves_count(app: &App) -> usize {
-    app.grafite.sidebar.reserves
+    app.dashboard.sidebar.reserves
 }
 
 /// Aparelhos ativos: e o numero de linhas da lista "Usuarios conectados" (sem a remocao
@@ -435,7 +435,7 @@ pub(super) fn has_data(app: &App) -> bool {
 
 /// Ha lancamento vivo: o estado vazio do Dashboard e de Lancamentos e sobre lancamentos.
 pub(super) fn has_transactions(app: &App) -> bool {
-    app.grafite.sidebar.has_data
+    app.dashboard.sidebar.has_data
 }
 
 /// "Último sync há 2 min · Pixel da Ana": o maior entre envio e recebimento de todos os
@@ -593,7 +593,7 @@ fn header(app: &App) -> Element<'_, Message> {
         let next = (app.month_idx + 1 < app.months.len()).then_some(Message::NextMonth);
         controls = controls.push(widgets::month_picker(
             t,
-            &app.grafite.header.month_label,
+            &app.dashboard.header.month_label,
             prev,
             next,
         ));
@@ -622,7 +622,7 @@ fn header(app: &App) -> Element<'_, Message> {
 /// modelo ja decide as duas ultimas).
 pub(super) fn partial_chip(app: &App) -> Option<&str> {
     matches!(app.screen, Screen::Dashboard | Screen::Transactions)
-        .then_some(app.grafite.header.partial.as_deref())
+        .then_some(app.dashboard.header.partial.as_deref())
         .flatten()
 }
 
@@ -644,7 +644,7 @@ fn hide_values_button(app: &App) -> Element<'_, Message> {
     tooltip(
         eye,
         container(
-            text(app.grafite.header.hide_toggle.as_str())
+            text(app.dashboard.header.hide_toggle.as_str())
                 .size(12)
                 .color(t.text),
         )
@@ -676,8 +676,8 @@ pub(super) fn titles(app: &App) -> (&str, String) {
     let empty = !has_transactions(app);
     match app.screen {
         Screen::Dashboard => (
-            app.grafite.header.title.as_str(),
-            app.grafite.header.subtitle.clone(),
+            app.dashboard.header.title.as_str(),
+            app.dashboard.header.subtitle.clone(),
         ),
         Screen::Transactions => (
             "Lançamentos",
@@ -951,7 +951,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
         assert_eq!(partial_chip(&app), Some("Parcial · até 24 set"));
-        assert_eq!(app.grafite.header.month_label, "Set 2026");
+        assert_eq!(app.dashboard.header.month_label, "Set 2026");
         app.screen = Screen::Transactions;
         assert_eq!(partial_chip(&app), Some("Parcial · até 24 set"));
         // Reservas e Conexao nao tem seletor de mes.
@@ -963,7 +963,7 @@ mod tests {
         app.screen = Screen::Dashboard;
         let _ = super::super::app::update(&mut app, Message::PrevMonth);
         assert_eq!(partial_chip(&app), None);
-        assert_eq!(app.grafite.header.month_label, "Ago 2026");
+        assert_eq!(app.dashboard.header.month_label, "Ago 2026");
 
         let (mut empty, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
         empty.set_today("2026-09-24".into());
@@ -1008,9 +1008,9 @@ mod tests {
         let labels: Vec<&str> = entries.iter().map(|e| e.label).collect();
         assert_eq!(labels, ["Dashboard", "Lançamentos", "Reservas", "Conexão"]);
         assert_eq!(entries[0].count, None);
-        assert_eq!(entries[1].count, Some(app.grafite.sidebar.transactions));
+        assert_eq!(entries[1].count, Some(app.dashboard.sidebar.transactions));
         assert_eq!(entries[1].count, Some(13));
-        assert_eq!(entries[2].count, Some(app.grafite.sidebar.reserves));
+        assert_eq!(entries[2].count, Some(app.dashboard.sidebar.reserves));
         // D1 e D2 ativos; D3 revogado.
         assert_eq!(entries[3].count, Some(2));
     }

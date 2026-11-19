@@ -35,8 +35,9 @@ campos novos que o app já grava.
   achada pelo id estável e nunca conta duas vezes.
 - **Faturas de cartão** calculadas dos lançamentos no cartão (fechamento e vencimento do app);
   a aberta aparece como estimativa ("~").
-- **Ocultar valores:** o olho no cabeçalho do Dashboard troca todo valor em R$ por pontos (as
-  porcentagens ficam). A escolha fica no `ui.json` (`hide_values`), gravada só quando ligada.
+- **Ocultar valores:** o olho no cabeçalho do Dashboard troca todo valor por "R$ •••••" (e os
+  rótulos dos eixos por "•••"); as porcentagens ficam. A escolha fica no `ui.json`
+  (`hide_values`), gravada só quando ligada.
 - Lateral e cabeçalho novos em todas as telas: marca em tile, contagens na navegação, seção
   "Hub" com Conexão, card de status com halo; cabeçalho com o chip "Parcial" no mês corrente, o
   seletor Pessoal | Comercial e o mês ("Nov 2026").

@@ -84,7 +84,29 @@ impl Book {
     }
 }
 
-/// `src/domain/model/transaction.ts`. Nao lidos: `currency`, `cashbackMinor`, `occurrenceKey`.
+// ---- Campos novos em tabela existente: leitura em duas etapas ----
+//
+// Etapa 1: o serde aceita qualquer JSON (`Option<Value>`) e nunca derruba a linha. Etapa 2: uma
+// funcao pura interpreta; o que nao se interpreta degrada (a linha continua somando, so deixa de
+// ser "projetavel"). Linha de app antigo, sem o campo, tem de continuar exatamente como era.
+// `Option<Value>` le `null` e ausente igual (`None`); o app grava esses campos anulaveis, entao
+// nos dois casos o significado e o mesmo.
+
+fn str_of(value: Option<&serde_json::Value>) -> Option<&str> {
+    value.and_then(serde_json::Value::as_str)
+}
+
+/// Inteiro JSON (`12`). `12.5`, `"12"` e `12.0` nao: o app grava com `JSON.stringify`, que
+/// escreve `12` para inteiro, entao `12.0` so viria de outro escritor.
+fn int_of(value: Option<&serde_json::Value>) -> Option<i64> {
+    value.and_then(serde_json::Value::as_i64)
+}
+
+fn is_true(value: Option<&serde_json::Value>) -> bool {
+    matches!(value, Some(serde_json::Value::Bool(true)))
+}
+
+/// `src/domain/model/transaction.ts`. Nao lidos: `currency`, `cashbackMinor`.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionFields {
@@ -109,6 +131,12 @@ pub struct TransactionFields {
     /// de outro tipo JSON) nao fazer a *linha* ser ignorada.
     #[serde(default)]
     pub book: Option<serde_json::Value>,
+    /// Ocorrencia de serie "valor varia" ainda nao confirmada. Ver `estimated()`.
+    #[serde(default)]
+    pub estimated: Option<serde_json::Value>,
+    /// `"<recurrenceId>:<periodo>"` da ocorrencia. Ver `occurrence_key()`.
+    #[serde(default)]
+    pub occurrence_key: Option<serde_json::Value>,
 }
 
 impl TransactionFields {
@@ -118,6 +146,17 @@ impl TransactionFields {
 
     pub fn report_state(&self) -> Option<ReportState> {
         self.report_state.as_ref().and_then(ReportState::from_value)
+    }
+
+    /// So `true` e estimada (`estimated !== true` do app): linha anterior a coluna, `null` ou
+    /// valor de outro tipo e valor real, confirmado.
+    pub fn estimated(&self) -> bool {
+        is_true(self.estimated.as_ref())
+    }
+
+    /// Texto vira chave; qualquer outro tipo e "sem chave" (avulso para a estimativa).
+    pub fn occurrence_key(&self) -> Option<&str> {
+        str_of(self.occurrence_key.as_ref())
     }
 }
 
@@ -171,15 +210,131 @@ pub struct PaymentMethodFields {
     /// de outro tipo JSON) nao fazer a *linha* ser ignorada.
     #[serde(default)]
     pub book: Option<serde_json::Value>,
+    /// `cash`, `pix`, `credit`... So `credit` importa (cartao); ver `card()`.
+    #[serde(default)]
+    pub kind: Option<serde_json::Value>,
+    #[serde(default)]
+    pub bank: Option<serde_json::Value>,
+    #[serde(default)]
+    pub closing_day: Option<serde_json::Value>,
+    #[serde(default)]
+    pub due_day: Option<serde_json::Value>,
+}
+
+/// Dados de um cartao completo: o bastante para calcular fatura (`cards/card.ts` do app).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Card {
+    /// Ja aparado.
+    pub bank: String,
+    pub closing_day: u8,
+    pub due_day: u8,
+}
+
+/// `isValidCardDay` do app: inteiro de 1 a 31. Texto, 0, 32 ou decimal de outra versao nao
+/// passam: vira "cartao por completar" em vez de uma fatura com data inventada.
+pub fn card_day(value: Option<&serde_json::Value>) -> Option<u8> {
+    int_of(value)
+        .filter(|d| (1..=31).contains(d))
+        .and_then(|d| u8::try_from(d).ok())
 }
 
 impl PaymentMethodFields {
     pub fn book(&self) -> Book {
         Book::from_field(self.book.as_ref())
     }
+
+    pub fn is_credit(&self) -> bool {
+        str_of(self.kind.as_ref()) == Some("credit")
+    }
+
+    /// `isCompleteCard` do app: credito, banco nao vazio depois de aparar e os dois dias
+    /// validos. Qualquer outro caso e uma forma de pagamento valida sem fatura, nunca linha
+    /// ignorada: o "Cartao de credito" generico de antes dos cartoes continua somando.
+    pub fn card(&self) -> Option<Card> {
+        if !self.is_credit() {
+            return None;
+        }
+        let bank = str_of(self.bank.as_ref())?.trim();
+        if bank.is_empty() {
+            return None;
+        }
+        Some(Card {
+            bank: bank.to_string(),
+            closing_day: card_day(self.closing_day.as_ref())?,
+            due_day: card_day(self.due_day.as_ref())?,
+        })
+    }
+
+    pub fn is_complete_card(&self) -> bool {
+        self.card().is_some()
+    }
 }
 
-/// `src/domain/model/recurrence.ts`: so a frequencia, para o rotulo da tag ("Mensal").
+/// `RECURRENCE_FREQUENCIES` do app. Valor fora daqui (versao futura) nao gera ocorrencia: a
+/// serie fica parada em vez de o hub inventar um passo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Frequency {
+    Weekly,
+    Biweekly,
+    Monthly,
+    Bimonthly,
+    Quarterly,
+    Semiannual,
+    Annual,
+}
+
+impl Frequency {
+    pub fn parse(text: &str) -> Option<Self> {
+        Some(match text {
+            "weekly" => Self::Weekly,
+            "biweekly" => Self::Biweekly,
+            "monthly" => Self::Monthly,
+            "bimonthly" => Self::Bimonthly,
+            "quarterly" => Self::Quarterly,
+            "semiannual" => Self::Semiannual,
+            "annual" => Self::Annual,
+            _ => return None,
+        })
+    }
+
+    /// Semanal e quinzenal andam em dias e a competencia e a propria data (`YYYY-MM-DD`); as
+    /// demais andam em meses e a competencia e `YYYY-MM` (`isDayStep` do app).
+    pub fn is_day_step(self) -> bool {
+        matches!(self, Self::Weekly | Self::Biweekly)
+    }
+}
+
+/// Dia da ocorrencia dentro da competencia mensal (`scheduleType` + `scheduleN`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Schedule {
+    /// Dia civil, limitado ao ultimo do mes (`dayOfMonthClamped`).
+    DayOfMonth(u32),
+    /// N-esimo dia util (`nthBusinessDayOfMonth`).
+    NthBusinessDay(u32),
+}
+
+/// A regra de uma serie, so quando tudo o que a projecao precisa e interpretavel (spec 4.2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecurrenceRule {
+    pub frequency: Frequency,
+    /// `None` so em semanal/quinzenal, onde a competencia ja e a data e o app ignora a agenda
+    /// do mes (`occurrenceOn`); serie mensal sem agenda valida nao tem regra.
+    pub schedule: Option<Schedule>,
+    pub kind: Kind,
+    pub amount_minor: i64,
+    /// Data na forma `YYYY-MM-DD` (`is_iso_date`): e ela que garante que um laco de
+    /// `periods::shift_day` a partir daqui avanca.
+    pub start_on: String,
+    pub end_on: Option<String>,
+    pub active: bool,
+    pub variable: bool,
+    /// So inteiro > 0; senao `None` e a 1a ocorrencia usa `amount_minor`.
+    pub first_amount_minor: Option<i64>,
+}
+
+/// `src/domain/model/recurrence.ts`. `frequency` continua obrigatorio como sempre foi (e o
+/// rotulo da tag); os outros 13 sao etapa 1 (`Option<Value>`) e so `rule()` os interpreta.
+/// Nao lidos: `currency`, `cashbackMinor`.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecurrenceFields {
@@ -188,9 +343,131 @@ pub struct RecurrenceFields {
     /// de outro tipo JSON) nao fazer a *linha* ser ignorada.
     #[serde(default)]
     pub book: Option<serde_json::Value>,
+    #[serde(default)]
+    pub kind: Option<serde_json::Value>,
+    #[serde(default)]
+    pub description: Option<serde_json::Value>,
+    #[serde(default)]
+    pub amount_minor: Option<serde_json::Value>,
+    #[serde(default)]
+    pub category_id: Option<serde_json::Value>,
+    #[serde(default)]
+    pub payment_method_id: Option<serde_json::Value>,
+    #[serde(default)]
+    pub schedule_type: Option<serde_json::Value>,
+    #[serde(default)]
+    pub schedule_n: Option<serde_json::Value>,
+    #[serde(default)]
+    pub start_on: Option<serde_json::Value>,
+    #[serde(default)]
+    pub end_on: Option<serde_json::Value>,
+    #[serde(default)]
+    pub active: Option<serde_json::Value>,
+    #[serde(default)]
+    pub variable: Option<serde_json::Value>,
+    #[serde(default)]
+    pub first_amount_minor: Option<serde_json::Value>,
+    #[serde(default)]
+    pub user_id: Option<serde_json::Value>,
 }
 
 impl RecurrenceFields {
+    pub fn book(&self) -> Book {
+        Book::from_field(self.book.as_ref())
+    }
+
+    /// `"income"` e receita; **qualquer outro** valor e despesa, como `totals`/`recurringMonth`
+    /// do app tratam a serie.
+    pub fn kind(&self) -> Kind {
+        match str_of(self.kind.as_ref()) {
+            Some("income") => Kind::Income,
+            _ => Kind::Expense,
+        }
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        str_of(self.description.as_ref())
+    }
+
+    pub fn category_id(&self) -> Option<&str> {
+        str_of(self.category_id.as_ref())
+    }
+
+    pub fn payment_method_id(&self) -> Option<&str> {
+        str_of(self.payment_method_id.as_ref())
+    }
+
+    pub fn user_id(&self) -> Option<&str> {
+        str_of(self.user_id.as_ref())
+    }
+
+    /// "Valor varia": so `true`. Lido mesmo sem `rule()`, porque fixo x variavel olha a serie
+    /// de qualquer lancamento com `recurrenceId`, projetavel ou nao.
+    pub fn is_variable(&self) -> bool {
+        is_true(self.variable.as_ref())
+    }
+
+    /// Etapa 2 (spec 4.2): `None` quando algo que a projecao precisa nao se interpreta. Nao e
+    /// "fora do contrato": a linha continua valida, da o rotulo e seus lancamentos somam; a
+    /// serie so nao entra em "proximas" nem na previsao.
+    pub fn rule(&self) -> Option<RecurrenceRule> {
+        let frequency = Frequency::parse(&self.frequency)?;
+        let schedule = match (
+            str_of(self.schedule_type.as_ref()),
+            int_of(self.schedule_n.as_ref())
+                .filter(|n| *n >= 1)
+                .and_then(|n| u32::try_from(n).ok()),
+        ) {
+            (Some("dayOfMonth"), Some(n)) => Some(Schedule::DayOfMonth(n)),
+            (Some("nthBusinessDay"), Some(n)) => Some(Schedule::NthBusinessDay(n)),
+            _ => None,
+        };
+        if schedule.is_none() && !frequency.is_day_step() {
+            return None;
+        }
+        let start_on = str_of(self.start_on.as_ref()).filter(|d| is_iso_date(d))?;
+        let end_on = match self.end_on.as_ref() {
+            None => None,
+            Some(value) => Some(value.as_str().filter(|d| is_iso_date(d))?.to_string()),
+        };
+        // [inventada, spec 4.2] ausente (ou `null`, que o serde le igual) e serie ativa: app
+        // antigo so gravava serie ativa. Outro tipo invalida a regra.
+        let active = match self.active.as_ref() {
+            None => true,
+            Some(value) => value.as_bool()?,
+        };
+        Some(RecurrenceRule {
+            frequency,
+            schedule,
+            kind: self.kind(),
+            amount_minor: int_of(self.amount_minor.as_ref())?,
+            start_on: start_on.to_string(),
+            end_on,
+            active,
+            variable: self.is_variable(),
+            first_amount_minor: int_of(self.first_amount_minor.as_ref()).filter(|v| *v > 0),
+        })
+    }
+}
+
+/// Linha de `recurrenceAdjustments` (`recurrence-adjustment.ts` do app): valor novo de uma serie
+/// a partir de uma competencia. Tabela nova no contrato, entao os tres campos sao obrigatorios
+/// (o app sempre os gravou) e linha sem eles e "fora do contrato", ignorada e contada.
+///
+/// `fromPeriod` nao tem a forma validada: e `YYYY-MM` nas mensais e `YYYY-MM-DD` nas
+/// semanais/quinzenais, e o app so o compara como texto com a competencia (`amountFor`).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecurrenceAdjustmentFields {
+    pub recurrence_id: String,
+    pub from_period: String,
+    pub amount_minor: i64,
+    /// `book` do app; ver `Book::from_field`.
+    #[serde(default)]
+    pub book: Option<serde_json::Value>,
+}
+
+impl RecurrenceAdjustmentFields {
     pub fn book(&self) -> Book {
         Book::from_field(self.book.as_ref())
     }
@@ -464,6 +741,12 @@ pub fn parse_payment_method(data: &str) -> Result<PaymentMethodFields, ContractE
 }
 
 pub fn parse_recurrence(data: &str) -> Result<RecurrenceFields, ContractError> {
+    Ok(serde_json::from_str(data)?)
+}
+
+pub fn parse_recurrence_adjustment(
+    data: &str,
+) -> Result<RecurrenceAdjustmentFields, ContractError> {
     Ok(serde_json::from_str(data)?)
 }
 
@@ -772,6 +1055,344 @@ mod tests {
             "monthly"
         );
         assert!(err_text(parse_recurrence(&without(ok, "frequency"))).contains("frequency"));
+    }
+
+    // ---- contrato ampliado (spec Grafite 4.1-4.4) ----
+
+    /// Serie como o app grava hoje (`recurrence.ts`), com uma regra completa.
+    fn series() -> Value {
+        json!({
+            "id": "RCON",
+            "createdAt": "2026-11-01T12:00:00.000Z",
+            "updatedAt": "1793000000000-0000-01JZ0000000000000000000DV1",
+            "deletedAt": null,
+            "kind": "expense",
+            "description": "Contas da casa",
+            "amountMinor": 53901,
+            "currency": "BRL",
+            "categoryId": "CAT-CONTAS",
+            "paymentMethodId": null,
+            "cashbackMinor": null,
+            "frequency": "monthly",
+            "scheduleType": "dayOfMonth",
+            "scheduleN": 10,
+            "startOn": "2026-11-10",
+            "endOn": null,
+            "active": true,
+            "variable": null,
+            "firstAmountMinor": null,
+            "userId": "UL"
+        })
+    }
+
+    #[test]
+    fn regra_completa_e_interpretada() {
+        let r = parse_recurrence(&series().to_string()).unwrap();
+        assert_eq!(r.kind(), Kind::Expense);
+        assert_eq!(r.description(), Some("Contas da casa"));
+        assert_eq!(r.category_id(), Some("CAT-CONTAS"));
+        assert_eq!(r.payment_method_id(), None);
+        assert_eq!(r.user_id(), Some("UL"));
+        assert!(!r.is_variable());
+        assert_eq!(
+            r.rule(),
+            Some(RecurrenceRule {
+                frequency: Frequency::Monthly,
+                schedule: Some(Schedule::DayOfMonth(10)),
+                kind: Kind::Expense,
+                amount_minor: 53901,
+                start_on: "2026-11-10".into(),
+                end_on: None,
+                active: true,
+                variable: false,
+                first_amount_minor: None,
+            })
+        );
+        let r = parse_recurrence(&with(
+            with(series().clone(), "scheduleType", json!("nthBusinessDay"))
+                .parse()
+                .unwrap(),
+            "scheduleN",
+            json!(5),
+        ))
+        .unwrap();
+        let rule = r.rule().unwrap();
+        assert_eq!(rule.schedule, Some(Schedule::NthBusinessDay(5)));
+        let r = parse_recurrence(&with(series(), "endOn", json!("2027-01-10"))).unwrap();
+        assert_eq!(r.rule().unwrap().end_on.as_deref(), Some("2027-01-10"));
+    }
+
+    #[test]
+    fn recorrencia_so_com_frequency_e_valida_e_sem_regra() {
+        let r = parse_recurrence(r#"{"frequency":"monthly"}"#).unwrap();
+        assert_eq!(r.rule(), None);
+        assert_eq!(r.kind(), Kind::Expense);
+        assert!(!r.is_variable());
+        assert_eq!(r.category_id(), None);
+    }
+
+    #[test]
+    fn campo_novo_com_tipo_errado_nao_derruba_a_linha() {
+        // Todos juntos (o caso da spec 4.6) e cada um sozinho sobre uma regra completa.
+        let mut all = series();
+        for (key, value) in [
+            ("amountMinor", json!("12")),
+            ("active", json!("sim")),
+            ("scheduleN", json!(1.5)),
+            ("variable", json!(3)),
+        ] {
+            all[key] = value.clone();
+            let one = parse_recurrence(&with(series(), key, value.clone())).unwrap();
+            if key == "variable" {
+                // `variable` nao invalida a regra: so `true` liga "valor varia".
+                assert!(!one.rule().unwrap().variable, "{key}");
+                assert!(!one.is_variable());
+            } else {
+                assert_eq!(one.rule(), None, "{key} = {value}");
+            }
+        }
+        let r = parse_recurrence(&all.to_string()).unwrap();
+        assert_eq!(r.rule(), None);
+        for (key, value) in [
+            ("kind", json!(7)),
+            ("description", json!(["x"])),
+            ("categoryId", json!(5)),
+            ("paymentMethodId", json!({})),
+            ("scheduleType", json!("lastFriday")),
+            ("scheduleN", json!(0)),
+            ("scheduleN", json!(-2)),
+            ("startOn", json!("")),
+            ("startOn", json!("10/11/2026")),
+            ("startOn", json!(20261110)),
+            ("endOn", json!("logo")),
+            ("frequency", json!("daily")),
+            ("firstAmountMinor", json!("x")),
+            ("userId", json!(1)),
+        ] {
+            let r = parse_recurrence(&with(series(), key, value.clone()));
+            assert!(r.is_ok(), "{key} = {value} derrubou a linha");
+        }
+        // Os que invalidam a regra.
+        for (key, value) in [
+            ("scheduleType", json!("lastFriday")),
+            ("scheduleN", json!(0)),
+            ("startOn", json!("")),
+            ("startOn", json!("10/11/2026")),
+            ("endOn", json!("logo")),
+            ("frequency", json!("daily")),
+        ] {
+            let r = parse_recurrence(&with(series(), key, value.clone())).unwrap();
+            assert_eq!(r.rule(), None, "{key} = {value}");
+        }
+        // Os que so degradam o proprio campo.
+        let r = parse_recurrence(&with(series(), "categoryId", json!(5))).unwrap();
+        assert_eq!(r.category_id(), None);
+        assert!(r.rule().is_some());
+        let r = parse_recurrence(&with(series(), "firstAmountMinor", json!("x"))).unwrap();
+        assert_eq!(r.rule().unwrap().first_amount_minor, None);
+    }
+
+    #[test]
+    fn frequency_continua_obrigatoria_e_texto() {
+        assert!(parse_recurrence(&without(series(), "frequency")).is_err());
+        assert!(parse_recurrence(&with(series(), "frequency", json!(1))).is_err());
+    }
+
+    #[test]
+    fn kind_que_nao_e_income_e_despesa() {
+        for value in [json!("transfer"), json!(3), Value::Null] {
+            let r = parse_recurrence(&with(series(), "kind", value)).unwrap();
+            assert_eq!(r.kind(), Kind::Expense);
+            assert_eq!(r.rule().unwrap().kind, Kind::Expense);
+        }
+        let r = parse_recurrence(&with(series(), "kind", json!("income"))).unwrap();
+        assert_eq!(r.rule().unwrap().kind, Kind::Income);
+    }
+
+    #[test]
+    fn active_ausente_ou_nulo_vale_true_e_false_pausa() {
+        // [inventada, spec 4.2] ausencia e app antigo, que so gravava serie ativa. `null` chega
+        // ao hub igual a ausente (`Option<Value>`), e o app nunca grava `null` em `active`.
+        let r = parse_recurrence(&without(series(), "active")).unwrap();
+        assert!(r.rule().unwrap().active);
+        let r = parse_recurrence(&with(series(), "active", Value::Null)).unwrap();
+        assert!(r.rule().unwrap().active);
+        let r = parse_recurrence(&with(series(), "active", json!(false))).unwrap();
+        assert!(!r.rule().unwrap().active);
+    }
+
+    #[test]
+    fn semanal_e_quinzenal_nao_exigem_agenda_do_mes() {
+        for frequency in ["weekly", "biweekly"] {
+            let mut v = with(series(), "frequency", json!(frequency))
+                .parse::<Value>()
+                .unwrap();
+            v.as_object_mut().unwrap().remove("scheduleType");
+            v["scheduleN"] = json!("x");
+            let rule = parse_recurrence(&v.to_string()).unwrap().rule().unwrap();
+            assert_eq!(rule.schedule, None, "{frequency}");
+            assert!(rule.frequency.is_day_step());
+        }
+        // Mensais exigem.
+        assert_eq!(
+            parse_recurrence(&without(series(), "scheduleType"))
+                .unwrap()
+                .rule(),
+            None
+        );
+        assert_eq!(
+            parse_recurrence(&without(series(), "scheduleN"))
+                .unwrap()
+                .rule(),
+            None
+        );
+    }
+
+    #[test]
+    fn todas_as_frequencias_do_app_sao_conhecidas() {
+        for (text, f) in [
+            ("weekly", Frequency::Weekly),
+            ("biweekly", Frequency::Biweekly),
+            ("monthly", Frequency::Monthly),
+            ("bimonthly", Frequency::Bimonthly),
+            ("quarterly", Frequency::Quarterly),
+            ("semiannual", Frequency::Semiannual),
+            ("annual", Frequency::Annual),
+        ] {
+            assert_eq!(Frequency::parse(text), Some(f));
+        }
+        assert_eq!(Frequency::parse("daily"), None);
+    }
+
+    #[test]
+    fn valor_varia_e_primeira_parcela() {
+        let r = parse_recurrence(&with(series(), "variable", json!(true))).unwrap();
+        assert!(r.is_variable());
+        assert!(r.rule().unwrap().variable);
+        let r = parse_recurrence(&with(series(), "firstAmountMinor", json!(3334))).unwrap();
+        assert_eq!(r.rule().unwrap().first_amount_minor, Some(3334));
+        for bad in [json!(0), json!(-5), json!(12.5)] {
+            let r = parse_recurrence(&with(series(), "firstAmountMinor", bad)).unwrap();
+            assert_eq!(r.rule().unwrap().first_amount_minor, None);
+        }
+    }
+
+    #[test]
+    fn transacao_sem_estimated_nem_occurrence_key_e_confirmada() {
+        let t = parse_transaction(&tx().to_string()).unwrap();
+        assert!(!t.estimated());
+        assert_eq!(t.occurrence_key(), None);
+        for value in [Value::Null, json!(false), json!("true"), json!(1)] {
+            let t = parse_transaction(&with(tx(), "estimated", value)).unwrap();
+            assert!(!t.estimated());
+        }
+        let t = parse_transaction(&with(tx(), "estimated", json!(true))).unwrap();
+        assert!(t.estimated());
+        let t = parse_transaction(&with(tx(), "occurrenceKey", json!("R1:2026-11"))).unwrap();
+        assert_eq!(t.occurrence_key(), Some("R1:2026-11"));
+        for value in [Value::Null, json!(5), json!(["R1:2026-11"])] {
+            let t = parse_transaction(&with(tx(), "occurrenceKey", value)).unwrap();
+            assert_eq!(t.occurrence_key(), None);
+        }
+    }
+
+    fn card() -> Value {
+        json!({
+            "name": "Mercado Pago", "icon": "credit-card", "color": "violet",
+            "kind": "credit", "bank": "Mercado Pago", "closingDay": 28, "dueDay": 8
+        })
+    }
+
+    #[test]
+    fn cartao_completo() {
+        let p = parse_payment_method(&card().to_string()).unwrap();
+        assert!(p.is_credit());
+        assert!(p.is_complete_card());
+        assert_eq!(
+            p.card(),
+            Some(Card {
+                bank: "Mercado Pago".into(),
+                closing_day: 28,
+                due_day: 8
+            })
+        );
+    }
+
+    #[test]
+    fn forma_de_pagamento_antiga_sem_cartao_e_valida() {
+        let p = parse_payment_method(r#"{"name":"Pix","icon":"zap"}"#).unwrap();
+        assert!(!p.is_credit());
+        assert!(!p.is_complete_card());
+        // Credito sem os dados do cartao (o "Cartao de credito" generico): valido, sem fatura.
+        for key in ["bank", "closingDay", "dueDay"] {
+            let p = parse_payment_method(&without(card(), key)).unwrap();
+            assert!(p.is_credit());
+            assert!(!p.is_complete_card(), "{key}");
+        }
+        for (key, value) in [
+            ("bank", json!("   ")),
+            ("bank", json!(5)),
+            ("kind", json!("debit")),
+            ("kind", json!(1)),
+            ("closingDay", json!("28")),
+            ("dueDay", json!(8.5)),
+        ] {
+            let p = parse_payment_method(&with(card(), key, value.clone())).unwrap();
+            assert!(!p.is_complete_card(), "{key} = {value}");
+        }
+        // Banco com espaco sobrando vale, aparado.
+        let p = parse_payment_method(&with(card(), "bank", json!(" Nubank "))).unwrap();
+        assert_eq!(p.card().map(|c| c.bank), Some("Nubank".to_string()));
+    }
+
+    #[test]
+    fn dia_31_e_32_de_cartao() {
+        let p = parse_payment_method(&with(card(), "closingDay", json!(31))).unwrap();
+        assert_eq!(p.card().map(|c| c.closing_day), Some(31));
+        let p = parse_payment_method(&with(card(), "dueDay", json!(31))).unwrap();
+        assert_eq!(p.card().map(|c| c.due_day), Some(31));
+        for key in ["closingDay", "dueDay"] {
+            for bad in [json!(32), json!(0), json!(-1)] {
+                let p = parse_payment_method(&with(card(), key, bad.clone())).unwrap();
+                assert!(!p.is_complete_card(), "{key} = {bad}");
+            }
+        }
+    }
+
+    #[test]
+    fn reajuste_valido_e_fora_do_contrato() {
+        let ok = json!({
+            "id": "A1", "recurrenceId": "R1", "fromPeriod": "2026-12",
+            "amountMinor": 60000, "book": "business", "deletedAt": null
+        });
+        let a = parse_recurrence_adjustment(&ok.to_string()).unwrap();
+        assert_eq!(a.recurrence_id, "R1");
+        assert_eq!(a.from_period, "2026-12");
+        assert_eq!(a.amount_minor, 60_000);
+        assert_eq!(a.book(), Book::Business);
+        // Semanal: a competencia e a data.
+        let weekly = with(ok.clone(), "fromPeriod", json!("2026-12-07"));
+        assert_eq!(
+            parse_recurrence_adjustment(&weekly).unwrap().from_period,
+            "2026-12-07"
+        );
+        for key in ["recurrenceId", "fromPeriod", "amountMinor"] {
+            assert!(
+                parse_recurrence_adjustment(&without(ok.clone(), key)).is_err(),
+                "{key}"
+            );
+        }
+        for (key, value) in [
+            ("amountMinor", json!("600")),
+            ("amountMinor", json!(1.5)),
+            ("fromPeriod", json!(202612)),
+            ("recurrenceId", Value::Null),
+        ] {
+            assert!(
+                parse_recurrence_adjustment(&with(ok.clone(), key, value)).is_err(),
+                "{key}"
+            );
+        }
     }
 
     #[test]

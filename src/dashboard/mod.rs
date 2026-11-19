@@ -8,6 +8,7 @@
 pub mod aggregate;
 pub mod budgets;
 pub mod business;
+pub mod cards;
 pub mod colors;
 pub mod contract;
 pub mod dataset;

@@ -219,19 +219,27 @@ pub struct SurplusAverage {
     pub months: usize,
 }
 
+/// Quantos meses fechados entram na sobra media: os 12 anteriores ao mes de hoje.
+pub const SURPLUS_MONTHS: i32 = 12;
+
 /// `averageSurplus` do app (M2): media da sobra so dos meses **fechados com dado** de `months`
-/// (do primeiro lancamento ate o anterior a `current_month`). O mes corrente pela metade sempre
-/// pareceria ter sobrado muito; mes antes do primeiro lancamento diluiria a media. `None` sem
-/// nenhum mes fechado.
+/// (do primeiro lancamento ate o anterior a `current_month`) e no maximo dos 12 anteriores a
+/// `current_month` (o mes de **hoje**, nao o do seletor: o numero nao muda ao navegar). O mes
+/// corrente pela metade sempre pareceria ter sobrado muito; mes antes do primeiro lancamento
+/// diluiria a media. `None` sem nenhum mes fechado.
 pub fn average_surplus_closed(
     months: &[MonthTotals],
     first_month: Option<&str>,
     current_month: &str,
 ) -> Option<SurplusAverage> {
     let first = first_month?;
+    let oldest = shift_month(current_month, -SURPLUS_MONTHS);
     let closed: Vec<&MonthTotals> = months
         .iter()
-        .filter(|m| m.month.as_str() >= first && m.month.as_str() < current_month)
+        .filter(|m| {
+            let m = m.month.as_str();
+            m >= first && m >= oldest.as_str() && m < current_month
+        })
         .collect();
     if closed.is_empty() {
         return None;
@@ -674,7 +682,8 @@ pub struct History {
     pub months_of_history: usize,
     /// Os 12 meses que terminam no escolhido, o mais antigo primeiro.
     pub rows: Vec<HistoryRow>,
-    /// Sobra media dos meses fechados com dado da janela (`None`: "Ainda nao ha mes fechado").
+    /// Sobra media dos meses fechados com dado dos 12 anteriores ao mes de hoje (`None`: "Ainda
+    /// nao ha mes fechado").
     pub average: Option<SurplusAverage>,
 }
 
@@ -694,9 +703,14 @@ pub fn history(ds: &Dataset, month: &str, today: &str) -> History {
     let months_of_history = first.as_deref().filter(|f| *f <= month).map_or(0, |f| {
         usize::try_from(super::periods::months_between(f, month).saturating_add(1)).unwrap_or(0)
     });
+    // A media tem a janela propria, ancorada em hoje: os 12 fechados antes do mes corrente.
+    let closed = super::aggregate::monthly_totals(
+        ds,
+        &super::periods::last_months(&shift_month(&this_month, -1), 12),
+    );
     History {
         months_of_history,
-        average: average_surplus_closed(&totals, first.as_deref(), &this_month),
+        average: average_surplus_closed(&closed, first.as_deref(), &this_month),
         rows: totals
             .iter()
             .map(|t| HistoryRow {
@@ -1109,6 +1123,66 @@ mod tests {
             average_surplus_closed(&[], Some("2026-08"), "2026-10"),
             None
         );
+    }
+
+    #[test]
+    fn com_8_meses_fechados_a_media_cobre_os_8() {
+        // Marco a outubro, sobras de 1000 a 8000: (1000 + ... + 8000) / 8 = 4500.
+        let mut months: Vec<MonthTotals> = crate::dashboard::periods::last_months("2026-10", 8)
+            .into_iter()
+            .zip(1..)
+            .map(|(m, i)| MonthTotals {
+                month: m,
+                income_minor: i * 1000,
+                expense_minor: 0,
+            })
+            .collect();
+        months.push(mt("2026-11", 99_999, 0));
+        assert_eq!(
+            average_surplus_closed(&months, Some("2026-03"), "2026-11"),
+            avg(4500, 8)
+        );
+    }
+
+    #[test]
+    fn com_14_meses_fechados_so_os_ultimos_12_contam() {
+        // Setembro e outubro de 2025 ficam antes de novembro - 12: as sobras enormes deles nao
+        // podem puxar a media.
+        let months: Vec<MonthTotals> = crate::dashboard::periods::last_months("2026-10", 14)
+            .into_iter()
+            .map(|m| MonthTotals {
+                income_minor: if m.as_str() < "2025-11" {
+                    1_000_000
+                } else {
+                    1000
+                },
+                month: m,
+                expense_minor: 0,
+            })
+            .collect();
+        assert_eq!(
+            average_surplus_closed(&months, Some("2025-09"), "2026-11"),
+            avg(1000, 12)
+        );
+    }
+
+    #[test]
+    fn sobra_media_nao_muda_com_o_mes_escolhido() {
+        // A janela e a de hoje (12 fechados antes do mes corrente), nao a do seletor: escolher
+        // um mes antigo nao pode tirar da media os meses fechados que vieram depois dele.
+        let ds = dataset_of(vec![
+            income("i1", 10_000, "2026-08-05"),
+            income("i2", 4000, "2026-09-05"),
+            income("i3", 1000, "2026-10-05"),
+        ]);
+        let expected = avg(5000, 3);
+        for month in ["2026-08", "2026-09", "2026-10", "2026-11"] {
+            assert_eq!(
+                history(&ds, month, GRAFITE_TODAY).average,
+                expected,
+                "{month}"
+            );
+        }
     }
 
     // --- forecast.test.ts (M4) e tabela 3.2 ---

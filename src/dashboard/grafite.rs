@@ -987,6 +987,8 @@ fn pace_chart(
     if !x_labels.iter().any(|(d, _)| *d == days) {
         x_labels.push((days, days.to_string()));
     }
+    // "hoje" antes do dia 10 entra depois dele no vetor: a UI desenha da esquerda para a direita.
+    x_labels.sort_by_key(|(d, _)| *d);
     let change = sp.change_percent.map(|p| match p.cmp(&0) {
         std::cmp::Ordering::Greater => Line {
             text: format!("{p}% acima"),
@@ -1771,7 +1773,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::dashboard::dataset::{BOOKS, TRANSACTIONS};
+    use crate::dashboard::dataset::{BOOKS, PAYMENT_METHODS, RESERVES, TRANSACTIONS};
     use crate::dashboard::{
         GRAFITE_TODAY, GrafiteRow, dataset_from, dataset_of, fixtures_grafite, grafite_rows,
     };
@@ -1836,6 +1838,184 @@ mod tests {
             }
         }
         None
+    }
+
+    /// A fixture com a linha `id` trocada por `patch` (campos de cima sobrescritos).
+    fn patched(id: &str, patch: Value) -> Dataset {
+        let rows = grafite_rows()
+            .into_iter()
+            .map(|(table, rid, mut data)| {
+                if rid == id
+                    && let (Some(b), Some(o)) = (data.as_object_mut(), patch.as_object())
+                {
+                    for (k, v) in o {
+                        b.insert(k.clone(), v.clone());
+                    }
+                }
+                (table, rid, data)
+            })
+            .collect();
+        dataset_from(rows)
+    }
+
+    fn view_of(ds: &Dataset) -> GrafiteView {
+        build_grafite(ds, GRAFITE_TODAY, "2026-11", Book::Personal, false)
+    }
+
+    #[test]
+    fn eixo_x_fica_em_ordem_antes_do_dia_10() {
+        let v = build_grafite(
+            &fixtures_grafite(),
+            "2026-11-05",
+            "2026-11",
+            Book::Personal,
+            false,
+        );
+        let x: Vec<(usize, &str)> = v
+            .how_am_i
+            .pace
+            .x_labels
+            .iter()
+            .map(|(d, l)| (*d, l.as_str()))
+            .collect();
+        assert_eq!(x, vec![(1, "1"), (5, "hoje"), (10, "10"), (30, "30")]);
+    }
+
+    #[test]
+    fn caixinhas_no_maximo_duas_que_pedem_acao_senao_a_primeira_com_meta() {
+        let goal = |name: &str| {
+            json!({ "kind": "goal", "name": name, "icon": "gift", "color": "sky",
+                    "targetMinor": 100_000, "deadline": "2027-11", "recurring": null })
+        };
+        let ds = edited(
+            |_| false,
+            vec![
+                (RESERVES, "RD".to_string(), goal("Viagem")),
+                (RESERVES, "RF".to_string(), goal("Carro")),
+            ],
+        );
+        let names: Vec<String> = view_of(&ds)
+            .reserve
+            .pots
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
+        assert_eq!(names, ["Casamento", "Viagem"]);
+        // Casamento no ritmo: nenhuma pede acao, fica a primeira com meta, sem atencao.
+        let on_track = patched(
+            "RC",
+            json!({ "recurring": { "amountMinor": 20_000, "day": 5, "since": "2026-11" } }),
+        );
+        let pots = view_of(&on_track).reserve.pots;
+        assert_eq!(pots.len(), 1);
+        assert_eq!(
+            pots[0].meta,
+            "R$ 150 de R$ 1.500 · até nov 2027 · guarda R$ 200/mês"
+        );
+        assert_eq!(
+            pots[0].pace,
+            Some(Line {
+                text: "No ritmo".into(),
+                tone: Tone::Income
+            })
+        );
+    }
+
+    #[test]
+    fn textos_do_plano() {
+        // Pedido menor que a sobra: cabe.
+        let fits = patched(
+            "RE",
+            json!({ "recurring": { "amountMinor": 4000, "day": 5, "since": "2026-11" } }),
+        );
+        assert_eq!(
+            view_of(&fits).where_it_went.plan.message,
+            "O plano deixa ~R$ 48; cabe o depósito das reservas (R$ 40 por mês)."
+        );
+        // Gasto sem meta empurra o plano para alem da renda fixa.
+        let over = edited(
+            |_| false,
+            vec![tx(
+                "1115-9-EXTRA",
+                "expense",
+                100_000,
+                "2026-11-15",
+                json!({}),
+            )],
+        );
+        let plan = view_of(&over).where_it_went.plan;
+        assert_eq!(
+            plan.message,
+            "Metas e gasto sem meta passam da renda fixa em R$ 952. Ajuste as metas no app."
+        );
+        assert_eq!(plan.legend.len(), 2);
+        let [a, b, c] = plan.bar.expect("barra");
+        assert!(close(a + b, 1.0) && c == 0.0);
+        // Duas reservas pedindo: plural.
+        let both = patched(
+            "RC",
+            json!({ "recurring": { "amountMinor": 1000, "day": 5, "since": "2026-11" } }),
+        );
+        assert_eq!(
+            view_of(&both).where_it_went.plan.message,
+            "As reservas pedem R$ 560 por mês e o plano deixa ~R$ 48. Para elas caberem, ajuste \
+             as metas no app."
+        );
+    }
+
+    #[test]
+    fn reserva_com_meta_alcancada_e_sem_custo() {
+        let done = patched("RE", json!({ "essentialOverrideMinor": 5000 }));
+        let EmergencyBlock::Present(e) = view_of(&done).reserve.emergency else {
+            panic!("emergencia");
+        };
+        assert_eq!(e.reached.as_deref(), Some("Meta alcançada"));
+        assert_eq!((e.milestone.as_ref(), e.eta_line.as_ref()), (None, None));
+        assert_eq!(e.coverage, "7,0");
+        let no_cost = patched("RE", json!({ "essentialOverrideMinor": 0 }));
+        let EmergencyBlock::Present(e) = view_of(&no_cost).reserve.emergency else {
+            panic!("emergencia");
+        };
+        assert_eq!(e.coverage, "—");
+        assert!(e.segments.iter().all(|s| *s == 0.0));
+        assert_eq!(e.goal_line, "Sem custo essencial para calcular a meta.");
+        assert_eq!((e.milestone.as_ref(), e.reached.as_ref()), (None, None));
+    }
+
+    #[test]
+    fn fatura_fechada_sem_til_e_acima_de_30_por_cento_em_atencao() {
+        let ds = edited(
+            |_| false,
+            vec![
+                (
+                    PAYMENT_METHODS,
+                    "NU".to_string(),
+                    json!({ "name": "Nubank", "icon": "credit-card", "kind": "credit",
+                            "bank": "Nubank", "closingDay": 15, "dueDay": 25 }),
+                ),
+                tx(
+                    "1103-9-TV",
+                    "expense",
+                    150_000,
+                    "2026-11-03",
+                    json!({ "paymentMethodId": "NU" }),
+                ),
+            ],
+        );
+        let n = view_of(&ds).whats_next.expect("mes corrente");
+        let first = &n.upcoming.invoices[0];
+        assert_eq!(first.title, "Fatura Nubank");
+        assert_eq!(first.when, "vence qua, 25 nov · em 6 dias · fatura fechada");
+        assert_eq!(first.amount, "R$ 1.500,00");
+        assert_eq!(
+            first.percent,
+            Some(Line {
+                text: "43% da renda.".into(),
+                tone: Tone::Warning
+            })
+        );
+        assert_eq!(n.upcoming.invoices.len(), 2);
+        assert_eq!(n.upcoming.see_all.as_deref(), Some("Ver todas as 10"));
     }
 
     #[test]

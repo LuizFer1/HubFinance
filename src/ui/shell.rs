@@ -82,11 +82,11 @@ fn toast<'a>(t: &'static Tokens, message: &'a str) -> Element<'a, Message> {
 fn frame(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     // Lateral e conteudo no mesmo fundo, sem divisoria: no design a navegacao fica sobre o
-    // fundo da pagina. Um container so para os dois e onde a H4b poe o gradiente.
+    // fundo da pagina. Um container so para os dois leva o gradiente.
     let body = container(row![sidebar(app), content(app)].height(Length::Fill))
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(theme::fill(t.bg, 0.0));
+        .style(theme::page(t));
     container(column![titlebar(app), hline(t), body])
         .width(Length::Fill)
         .height(Length::Fill)
@@ -550,7 +550,7 @@ fn content(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill);
     // Sem fundo proprio: o fundo e o do container de `frame`, que cobre lateral e conteudo
-    // (um fundo aqui esconderia o gradiente da H4b atras da rolagem).
+    // (um fundo aqui esconderia o gradiente atras da rolagem).
     container(scroll)
         .width(Length::Fill)
         .height(Length::Fill)

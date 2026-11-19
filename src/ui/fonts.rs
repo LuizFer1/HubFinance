@@ -20,7 +20,6 @@ pub const INTER: Font = Font {
     ..Font::DEFAULT
 };
 /// Inter 300 dos numeros grandes do Dashboard Grafite.
-#[allow(dead_code)] // H4b remove (primeira tela que usa)
 pub const INTER_LIGHT: Font = Font {
     family: Family::Name("Inter Hub"),
     weight: Weight::Light,

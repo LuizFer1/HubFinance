@@ -8,8 +8,9 @@
 //! a unica tabela de cores do produto: app, landing e hub usam os mesmos valores. Nenhum hex
 //! novo nasce aqui; o que nao esta na tabela sai de `mix` entre tokens (spec do dashboard §9).
 
+use iced::gradient::{self, Gradient};
 use iced::widget::{button, container, scrollable};
-use iced::{Background, Border, Color, Shadow, Theme, Vector};
+use iced::{Background, Border, Color, Degrees, Shadow, Theme, Vector};
 
 use crate::config::ThemeMode;
 use crate::dashboard::colors::{self, Mode, Rgb};
@@ -17,16 +18,15 @@ use crate::dashboard::colors::{self, Mode, Rgb};
 /// Cores de um tema. Os nomes seguem a paleta §4.1; `text` e o `fg` da paleta (o nome antigo
 /// ficou porque e lido em quase cem lugares da UI).
 ///
-/// Os degraus marcados com `allow(dead_code)` ainda nao tem tela: entram com o Dashboard Grafite
-/// (H4a/H4b removem o `allow`). Estao aqui desde ja para a tabela inteira ser testada de uma vez
-/// contra a paleta.
+/// So entram os degraus que alguma tela usa: `accent-100/500/600/800`, `on-accent` e
+/// `neutral-200` da paleta ficaram de fora na H4b (nenhum uso no hub). Quem precisar de um deles
+/// copia o hex da paleta e acrescenta a linha no teste da tabela.
 #[derive(Debug)]
 pub struct Tokens {
     pub mode: Mode,
     pub bg: Color,
     pub surface: Color,
     /// Caixa dentro do card (inset). So o hub usa.
-    #[allow(dead_code)] // H4a/H4b removem
     pub surface_2: Color,
     pub text: Color,
     /// Texto secundario (rotulos, legendas, contagens): paleta §4.4. Nao e degrau da rampa de
@@ -34,31 +34,18 @@ pub struct Tokens {
     pub text_muted: Color,
     divider: Color,
     pub accent: Color,
-    #[allow(dead_code)] // H4a/H4b removem
-    pub accent_100: Color,
     pub accent_200: Color,
     pub accent_300: Color,
     pub accent_400: Color,
-    #[allow(dead_code)] // H4a/H4b removem
-    pub accent_500: Color,
-    #[allow(dead_code)] // H4a/H4b removem
-    pub accent_600: Color,
     pub accent_700: Color,
-    #[allow(dead_code)] // H4a/H4b removem
-    pub accent_800: Color,
     pub accent_900: Color,
     /// Texto/icone sobre preenchimento `accent`.
-    #[allow(dead_code)] // H4a/H4b removem
-    pub on_accent: Color,
     /// Atencao (meta estourando, "sem dados", codigo expirado). Nao e o `tag-amber` das
     /// categorias: o dourado do acento ficou quase igual a ele, entao atencao virou laranja.
     pub warning: Color,
     pub neutral_100: Color,
-    #[allow(dead_code)] // H4a/H4b removem
-    pub neutral_200: Color,
     pub neutral_300: Color,
     pub neutral_400: Color,
-    #[allow(dead_code)] // H4a/H4b removem
     pub neutral_500: Color,
     pub neutral_600: Color,
     pub neutral_700: Color,
@@ -95,19 +82,13 @@ pub static DARK: Tokens = Tokens {
     // `color-mix(fg 10%)` sobre `surface`: o iced nao mistura, entao vai o hex resultante.
     divider: hex(0x333333),
     accent: hex(0xe2c15a),
-    accent_100: hex(0xf9f3dd),
     accent_200: hex(0xf8e9b8),
     accent_300: hex(0xf0d98c),
     accent_400: hex(0xe8cd78),
-    accent_500: hex(0xe2c15a),
-    accent_600: hex(0xb29947),
     accent_700: hex(0x847335),
-    accent_800: hex(0x5a4f24),
     accent_900: hex(0x332d14),
-    on_accent: hex(0x131313),
     warning: hex(0xf2994a),
     neutral_100: hex(0xf2f2f2),
-    neutral_200: hex(0xe8e8e8),
     neutral_300: hex(0xd4d4d4),
     neutral_400: hex(0xbdbdbd),
     neutral_500: hex(0x989898),
@@ -139,19 +120,13 @@ pub static LIGHT: Tokens = Tokens {
     // `color-mix(fg 12%)` sobre `surface`.
     divider: hex(0xe4e4e4),
     accent: hex(0x876c00),
-    accent_100: hex(0x392c01),
     accent_200: hex(0x4d4014),
     accent_300: hex(0x675412),
     accent_400: hex(0x866c10),
-    accent_500: hex(0xa48402),
-    accent_600: hex(0xc0a44f),
     accent_700: hex(0xdbc276),
-    accent_800: hex(0xf0e0af),
     accent_900: hex(0xf8efd5),
-    on_accent: hex(0xffffff),
     warning: hex(0x975201),
     neutral_100: hex(0x2b2b2b),
-    neutral_200: hex(0x404040),
     neutral_300: hex(0x5a5a5a),
     neutral_400: hex(0x747474),
     neutral_500: hex(0x8f8f8f),
@@ -237,13 +212,11 @@ impl Tokens {
     }
 
     /// Painel do grafico de ritmo (#181818 no escuro): a mesma regra da lateral (spec 9).
-    #[allow(dead_code)] // H4b remove
     pub fn chart_panel(&self) -> Color {
         self.bg_toward_surface(0.45)
     }
 
     /// Brilho do gradiente de fundo (#1C1C1C no escuro).
-    #[allow(dead_code)] // H4b remove
     pub fn glow(&self) -> Color {
         self.bg_toward_surface(0.8)
     }
@@ -360,6 +333,21 @@ pub fn field(t: &'static Tokens) -> impl Fn(&Theme) -> container::Style {
         background: bg(t.bg),
         border: outline(t.divider(), 8.0),
         text_color: Some(t.text),
+        ..container::Style::default()
+    }
+}
+
+/// Fundo da pagina (lateral + conteudo): o brilho `radial-gradient(1100px 620px at 0 0)` do
+/// design aproximado por um gradiente linear a 135 graus, de `glow` no canto de cima a esquerda
+/// para `bg` a 55 % (o iced so tem `Linear`; spec 8 e 7.9). A diferenca e de poucos niveis de
+/// cinza, e o mesmo calculo vale no claro.
+pub fn page(t: &'static Tokens) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Gradient(Gradient::Linear(
+            gradient::Linear::new(Degrees(135.0))
+                .add_stop(0.0, t.glow())
+                .add_stop(0.55, t.bg),
+        ))),
         ..container::Style::default()
     }
 }
@@ -679,7 +667,7 @@ mod tests {
 
     /// Paleta Grafite §4.1 (`docs/mobile/specs/2026-11-19-paleta-grafite-design.md`): a unica
     /// fonte dos hex. `(nome, token, escuro, claro)`.
-    fn grafite(t: &Tokens) -> [(&'static str, Color); 27] {
+    fn grafite(t: &Tokens) -> [(&'static str, Color); 21] {
         [
             ("bg", t.bg),
             ("surface", t.surface),
@@ -688,19 +676,13 @@ mod tests {
             ("text_muted", t.text_muted),
             ("divider", t.divider()),
             ("accent", t.accent),
-            ("accent_100", t.accent_100),
             ("accent_200", t.accent_200),
             ("accent_300", t.accent_300),
             ("accent_400", t.accent_400),
-            ("accent_500", t.accent_500),
-            ("accent_600", t.accent_600),
             ("accent_700", t.accent_700),
-            ("accent_800", t.accent_800),
             ("accent_900", t.accent_900),
-            ("on_accent", t.on_accent),
             ("warning", t.warning),
             ("neutral_100", t.neutral_100),
-            ("neutral_200", t.neutral_200),
             ("neutral_300", t.neutral_300),
             ("neutral_400", t.neutral_400),
             ("neutral_500", t.neutral_500),
@@ -713,7 +695,7 @@ mod tests {
 
     #[test]
     fn tokens_por_modo() {
-        let expected: [(u32, u32); 27] = [
+        let expected: [(u32, u32); 21] = [
             (0x131313, 0xf5f5f5),
             (0x1e1e1e, 0xffffff),
             (0x262626, 0xeeeeee),
@@ -721,19 +703,13 @@ mod tests {
             (0xa6a6a6, 0x6b6b6b),
             (0x333333, 0xe4e4e4),
             (0xe2c15a, 0x876c00),
-            (0xf9f3dd, 0x392c01),
             (0xf8e9b8, 0x4d4014),
             (0xf0d98c, 0x675412),
             (0xe8cd78, 0x866c10),
-            (0xe2c15a, 0xa48402),
-            (0xb29947, 0xc0a44f),
             (0x847335, 0xdbc276),
-            (0x5a4f24, 0xf0e0af),
             (0x332d14, 0xf8efd5),
-            (0x131313, 0xffffff),
             (0xf2994a, 0x975201),
             (0xf2f2f2, 0x2b2b2b),
-            (0xe8e8e8, 0x404040),
             (0xd4d4d4, 0x5a5a5a),
             (0xbdbdbd, 0x747474),
             (0x989898, 0x8f8f8f),
@@ -768,6 +744,23 @@ mod tests {
         assert_ne!(LIGHT.warning, LIGHT.token("amber"));
         assert_eq!(DARK.iced_theme().palette().warning, DARK.warning);
         assert_eq!(LIGHT.iced_theme().palette().warning, LIGHT.warning);
+    }
+
+    #[test]
+    fn fundo_da_pagina_e_gradiente_do_brilho_ao_bg() {
+        for t in [&DARK, &LIGHT] {
+            let style = page(t)(&t.iced_theme());
+            let Some(Background::Gradient(Gradient::Linear(g))) = style.background else {
+                panic!("fundo sem gradiente");
+            };
+            let stops: Vec<(f32, Color)> = g
+                .stops
+                .iter()
+                .flatten()
+                .map(|s| (s.offset, s.color))
+                .collect();
+            assert_eq!(stops, vec![(0.0, t.glow()), (0.55, t.bg)], "{:?}", t.mode);
+        }
     }
 
     #[test]
@@ -843,7 +836,6 @@ mod tests {
                     assert!(c >= 4.5, "{nome}/{fundo} {:?}: {c:.2}", t.mode);
                 }
             }
-            assert!(contrast(t.on_accent, t.accent) >= 4.5, "{:?}", t.mode);
         }
         // Rotulos e legendas do design (#A6A6A6, #9C9C9C) -> `neutral_500` (spec 9).
         for fundo in [DARK.surface, DARK.surface_2, DARK.bg] {

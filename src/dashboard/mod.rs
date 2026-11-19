@@ -16,9 +16,29 @@ pub mod list;
 pub mod money;
 pub mod people;
 pub mod periods;
+pub mod recurrence;
 pub mod reserves;
 pub mod schedule;
 pub mod view;
+
+/// Dataset montado de linhas JSON pelo `apply` de verdade: os vetores portados do app passam
+/// pelo contrato (etapa 1 e 2), nao por struct montada a mao. `(tabela, id, apagada, data)`.
+#[cfg(test)]
+pub(crate) fn dataset_of(rows: Vec<(&str, &str, bool, serde_json::Value)>) -> dataset::Dataset {
+    let mut ds = dataset::Dataset::default();
+    ds.apply(
+        rows.into_iter()
+            .zip(1..)
+            .map(|((table, id, deleted, data), seq)| dataset::RawRow {
+                table: table.into(),
+                id: id.into(),
+                deleted_at: deleted.then(|| "2026-09-30T00:00:00Z".to_string()),
+                seq,
+                data: data.to_string(),
+            }),
+    );
+    ds
+}
 
 /// Dataset de exemplo das tarefas de agregacao, lista e telas: duas pessoas vivas e uma
 /// apagada, cinco categorias (uma apagada), formas de pagamento (uma apagada), uma

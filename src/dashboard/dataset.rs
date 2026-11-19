@@ -701,6 +701,18 @@ impl Dataset {
         }
     }
 
+    /// O hub ja tem uma linha com este id de lancamento: viva, tombstone ou fora do contrato.
+    /// E a pergunta do dedupe de ocorrencia (spec 5): ocorrencia apagada pelo usuario nao volta
+    /// pela regra, e uma linha ignorada continua sendo a ocorrencia gravada, so ilegivel.
+    /// `apply` garante que toda linha aplicada cai num dos dois lugares.
+    pub fn knows_transaction(&self, id: &str) -> bool {
+        self.transactions.contains_key(id)
+            || self
+                .ignored
+                .get(TRANSACTIONS)
+                .is_some_and(|ids| ids.contains(id))
+    }
+
     /// `deleted_at IS NULL`, igual ao `isAlive` do app.
     pub fn alive_transactions(&self) -> impl Iterator<Item = &Transaction> {
         self.transactions.values().filter(|t| !t.deleted)
@@ -1932,6 +1944,29 @@ mod tests {
         ds.apply([raw(RECURRENCE_ADJUSTMENTS, "A1", Some("x"), 3, ok)]);
         assert!(ds.ignored.is_empty());
         assert!(ds.recurrence_adjustments["A1"].deleted);
+    }
+
+    #[test]
+    fn knows_transaction_viva_tombstone_e_ignorada() {
+        let mut ds = Dataset::default();
+        ds.apply([
+            raw(TRANSACTIONS, "VIVA", None, 1, tx("a")),
+            raw(
+                TRANSACTIONS,
+                "APAGADA",
+                Some("2026-09-30T00:00:00Z"),
+                2,
+                tx("b"),
+            ),
+            raw(TRANSACTIONS, "TORTA", None, 3, json!({ "kind": "expense" })),
+        ]);
+        assert!(ds.knows_transaction("VIVA"));
+        assert!(ds.knows_transaction("APAGADA"));
+        assert!(ds.knows_transaction("TORTA"));
+        assert!(!ds.knows_transaction("NUNCA"));
+        // Ignorada em outra tabela nao e lancamento.
+        ds.apply([raw(CATEGORIES, "OUTRA", None, 4, json!({}))]);
+        assert!(!ds.knows_transaction("OUTRA"));
     }
 
     #[test]

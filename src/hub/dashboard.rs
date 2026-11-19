@@ -3,25 +3,18 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use crate::dashboard::dataset::{ApplyReport, Dataset};
+use crate::dashboard::dataset::{ApplyReport, Dataset, TABLE_NAMES};
 use crate::store::Store;
 
 /// O celular manda lotes em sequencia; sem esperar, cada lote clonaria o `Dataset` (a UI
 /// segura o `Arc` anterior). Meio segundo junta a rajada e ainda parece imediato.
 pub const REFRESH_DEBOUNCE: Duration = Duration::from_millis(500);
 
-/// As tabelas que o contrato de campos le; o resto nem sai do banco. `reserves`,
-/// `reserveMovements` e `budgets` sao lidas no formato que o app grava.
-pub const TABLES: [&str; 8] = [
-    "transactions",
-    "categories",
-    "users",
-    "paymentMethods",
-    "recurrences",
-    "reserves",
-    "reserveMovements",
-    "budgets",
-];
+/// As tabelas que o contrato de campos le; o resto nem sai do banco. E a lista do proprio
+/// `Dataset` (`TABLE_NAMES`), nao uma copia: a copia antiga parou em 8 e deixou `books`, `assets`
+/// e `debts` sempre vazios num hub real (seletor Pessoal | Comercial nunca aparecia). O hub
+/// recarrega tudo do `seq` 0 no boot, entao linha antiga dessas tabelas aparece ao atualizar.
+pub const TABLES: [&str; 12] = TABLE_NAMES;
 
 #[derive(Default)]
 pub struct DashboardState {
@@ -125,6 +118,90 @@ pub(crate) mod tests {
         })
     }
 
+    #[test]
+    fn toda_tabela_do_dataset_esta_em_tables() {
+        use crate::dashboard::dataset::{self, TABLE_NAMES};
+        // Cada constante de tabela que `Dataset::apply` interpreta (e `TABLE_NAMES` lista, ver o
+        // teste `toda_tabela_do_contrato_e_aplicada` la) tem de ser pedida a store; faltar
+        // `books` foi o que escondeu o seletor Pessoal | Comercial num hub real.
+        for table in [
+            dataset::TRANSACTIONS,
+            dataset::CATEGORIES,
+            dataset::USERS,
+            dataset::PAYMENT_METHODS,
+            dataset::RECURRENCES,
+            dataset::RECURRENCE_ADJUSTMENTS,
+            dataset::RESERVES,
+            dataset::RESERVE_MOVEMENTS,
+            dataset::BUDGETS,
+            dataset::BOOKS,
+            dataset::ASSETS,
+            dataset::DEBTS,
+        ] {
+            assert!(TABLES.contains(&table), "{table} fora de TABLES");
+        }
+        for table in TABLE_NAMES {
+            assert!(TABLES.contains(&table), "{table} fora de TABLES");
+        }
+        assert_eq!(TABLES.len(), 12);
+    }
+
+    #[tokio::test]
+    async fn refresh_le_conta_comercial_bens_dividas_e_reajustes() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store
+            .apply_batch(
+                ORIGIN,
+                &[
+                    push_entry(
+                        "books",
+                        "01HZZZZZZZZZZZZZZZZZZZZZK1",
+                        1000,
+                        false,
+                        json!({ "kind": "business", "name": "Padaria", "color": "amber", "icon": "s" }),
+                    ),
+                    push_entry(
+                        "assets",
+                        "01HZZZZZZZZZZZZZZZZZZZZZS1",
+                        1000,
+                        false,
+                        json!({
+                            "kind": "inventory", "name": "Farinha", "valueMinor": 1000,
+                            "acquiredOn": "2026-09-01", "book": "business"
+                        }),
+                    ),
+                    push_entry(
+                        "debts",
+                        "01HZZZZZZZZZZZZZZZZZZZZZD1",
+                        1000,
+                        false,
+                        json!({
+                            "name": "Fornecedor", "principalMinor": 10, "balanceMinor": 5,
+                            "book": "business"
+                        }),
+                    ),
+                    push_entry(
+                        "recurrenceAdjustments",
+                        "01HZZZZZZZZZZZZZZZZZZZZZA1",
+                        1000,
+                        false,
+                        json!({
+                            "recurrenceId": "01HZZZZZZZZZZZZZZZZZZZZZR1",
+                            "fromPeriod": "2026-12", "amountMinor": 60000
+                        }),
+                    ),
+                ],
+            )
+            .unwrap();
+        let mut state = DashboardState::default();
+        state.refresh(&store, SystemTime::UNIX_EPOCH).await.unwrap();
+        assert!(state.dataset.has_business_book());
+        assert_eq!(state.dataset.assets.len(), 1);
+        assert_eq!(state.dataset.debts.len(), 1);
+        assert_eq!(state.dataset.recurrence_adjustments.len(), 1);
+        assert_eq!(state.dataset.ignored_total(), 0);
+    }
+
     #[tokio::test]
     async fn refresh_carrega_metas_por_categoria() {
         let store = Arc::new(Store::open_in_memory().unwrap());
@@ -171,12 +248,13 @@ pub(crate) mod tests {
         assert_eq!(state.dataset.alive_transactions().count(), 1);
         assert!(!state.is_behind(&store).await.unwrap());
 
-        // Tabela que o dashboard nao le avanca o banco mas nao deixa o tique em laco.
+        // Tabela que o dashboard nao le (de um app mais novo) avanca o banco mas nao deixa o
+        // tique em laco.
         store
             .apply_batch(
                 ORIGIN,
                 &[push_entry(
-                    "recurrenceAdjustments",
+                    "investments",
                     "01HZZZZZZZZZZZZZZZZZZZZZA1",
                     2000,
                     false,

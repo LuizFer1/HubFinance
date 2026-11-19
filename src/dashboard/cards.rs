@@ -114,6 +114,252 @@ pub fn card_invoices(ds: &Dataset, method: &PaymentMethod, today: &str) -> Vec<I
         .collect()
 }
 
+/// Fatura em "Proximas saidas" (`UpcomingInvoice` do app, spec 6.2.10 e 7.11).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpcomingInvoice {
+    pub card_id: String,
+    /// Nome que a pessoa deu ao cartao ("Fatura Mercado Pago"), nao o `bank`.
+    pub card_name: String,
+    pub icon: String,
+    /// Mes em que a fatura fecha.
+    pub month: String,
+    pub due_on: String,
+    /// Aberta = estimativa ("~"); fechada = valor certo.
+    pub status: InvoiceStatus,
+    pub total_minor: i64,
+    /// Fatura / renda fixa do mes do vencimento, em %; `None` sem renda fixa.
+    pub income_percent: Option<i64>,
+}
+
+/// Acima desta parte da renda a porcentagem da fatura vira atencao (`warning`).
+pub const INVOICE_WARNING_PERCENT: i64 = 30;
+
+/// `upcomingInvoices` do app: faturas de cartoes vivos e completos com vencimento de `today`
+/// (inclusive: vence hoje ainda precisa estar na conta) ate `today + days`, total positivo, por
+/// vencimento e depois id do cartao. E **saida de caixa**, nao despesa nova: cada compra ja e
+/// despesa no dia dela; nada daqui entra em total, previsao ou ritmo. Como no app, nao ha dedupe
+/// com "Proximas saidas" de recorrencia: uma serie paga no cartao aparece la pela ocorrencia que
+/// ainda vem, e a fatura so soma o que ja foi lancado.
+pub fn upcoming_invoices(ds: &Dataset, today: &str, days: i64) -> Vec<UpcomingInvoice> {
+    let limit = super::periods::shift_day(today, days);
+    let mut found = Vec::new();
+    for method in ds.payment_methods.values().filter(|m| !m.deleted) {
+        for invoice in card_invoices(ds, method, today) {
+            if invoice.due_on.as_str() < today || invoice.due_on > limit || invoice.total_minor <= 0
+            {
+                continue;
+            }
+            let income = super::recurrence::recurring_month(
+                ds,
+                invoice.due_on.get(..7).unwrap_or(&invoice.due_on),
+            )
+            .income_minor;
+            found.push(UpcomingInvoice {
+                card_id: method.id.clone(),
+                card_name: method.name.clone(),
+                icon: method.icon.clone(),
+                income_percent: (income > 0).then(|| {
+                    super::aggregate::js_round(invoice.total_minor as f64 / income as f64 * 100.0)
+                        as i64
+                }),
+                month: invoice.month,
+                due_on: invoice.due_on,
+                status: invoice.status,
+                total_minor: invoice.total_minor,
+            });
+        }
+    }
+    found.sort_by(|a, b| {
+        a.due_on
+            .cmp(&b.due_on)
+            .then_with(|| a.card_id.cmp(&b.card_id))
+    });
+    found
+}
+
+#[cfg(test)]
+mod upcoming_tests {
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::dashboard::aggregate::{in_month, totals};
+    use crate::dashboard::dataset::{PAYMENT_METHODS, RECURRENCES, TRANSACTIONS};
+    use crate::dashboard::insights::forecast;
+    use crate::dashboard::{GRAFITE_TODAY, dataset_of, fixtures_grafite};
+
+    const TODAY: &str = "2026-11-19";
+    type Row = (&'static str, &'static str, bool, Value);
+
+    fn card(id: &'static str, closing: u8, due: u8) -> Row {
+        (
+            PAYMENT_METHODS,
+            id,
+            false,
+            json!({ "name": "Nubank", "icon": "credit-card", "kind": "credit", "bank": "Nubank",
+                    "closingDay": closing, "dueDay": due }),
+        )
+    }
+
+    fn purchase(id: &'static str, method: &str, on: &str, amount: i64, kind: &str) -> Row {
+        (
+            TRANSACTIONS,
+            id,
+            false,
+            json!({ "kind": kind, "description": "Compra", "amountMinor": amount,
+                    "occurredOn": on, "paymentMethodId": method }),
+        )
+    }
+
+    fn buy(id: &'static str, method: &str, on: &str) -> Row {
+        purchase(id, method, on, 1_000, "expense")
+    }
+
+    fn due(ds: &Dataset, today: &str) -> Vec<String> {
+        upcoming_invoices(ds, today, 30)
+            .into_iter()
+            .map(|i| i.due_on)
+            .collect()
+    }
+
+    #[test]
+    fn fatura() {
+        // 3.2: compras no PMP com invoiceMonthOf = 2026-11; vence 2026-12-08, aberta, 15%.
+        assert_eq!(
+            upcoming_invoices(&fixtures_grafite(), GRAFITE_TODAY, 30),
+            [UpcomingInvoice {
+                card_id: "PMP".into(),
+                card_name: "Mercado Pago".into(),
+                icon: "credit-card".into(),
+                month: "2026-11".into(),
+                due_on: "2026-12-08".into(),
+                status: InvoiceStatus::Open,
+                total_minor: 51_515,
+                income_percent: Some(15),
+            }]
+        );
+    }
+
+    #[test]
+    fn fatura_nunca_soma_em_despesa() {
+        let ds = fixtures_grafite();
+        assert_eq!(upcoming_invoices(&ds, GRAFITE_TODAY, 30).len(), 1);
+        assert_eq!(totals(in_month(&ds, "2026-11")).expense_minor, 311_341);
+        assert_eq!(
+            forecast(&ds, GRAFITE_TODAY).map(|f| f.expected_expense_minor),
+            Some(445_927)
+        );
+    }
+
+    #[test]
+    fn janela_de_hoje_inclusive_ate_hoje_mais_30() {
+        // Fecha dia 5, vence dia 12.
+        let ds = dataset_of(vec![
+            card("C", 5, 12),
+            buy("a", "C", "2026-11-01"),
+            buy("b", "C", "2026-11-10"),
+            buy("c", "C", "2026-12-10"),
+        ]);
+        assert_eq!(due(&ds, TODAY), ["2026-12-12"]);
+        assert_eq!(due(&ds, "2026-12-12"), ["2026-12-12"]);
+        assert_eq!(due(&ds, "2026-12-13"), ["2027-01-12"]);
+    }
+
+    #[test]
+    fn fechada_continua_ate_vencer_e_a_aberta_e_a_do_ciclo_de_hoje() {
+        let ds = dataset_of(vec![
+            card("D", 10, 25),
+            buy("a", "D", "2026-11-05"),
+            buy("b", "D", "2026-11-15"),
+        ]);
+        let got: Vec<(String, InvoiceStatus, i64)> = upcoming_invoices(&ds, "2026-11-25", 30)
+            .into_iter()
+            .map(|i| (i.due_on, i.status, i.total_minor))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("2026-11-25".to_string(), InvoiceStatus::Closed, 1_000),
+                ("2026-12-25".to_string(), InvoiceStatus::Open, 1_000),
+            ]
+        );
+    }
+
+    #[test]
+    fn total_zero_ou_negativo_nao_entra() {
+        let ds = dataset_of(vec![
+            card("C", 5, 12),
+            purchase("a", "C", "2026-11-10", 1_000, "expense"),
+            purchase("b", "C", "2026-11-12", 1_500, "income"),
+        ]);
+        assert!(upcoming_invoices(&ds, TODAY, 30).is_empty());
+    }
+
+    #[test]
+    fn cartao_por_completar_apagado_ou_de_outro_tipo_nao_tem_fatura() {
+        let legacy = (
+            PAYMENT_METHODS,
+            "L",
+            false,
+            json!({ "name": "Antigo", "icon": "credit-card", "kind": "credit" }),
+        );
+        let mut pix = card("P", 5, 12);
+        pix.3["kind"] = json!("pix");
+        let mut gone = card("G", 5, 12);
+        gone.2 = true;
+        let ds = dataset_of(vec![
+            legacy,
+            pix,
+            gone,
+            buy("pL", "L", "2026-11-10"),
+            buy("pP", "P", "2026-11-10"),
+            buy("pG", "G", "2026-11-10"),
+        ]);
+        assert!(upcoming_invoices(&ds, TODAY, 30).is_empty());
+    }
+
+    #[test]
+    fn ordena_por_vencimento_entre_cartoes() {
+        let ds = dataset_of(vec![
+            card("C", 5, 12),
+            card("E", 10, 20),
+            buy("a", "C", "2026-11-10"),
+            buy("b", "E", "2026-11-05"),
+        ]);
+        let ids: Vec<String> = upcoming_invoices(&ds, TODAY, 30)
+            .into_iter()
+            .map(|i| i.card_id)
+            .collect();
+        assert_eq!(ids, ["E", "C"]);
+    }
+
+    #[test]
+    fn porcentagem_da_renda_so_com_renda_fixa_no_mes_do_vencimento() {
+        let rows = || {
+            vec![
+                card("C", 5, 12),
+                purchase("a", "C", "2026-11-10", 130_000, "expense"),
+            ]
+        };
+        let ds = dataset_of(rows());
+        assert_eq!(upcoming_invoices(&ds, TODAY, 30)[0].income_percent, None);
+        let mut with_salary = rows();
+        with_salary.push((
+            RECURRENCES,
+            "S",
+            false,
+            json!({ "frequency": "monthly", "kind": "income", "amountMinor": 400_000,
+                    "scheduleType": "dayOfMonth", "scheduleN": 5, "startOn": "2026-12-05",
+                    "active": true }),
+        ));
+        // 130000 / 400000 = 32,5% -> 33.
+        let ds = dataset_of(with_salary);
+        assert_eq!(
+            upcoming_invoices(&ds, TODAY, 30)[0].income_percent,
+            Some(33)
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};

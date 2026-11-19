@@ -746,6 +746,33 @@ mod tests {
         assert_eq!(LIGHT.iced_theme().palette().warning, LIGHT.warning);
     }
 
+    /// Pares texto/fundo que o Dashboard Grafite introduziu (H4b), nos dois temas.
+    #[test]
+    fn textos_novos_do_dashboard_passam_4_5() {
+        for t in [&DARK, &LIGHT] {
+            let pairs = [
+                ("renda/painel", t.income_fg, t.chart_panel()),
+                ("normal/painel", t.text_muted, t.chart_panel()),
+                ("previsao/painel", t.accent_300, t.chart_panel()),
+                ("eixo/painel", t.text_muted, t.chart_panel()),
+                ("tag/divisor", t.text_soft(), t.divider()),
+                ("chip normal/divisor", t.text, t.divider()),
+                ("apoio/caixa", t.neutral_300, t.surface_2),
+                ("apoio/card", t.neutral_300, t.surface),
+                ("rotulo/caixa", t.text_muted, t.surface_2),
+                ("aviso/caixa", t.warning, t.surface_2),
+                ("faltar/card", t.expense_fg, t.surface),
+                ("sobrar/card", t.income_fg, t.surface),
+                ("chip hoje", t.accent_300, t.accent_900),
+                ("link/card", t.accent_300, t.surface),
+            ];
+            for (name, fg, bg) in pairs {
+                let c = contrast(fg, bg);
+                assert!(c >= 4.5, "{name} {:?}: {c:.2}", t.mode);
+            }
+        }
+    }
+
     #[test]
     fn fundo_da_pagina_e_gradiente_do_brilho_ao_bg() {
         for t in [&DARK, &LIGHT] {

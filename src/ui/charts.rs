@@ -634,6 +634,20 @@ pub fn forecast_segment(
     )
 }
 
+/// Centro do rotulo "renda R$ X": 12 px acima da linha, como o design; sem espaco acima (renda
+/// no teto do eixo, que e multiplo de R$ 2.500 e pode ser a propria renda) desce para baixo da
+/// linha, senao o canvas cortaria o rotulo.
+pub fn income_label_y(line_y: f32) -> f32 {
+    const OFFSET: f32 = 12.0;
+    /// Meia altura do texto de 12 px a 1,3.
+    const HALF: f32 = 8.0;
+    if line_y - OFFSET - HALF >= 0.0 {
+        line_y - OFFSET
+    } else {
+        line_y + OFFSET
+    }
+}
+
 /// Afasta dois rotulos (centros em y) que se encostariam: cada um anda metade do que falta,
 /// sem sair de `[top, bottom]`. Previsao e normal no fim do mes costumam estar perto.
 pub fn separate_labels(a: f32, b: f32, min_gap: f32, top: f32, bottom: f32) -> (f32, f32) {
@@ -726,7 +740,12 @@ impl canvas::Program<Message> for PaceProgram<'_> {
                 if let Some(text) = &c.income_label {
                     frame.fill_text(Text {
                         align_x: TextAlign::Left,
-                        ..label(text.clone(), Point::new(plot.x, y - 12.0), 12.0, t.income)
+                        ..label(
+                            text.clone(),
+                            Point::new(plot.x, income_label_y(y)),
+                            12.0,
+                            t.income_fg,
+                        )
                     });
                 }
             }
@@ -1273,6 +1292,18 @@ mod tests {
         assert!((a.y - 37.7).abs() < 0.01);
         assert_eq!(b.x, 300.0);
         assert!((b.y - 10.8).abs() < 0.01);
+    }
+
+    #[test]
+    fn rotulo_da_renda_desce_quando_a_renda_e_o_teto() {
+        let plot = pace_plot(Size::new(600.0, PACE_HEIGHT));
+        // Renda no meio: acima da linha.
+        let mid = value_y(0.5, plot);
+        assert_eq!(income_label_y(mid), mid - 12.0);
+        // Renda = teto (R$ 5.000 com eixo de R$ 5 mil): a linha fica a 6 px do topo do canvas.
+        let top = value_y(1.0, plot);
+        assert_eq!(top, 6.0);
+        assert_eq!(income_label_y(top), 18.0);
     }
 
     #[test]

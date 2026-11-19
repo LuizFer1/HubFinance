@@ -77,6 +77,21 @@ pub(super) fn bands(sections: &[Section], width: f32) -> Vec<Band> {
     out
 }
 
+/// Respiro acima da faixa (o `margin-top: 20px` das linhas de "O que vem" e dos ultimos
+/// lancamentos no design). Fica na faixa, nao no titulo: lado a lado, os dois titulos tem de
+/// comecar na mesma altura.
+pub(super) fn band_top(band: &Band) -> f32 {
+    let first = match band {
+        Band::Full(s) => Some(s),
+        Band::Split(left, _) => left.first(),
+    };
+    if matches!(first, Some(Section::WhatsNext | Section::Recent)) {
+        20.0
+    } else {
+        0.0
+    }
+}
+
 /// `flex-wrap` do CSS: itens `(base, crescimento)` entram na linha enquanto as bases e os
 /// espacos cabem; cada linha reparte a sobra pelo crescimento. Um item maior que a linha
 /// sozinho ocupa a linha (`min-width: 0`). Devolve, por linha, `(indice, largura)`.
@@ -187,10 +202,15 @@ pub fn view(app: &App) -> Element<'_, Message> {
     let width = shell::content_width(app);
     let mut col = column![].spacing(GAP);
     for band in bands(&v.sections(), width) {
-        col = col.push(match band {
+        let top = band_top(&band);
+        let body = match band {
             Band::Full(s) => section(app, s, width),
             Band::Split(left, right) => split(app, &left, &right, width),
-        });
+        };
+        col = col.push(container(body).padding(Padding {
+            top,
+            ..Padding::ZERO
+        }));
     }
     if let Some(footer) = footer(app) {
         col = col.push(footer);
@@ -1323,7 +1343,7 @@ fn whats_next(app: &App, width: f32) -> Element<'_, Message> {
     };
     let surface = Some((t.surface, 8.0));
     column![
-        heading(t, &w.title, &w.question, None, 20.0),
+        heading(t, &w.title, &w.question, None, 0.0),
         tiles(
             width,
             GAP,
@@ -1539,7 +1559,8 @@ fn recent(app: &App) -> Element<'_, Message> {
             title = title.push(pill(chip, t.accent_300, t.accent_900, [2, 8]));
         }
         if let Some(tag) = &l.tag {
-            title = title.push(pill(tag, t.text_muted, t.divider(), [2, 8]));
+            // `text_soft`: o `text_muted` sobre o divisor fica abaixo de 4,5:1 no claro.
+            title = title.push(pill(tag, t.text_soft(), t.divider(), [2, 8]));
         }
         let mut meta = row![].spacing(6).align_y(Alignment::Center);
         if let Some(dot) = &l.dot {
@@ -1827,6 +1848,11 @@ mod tests {
         assert_eq!(b[0], Band::Full(Business));
         assert_eq!(b[4], Band::Split(vec![WhatsNext], vec![Recent]));
         assert_eq!(bands(&[Empty], 1400.0), vec![Band::Full(Empty)]);
+        // O respiro de 20 e da faixa: os dois titulos lado a lado comecam juntos.
+        assert_eq!(band_top(&Band::Split(vec![WhatsNext], vec![Recent])), 20.0);
+        assert_eq!(band_top(&Band::Split(vec![Recent], vec![People])), 20.0);
+        assert_eq!(band_top(&Band::Split(vec![Reserve], vec![History])), 0.0);
+        assert_eq!(band_top(&Band::Full(People)), 0.0);
     }
 
     #[test]

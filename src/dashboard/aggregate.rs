@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use super::contract::Kind;
 use super::dataset::{Dataset, Transaction};
+#[cfg(test)]
 use super::periods::shift_month;
 
 /// Chave, cor e icone da fatia "Sem categoria": soma o lancamento sem categoria e o de
@@ -56,6 +57,9 @@ pub(crate) fn in_month<'a, 'm>(
         .filter(move |t| t.occurred_on.get(..7) == Some(month))
 }
 
+/// Resumo do mes do Dashboard antigo. A tela Grafite nao usa; fica como oraculo dos testes
+/// (transferencia marcada, conta comercial) que conferem receita e despesa do mes.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MonthSummary {
     pub current: Totals,
@@ -70,6 +74,7 @@ pub struct MonthSummary {
     pub expense_change_pct: Option<i32>,
 }
 
+#[cfg(test)]
 pub fn month_summary(dataset: &Dataset, month: &str) -> MonthSummary {
     let current = totals(in_month(dataset, month));
     let prev_month = shift_month(month, -1);
@@ -88,6 +93,7 @@ pub fn month_summary(dataset: &Dataset, month: &str) -> MonthSummary {
     }
 }
 
+#[cfg(test)]
 /// `round((cur - prev) / prev * 100)`, `None` com base zero (nada de divisao por zero).
 fn change_pct(current: i64, previous: i64) -> Option<i32> {
     if previous == 0 {
@@ -217,15 +223,6 @@ pub fn axis_top(peak_minor: i64) -> i64 {
     (peak.saturating_add(STEP - 1) / STEP)
         .max(1)
         .saturating_mul(STEP)
-}
-
-/// Media do saldo dos meses (arredondada como o JS); nenhum mes -> 0.
-pub fn average_surplus(months: &[MonthTotals]) -> i64 {
-    if months.is_empty() {
-        return 0;
-    }
-    let sum: f64 = months.iter().map(|m| m.net_minor() as f64).sum();
-    js_round(sum / months.len() as f64) as i64
 }
 
 /// Os `n` mais recentes do mes: data desc, id desc (a ordem de `listTransactions`).
@@ -431,18 +428,6 @@ mod tests {
         assert_eq!(axis_top(200_000), 200_000);
         assert_eq!(axis_top(200_001), 400_000);
         assert_eq!(axis_top(1_234_567), 1_400_000);
-    }
-
-    #[test]
-    fn media_arredondada() {
-        let m = |inc: i64, exp: i64| MonthTotals {
-            month: String::new(),
-            income_minor: inc,
-            expense_minor: exp,
-        };
-        assert_eq!(average_surplus(&[m(100, 0), m(0, 400), m(100, 0)]), -67);
-        assert_eq!(average_surplus(&[m(3, 0), m(0, 0)]), 2);
-        assert_eq!(average_surplus(&[]), 0);
     }
 
     /// Dataset de setembro/agosto com lancamentos normais mais, opcionalmente, os marcados.

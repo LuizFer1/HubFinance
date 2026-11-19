@@ -10,7 +10,8 @@ use std::time::SystemTime;
 use base64::Engine;
 
 use super::contract::{
-    self, AssetKind, Book, ContractError, Kind, MovementKind, ReportState, ReserveKind,
+    self, AssetKind, Book, Card, ContractError, Kind, MovementKind, RecurrenceRule, ReportState,
+    ReserveKind,
 };
 
 /// Uma linha como a store guarda: `id` e `deleted_at` vem das colunas ja validadas pela
@@ -40,6 +41,10 @@ pub struct Transaction {
     pub report_state: Option<ReportState>,
     /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
     pub book: Book,
+    /// Ocorrencia estimada de serie "valor varia"; so `true` no JSON liga (ver contrato).
+    pub estimated: bool,
+    /// `"<recurrenceId>:<periodo>"` quando e ocorrencia de serie com chave em texto.
+    pub occurrence_key: Option<String>,
 }
 
 impl Transaction {
@@ -82,6 +87,10 @@ pub struct PaymentMethod {
     pub merged_into: Option<String>,
     /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
     pub book: Book,
+    /// `kind == "credit"`, completo ou nao.
+    pub credit: bool,
+    /// So cartao completo (`isCompleteCard`): e o que tem fatura.
+    pub card: Option<Card>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,6 +98,29 @@ pub struct Recurrence {
     pub id: String,
     pub deleted: bool,
     pub frequency: String,
+    /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
+    pub book: Book,
+    /// Sempre interpretavel: `"income"` ou despesa.
+    pub kind: Kind,
+    pub description: Option<String>,
+    /// Anulado por `for_book` quando aponta para a outra conta, como o `stateForBook` do app.
+    pub category_id: Option<String>,
+    pub payment_method_id: Option<String>,
+    pub user_id: Option<String>,
+    /// "Valor varia"; lido mesmo sem `rule` (fixo x variavel).
+    pub variable: bool,
+    /// `None` = serie nao projetavel (app antigo ou campo de tipo errado), nunca linha ignorada.
+    pub rule: Option<RecurrenceRule>,
+}
+
+/// Reajuste de valor de uma serie a partir de `from_period` (`recurrenceAdjustments`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecurrenceAdjustment {
+    pub id: String,
+    pub deleted: bool,
+    pub recurrence_id: String,
+    pub from_period: String,
+    pub amount_minor: i64,
     /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
     pub book: Book,
 }
@@ -205,6 +237,7 @@ pub struct Dataset {
     pub users: HashMap<String, User>,
     pub payment_methods: HashMap<String, PaymentMethod>,
     pub recurrences: HashMap<String, Recurrence>,
+    pub recurrence_adjustments: HashMap<String, RecurrenceAdjustment>,
     pub reserves: HashMap<String, Reserve>,
     pub reserve_movements: HashMap<String, ReserveMovement>,
     pub budgets: HashMap<String, Budget>,
@@ -228,6 +261,8 @@ pub const CATEGORIES: &str = "categories";
 pub const USERS: &str = "users";
 pub const PAYMENT_METHODS: &str = "paymentMethods";
 pub const RECURRENCES: &str = "recurrences";
+/// Reajustes de valor das series (`recurrence-adjustment.ts`).
+pub const RECURRENCE_ADJUSTMENTS: &str = "recurrenceAdjustments";
 /// As duas de reservas seguem o formato que o app grava (`reserve.ts`), nao um contrato do hub.
 pub const RESERVES: &str = "reserves";
 pub const RESERVE_MOVEMENTS: &str = "reserveMovements";
@@ -237,6 +272,25 @@ pub const BUDGETS: &str = "budgets";
 pub const BOOKS: &str = "books";
 pub const ASSETS: &str = "assets";
 pub const DEBTS: &str = "debts";
+
+/// Toda tabela que `apply` interpreta. E a lista que o hub pede a store
+/// (`hub::dashboard::TABLES`): tabela com braco em `apply` e fora daqui nunca sai do banco, e
+/// foi assim que `books`, `assets` e `debts` ficaram de fora do hub real (spec Grafite 1).
+/// Tabela nova: constante, braco em `apply`/`remove` e entrada aqui.
+pub const TABLE_NAMES: [&str; 12] = [
+    TRANSACTIONS,
+    CATEGORIES,
+    USERS,
+    PAYMENT_METHODS,
+    RECURRENCES,
+    RECURRENCE_ADJUSTMENTS,
+    RESERVES,
+    RESERVE_MOVEMENTS,
+    BUDGETS,
+    BOOKS,
+    ASSETS,
+    DEBTS,
+];
 
 /// Teto da cadeia de `mergedInto` (o mesmo de `resolve.ts` do app). Nenhuma fusao produz ciclo,
 /// mas as linhas sao eternas e podem trazer um; sem o teto, a janela travaria num laco.
@@ -256,8 +310,8 @@ fn follow<'a>(id: Option<&'a str>, redirect: impl Fn(&str) -> Option<&'a str>) -
 }
 
 impl Dataset {
-    /// Aplica na ordem recebida (a store entrega por `seq`). Tabela fora do contrato e pulada
-    /// sem contar: o app sincroniza tabelas que o dashboard nao le (`recurrenceAdjustments`...).
+    /// Aplica na ordem recebida (a store entrega por `seq`). Tabela fora de `TABLE_NAMES` e
+    /// pulada sem contar: um app mais novo pode sincronizar tabela que esta versao nao le.
     pub fn apply(&mut self, rows: impl IntoIterator<Item = RawRow>) -> ApplyReport {
         let mut applied = 0;
         for row in rows {
@@ -268,6 +322,8 @@ impl Dataset {
                 TRANSACTIONS => contract::parse_transaction(&row.data).map(|f| {
                     let report_state = f.report_state();
                     let book = f.book();
+                    let estimated = f.estimated();
+                    let occurrence_key = f.occurrence_key().map(str::to_string);
                     self.transactions.insert(
                         id.clone(),
                         Transaction {
@@ -283,6 +339,8 @@ impl Dataset {
                             recurrence_id: f.recurrence_id,
                             report_state,
                             book,
+                            estimated,
+                            occurrence_key,
                         },
                     );
                 }),
@@ -315,6 +373,8 @@ impl Dataset {
                 }),
                 PAYMENT_METHODS => contract::parse_payment_method(&row.data).map(|f| {
                     let book = f.book();
+                    let credit = f.is_credit();
+                    let card = f.card();
                     self.payment_methods.insert(
                         id.clone(),
                         PaymentMethod {
@@ -324,21 +384,44 @@ impl Dataset {
                             icon: f.icon,
                             merged_into: f.merged_into,
                             book,
+                            credit,
+                            card,
                         },
                     );
                 }),
                 RECURRENCES => contract::parse_recurrence(&row.data).map(|f| {
-                    let book = f.book();
-                    self.recurrences.insert(
-                        id.clone(),
-                        Recurrence {
-                            id: id.clone(),
-                            deleted,
-                            frequency: f.frequency,
-                            book,
-                        },
-                    );
+                    let owned = |s: Option<&str>| s.map(str::to_string);
+                    let recurrence = Recurrence {
+                        id: id.clone(),
+                        deleted,
+                        book: f.book(),
+                        kind: f.kind(),
+                        description: owned(f.description()),
+                        category_id: owned(f.category_id()),
+                        payment_method_id: owned(f.payment_method_id()),
+                        user_id: owned(f.user_id()),
+                        variable: f.is_variable(),
+                        rule: f.rule(),
+                        frequency: f.frequency,
+                    };
+                    self.recurrences.insert(id.clone(), recurrence);
                 }),
+                RECURRENCE_ADJUSTMENTS => {
+                    contract::parse_recurrence_adjustment(&row.data).map(|f| {
+                        let book = f.book();
+                        self.recurrence_adjustments.insert(
+                            id.clone(),
+                            RecurrenceAdjustment {
+                                id: id.clone(),
+                                deleted,
+                                recurrence_id: f.recurrence_id,
+                                from_period: f.from_period,
+                                amount_minor: f.amount_minor,
+                                book,
+                            },
+                        );
+                    })
+                }
                 RESERVES => contract::parse_reserve(&row.data).map(|f| {
                     let recurring_amount_minor = f.recurring_amount_minor();
                     let recurring_since = f.recurring_since().map(str::to_string);
@@ -483,6 +566,9 @@ impl Dataset {
             RECURRENCES => {
                 self.recurrences.remove(id);
             }
+            RECURRENCE_ADJUSTMENTS => {
+                self.recurrence_adjustments.remove(id);
+            }
             RESERVES => {
                 self.reserves.remove(id);
             }
@@ -575,7 +661,25 @@ impl Dataset {
             categories: only(&self.categories, |r| r.book == book),
             users: self.users.clone(),
             payment_methods: only(&self.payment_methods, |r| r.book == book),
-            recurrences: only(&self.recurrences, |r| r.book == book),
+            // A serie anula a referencia de outra conta como o lancamento (`dropForeignRefs`
+            // do app vale para `transactions` e `recurrences`): a tile de "Proximas saidas" diria
+            // a categoria comercial numa serie pessoal.
+            recurrences: self
+                .recurrences
+                .iter()
+                .filter(|(_, r)| r.book == book)
+                .map(|(id, r)| {
+                    let mut r = r.clone();
+                    if r.category_id.as_deref().is_some_and(foreign_category) {
+                        r.category_id = None;
+                    }
+                    if r.payment_method_id.as_deref().is_some_and(foreign_method) {
+                        r.payment_method_id = None;
+                    }
+                    (id.clone(), r)
+                })
+                .collect(),
+            recurrence_adjustments: only(&self.recurrence_adjustments, |r| r.book == book),
             reserves: self
                 .reserves
                 .iter()
@@ -595,6 +699,18 @@ impl Dataset {
             loaded_seq: self.loaded_seq,
             refreshed_at: self.refreshed_at,
         }
+    }
+
+    /// O hub ja tem uma linha com este id de lancamento: viva, tombstone ou fora do contrato.
+    /// E a pergunta do dedupe de ocorrencia (spec 5): ocorrencia apagada pelo usuario nao volta
+    /// pela regra, e uma linha ignorada continua sendo a ocorrencia gravada, so ilegivel.
+    /// `apply` garante que toda linha aplicada cai num dos dois lugares.
+    pub fn knows_transaction(&self, id: &str) -> bool {
+        self.transactions.contains_key(id)
+            || self
+                .ignored
+                .get(TRANSACTIONS)
+                .is_some_and(|ids| ids.contains(id))
     }
 
     /// `deleted_at IS NULL`, igual ao `isAlive` do app.
@@ -866,8 +982,9 @@ mod tests {
         let mut ds = Dataset::default();
         let report = ds.apply([
             raw(RECURRENCES, R1, None, 1, json!({ "frequency": "monthly" })),
+            // Tabela que esta versao nao le (de um app mais novo): pulada sem contar.
             raw(
-                "recurrenceAdjustments",
+                "investments",
                 "01HZZZZZZZZZZZZZZZZZZZZZA1",
                 None,
                 2,
@@ -1668,6 +1785,239 @@ mod tests {
         assert_eq!((business.assets.len(), business.debts.len()), (1, 1));
         let personal = ds.for_book(Book::Personal);
         assert_eq!((personal.assets.len(), personal.debts.len()), (0, 0));
+    }
+
+    // ---- contrato ampliado (spec Grafite 4) ----
+
+    use crate::dashboard::contract::Schedule;
+
+    #[test]
+    fn toda_tabela_do_contrato_e_aplicada() {
+        // Linha vazia em cada tabela do contrato: aplicada (nao pulada) e contada como fora
+        // do contrato. Se uma constante de `TABLE_NAMES` nao tivesse braco em `apply`, sairia
+        // pulada aqui; o hub pede a store exatamente estas (`hub::dashboard::TABLES`).
+        let mut ds = Dataset::default();
+        let rows = TABLE_NAMES
+            .iter()
+            .enumerate()
+            .map(|(i, table)| raw(table, "X", None, i as i64 + 1, json!({})));
+        let report = ds.apply(rows);
+        assert_eq!(report.applied, TABLE_NAMES.len());
+        assert_eq!(report.ignored_total, TABLE_NAMES.len());
+        for table in TABLE_NAMES {
+            assert!(ds.ignored[table].contains("X"), "{table}");
+        }
+        let unique: BTreeSet<&str> = TABLE_NAMES.iter().copied().collect();
+        assert_eq!(unique.len(), TABLE_NAMES.len());
+    }
+
+    #[test]
+    fn recorrencia_de_app_antigo_so_com_frequency_continua_valida() {
+        let mut ds = Dataset::default();
+        let mut t = tx("Aluguel");
+        t["recurrenceId"] = json!(R1);
+        let report = ds.apply([
+            raw(RECURRENCES, R1, None, 1, json!({ "frequency": "monthly" })),
+            raw(TRANSACTIONS, T1, None, 2, t),
+        ]);
+        assert_eq!(report.ignored_total, 0);
+        let r = &ds.recurrences[R1];
+        assert_eq!(r.rule, None);
+        assert_eq!(r.kind, Kind::Expense);
+        assert!(!r.variable);
+        assert_eq!(ds.recurrence_label(Some(R1)).as_deref(), Some("Mensal"));
+        // O lancamento da serie continua somando.
+        assert_eq!(month_summary(&ds, "2026-09").current.expense_minor, 1000);
+    }
+
+    #[test]
+    fn campo_novo_com_tipo_errado_nao_vai_para_ignoradas() {
+        let mut ds = Dataset::default();
+        let mut t = tx("x");
+        t["estimated"] = json!("sim");
+        t["occurrenceKey"] = json!(5);
+        let report = ds.apply([
+            raw(
+                RECURRENCES,
+                R1,
+                None,
+                1,
+                json!({
+                    "frequency": "monthly", "amountMinor": "12", "active": "sim",
+                    "scheduleN": 1.5, "variable": 3, "categoryId": 9
+                }),
+            ),
+            raw(TRANSACTIONS, T1, None, 2, t),
+            raw(
+                PAYMENT_METHODS,
+                "PM",
+                None,
+                3,
+                json!({ "name": "Cartao", "icon": "c", "kind": "credit", "bank": 1, "closingDay": "x" }),
+            ),
+        ]);
+        assert_eq!(report.applied, 3);
+        assert_eq!(report.ignored_total, 0);
+        assert_eq!(ds.recurrences[R1].rule, None);
+        assert_eq!(ds.recurrences[R1].category_id, None);
+        assert!(!ds.transactions[T1].estimated);
+        assert_eq!(ds.transactions[T1].occurrence_key, None);
+        assert!(ds.payment_methods["PM"].credit);
+        assert_eq!(ds.payment_methods["PM"].card, None);
+    }
+
+    #[test]
+    fn campos_interpretados_chegam_ao_dataset() {
+        let mut ds = Dataset::default();
+        let mut t = tx("Luz");
+        t["recurrenceId"] = json!(R1);
+        t["occurrenceKey"] = json!(format!("{R1}:2026-09"));
+        t["estimated"] = json!(true);
+        ds.apply([
+            raw(
+                RECURRENCES,
+                R1,
+                None,
+                1,
+                json!({
+                    "frequency": "monthly", "kind": "expense", "description": "Luz",
+                    "amountMinor": 12000, "categoryId": C1, "paymentMethodId": "PM",
+                    "scheduleType": "dayOfMonth", "scheduleN": 12, "startOn": "2026-09-12",
+                    "endOn": null, "active": true, "variable": true, "userId": "UL"
+                }),
+            ),
+            raw(TRANSACTIONS, T1, None, 2, t),
+            raw(
+                PAYMENT_METHODS,
+                "PM",
+                None,
+                3,
+                json!({
+                    "name": "Mercado Pago", "icon": "c", "kind": "credit",
+                    "bank": "Mercado Pago", "closingDay": 28, "dueDay": 8
+                }),
+            ),
+        ]);
+        let r = &ds.recurrences[R1];
+        assert_eq!(r.description.as_deref(), Some("Luz"));
+        assert_eq!(r.category_id.as_deref(), Some(C1));
+        assert_eq!(r.payment_method_id.as_deref(), Some("PM"));
+        assert_eq!(r.user_id.as_deref(), Some("UL"));
+        assert!(r.variable);
+        let rule = r.rule.as_ref().unwrap();
+        assert_eq!(rule.amount_minor, 12000);
+        assert_eq!(rule.schedule, Some(Schedule::DayOfMonth(12)));
+        let t = &ds.transactions[T1];
+        assert!(t.estimated);
+        assert_eq!(
+            t.occurrence_key.as_deref(),
+            Some(format!("{R1}:2026-09").as_str())
+        );
+        let card = ds.payment_methods["PM"].card.as_ref().unwrap();
+        assert_eq!((card.closing_day, card.due_day), (28, 8));
+    }
+
+    #[test]
+    fn reajuste_sem_from_period_vai_para_ignoradas() {
+        let mut ds = Dataset::default();
+        let ok = json!({ "recurrenceId": R1, "fromPeriod": "2026-12", "amountMinor": 60000 });
+        let report = ds.apply([raw(RECURRENCE_ADJUSTMENTS, "A1", None, 1, ok.clone())]);
+        assert_eq!(report.ignored_total, 0);
+        let a = &ds.recurrence_adjustments["A1"];
+        assert_eq!(
+            (
+                a.recurrence_id.as_str(),
+                a.from_period.as_str(),
+                a.amount_minor
+            ),
+            (R1, "2026-12", 60_000)
+        );
+        assert_eq!(a.book, Book::Personal);
+        // A versao nova sem `fromPeriod` tira a valida e entra no rodape de ignoradas.
+        let mut bad = ok.clone();
+        bad.as_object_mut().unwrap().remove("fromPeriod");
+        let report = ds.apply([raw(RECURRENCE_ADJUSTMENTS, "A1", None, 2, bad)]);
+        assert_eq!(report.ignored_total, 1);
+        assert!(!ds.recurrence_adjustments.contains_key("A1"));
+        assert!(ds.ignored[RECURRENCE_ADJUSTMENTS].contains("A1"));
+        // Tombstone valido volta para o mapa, marcado.
+        ds.apply([raw(RECURRENCE_ADJUSTMENTS, "A1", Some("x"), 3, ok)]);
+        assert!(ds.ignored.is_empty());
+        assert!(ds.recurrence_adjustments["A1"].deleted);
+    }
+
+    #[test]
+    fn knows_transaction_viva_tombstone_e_ignorada() {
+        let mut ds = Dataset::default();
+        ds.apply([
+            raw(TRANSACTIONS, "VIVA", None, 1, tx("a")),
+            raw(
+                TRANSACTIONS,
+                "APAGADA",
+                Some("2026-09-30T00:00:00Z"),
+                2,
+                tx("b"),
+            ),
+            raw(TRANSACTIONS, "TORTA", None, 3, json!({ "kind": "expense" })),
+        ]);
+        assert!(ds.knows_transaction("VIVA"));
+        assert!(ds.knows_transaction("APAGADA"));
+        assert!(ds.knows_transaction("TORTA"));
+        assert!(!ds.knows_transaction("NUNCA"));
+        // Ignorada em outra tabela nao e lancamento.
+        ds.apply([raw(CATEGORIES, "OUTRA", None, 4, json!({}))]);
+        assert!(!ds.knows_transaction("OUTRA"));
+    }
+
+    #[test]
+    fn for_book_filtra_reajustes_e_anula_categoria_de_outra_conta_na_serie() {
+        let mut ds = two_books();
+        let series = |category: &str, method: &str| {
+            json!({
+                "frequency": "monthly", "categoryId": category, "paymentMethodId": method,
+                "scheduleType": "dayOfMonth", "scheduleN": 5, "startOn": "2026-09-05",
+                "amountMinor": 100
+            })
+        };
+        let adjustment = |recurrence: &str| json!({ "recurrenceId": recurrence, "fromPeriod": "2026-10", "amountMinor": 200 });
+        ds.apply([
+            // Serie pessoal apontando para categoria e forma comerciais.
+            raw(RECURRENCES, "RP", None, 30, series(BIZ_C, BIZ_M)),
+            // Serie comercial com referencias da propria conta.
+            raw(RECURRENCES, "RB", None, 31, biz(series(BIZ_C, BIZ_M))),
+            raw(RECURRENCE_ADJUSTMENTS, "AP", None, 32, adjustment("RP")),
+            raw(
+                RECURRENCE_ADJUSTMENTS,
+                "AB",
+                None,
+                33,
+                biz(adjustment("RB")),
+            ),
+        ]);
+        let personal = ds.for_book(Book::Personal);
+        assert_eq!(
+            personal.recurrence_adjustments.keys().collect::<Vec<_>>(),
+            vec!["AP"]
+        );
+        let rp = &personal.recurrences["RP"];
+        assert_eq!(
+            (rp.category_id.as_deref(), rp.payment_method_id.as_deref()),
+            (None, None)
+        );
+        // A regra nao depende da categoria: a serie continua projetavel.
+        assert!(rp.rule.is_some());
+        assert!(!personal.recurrences.contains_key("RB"));
+
+        let business = ds.for_book(Book::Business);
+        assert_eq!(
+            business.recurrence_adjustments.keys().collect::<Vec<_>>(),
+            vec!["AB"]
+        );
+        let rb = &business.recurrences["RB"];
+        assert_eq!(rb.category_id.as_deref(), Some(BIZ_C));
+        assert_eq!(rb.payment_method_id.as_deref(), Some(BIZ_M));
+        // O `Dataset` inteiro guarda a referencia como veio (so a visao a anula).
+        assert_eq!(ds.recurrences["RP"].category_id.as_deref(), Some(BIZ_C));
     }
 
     #[test]

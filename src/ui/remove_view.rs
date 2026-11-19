@@ -331,10 +331,7 @@ fn choose_body<'a>(app: &'a App, who: &Subject<'a>, selected: AreaSet) -> Elemen
         )
     };
     let mut col = column![
-        text(intro)
-            .size(14)
-            .line_height(1.55)
-            .color(t.text_alpha(0.70)),
+        text(intro).size(14).line_height(1.55).color(t.text_soft()),
         Space::new().height(4),
     ]
     .spacing(8);
@@ -361,7 +358,7 @@ fn choose_body<'a>(app: &'a App, who: &Subject<'a>, selected: AreaSet) -> Elemen
     .push(
         text("Categorias, formas de pagamento e o perfil não são apagados")
             .size(12)
-            .color(t.text_alpha(0.55)),
+            .color(t.text_muted),
     )
     .into()
 }
@@ -378,7 +375,7 @@ fn area_row<'a>(
     let mark: Element<'a, Message> = if selected && enabled {
         icons::icon(icons::CHECK_CIRCLE, 18.0, t.expense_fg)
     } else {
-        icons::icon(icons::CIRCLE_DASHED, 18.0, t.text_alpha(0.45))
+        icons::icon(icons::CIRCLE_DASHED, 18.0, t.text_muted)
     };
     let mut info = column![
         text(area_title(area))
@@ -391,19 +388,19 @@ fn area_row<'a>(
         info = info.push(
             text(area_count_text(area, data))
                 .size(12)
-                .color(t.text_alpha(0.75)),
+                .color(t.text_soft()),
         );
         for note in area_notes(area, data) {
-            info = info.push(text(note).size(12).color(t.text_alpha(0.55)));
+            info = info.push(text(note).size(12).color(t.text_muted));
         }
     } else {
         let mut empty = column![
             text("sem dados deste aparelho")
                 .size(12)
-                .color(t.text_alpha(0.45))
+                .color(t.text_muted)
         ];
         for note in area_notes(area, data) {
-            empty = empty.push(text(note).size(12).color(t.text_alpha(0.45)));
+            empty = empty.push(text(note).size(12).color(t.text_muted));
         }
         info = info.push(empty);
     }
@@ -450,7 +447,7 @@ pub(super) fn orphan_banner(app: &App) -> Option<Element<'_, Message>> {
     Some(
         container(
             row![
-                icons::icon(icons::WARNING_CIRCLE, 18.0, t.amber),
+                icons::icon(icons::WARNING_CIRCLE, 18.0, t.warning),
                 text(message).size(13).color(t.text).width(Length::Fill),
                 later,
                 decide,
@@ -460,7 +457,7 @@ pub(super) fn orphan_banner(app: &App) -> Option<Element<'_, Message>> {
         )
         .padding([10, 14])
         .width(Length::Fill)
-        .style(theme::outlined(t.amber, 10.0))
+        .style(theme::outlined(t.warning, 10.0))
         .into(),
     )
 }

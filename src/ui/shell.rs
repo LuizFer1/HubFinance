@@ -4,7 +4,7 @@
 use std::net::Ipv4Addr;
 
 use iced::widget::{
-    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text,
+    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text, tooltip,
 };
 use iced::{Alignment, Element, Length, Padding, mouse, window};
 
@@ -81,7 +81,12 @@ fn toast<'a>(t: &'static Tokens, message: &'a str) -> Element<'a, Message> {
 
 fn frame(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
-    let body = row![sidebar(app), vline(t), content(app)].height(Length::Fill);
+    // Lateral e conteudo no mesmo fundo, sem divisoria: no design a navegacao fica sobre o
+    // fundo da pagina. Um container so para os dois leva o gradiente.
+    let body = container(row![sidebar(app), content(app)].height(Length::Fill))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(theme::page(t));
     container(column![titlebar(app), hline(t), body])
         .width(Length::Fill)
         .height(Length::Fill)
@@ -98,22 +103,14 @@ fn hline<'a>(t: &'static Tokens) -> Element<'a, Message> {
         .into()
 }
 
-fn vline<'a>(t: &'static Tokens) -> Element<'a, Message> {
-    container(Space::new())
-        .width(1)
-        .height(Length::Fill)
-        .style(theme::fill(t.divider(), 0.0))
-        .into()
-}
-
 // ---- barra de titulo ----
 
 fn titlebar(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
-    let mark = container(icons::icon(icons::HOUSE_LINE, 11.0, t.accent_300))
+    let mark = container(icons::icon(icons::HOUSE_LINE, 11.0, t.accent_400))
         .center(18)
-        .style(theme::outlined(t.accent, 5.0));
-    let brand = row![mark, text("HubFinance").size(12).color(t.text_alpha(0.75)),]
+        .style(theme::fill(t.accent_900, 5.0));
+    let brand = row![mark, text("HubFinance").size(12).color(t.text_soft()),]
         .spacing(8)
         .align_y(Alignment::Center);
     let grip = mouse_area(
@@ -137,7 +134,7 @@ fn titlebar(app: &App) -> Element<'_, Message> {
     container(row![grip, controls].align_y(Alignment::Center))
         .width(Length::Fill)
         .height(TITLEBAR_HEIGHT)
-        .style(theme::fill(t.side, 0.0))
+        .style(theme::fill(t.side(), 0.0))
         .into()
 }
 
@@ -222,9 +219,9 @@ pub(super) fn brand_subtitle() -> String {
 
 fn sidebar(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
-    let mark = container(icons::icon(icons::HOUSE_LINE, 17.0, t.accent_300))
-        .center(32)
-        .style(theme::outlined(t.accent, 8.0));
+    let mark = container(icons::icon(icons::HOUSE_LINE, 20.0, t.accent_400))
+        .center(36)
+        .style(theme::fill(t.accent_900, 10.0));
     let brand = container(
         row![
             mark,
@@ -234,94 +231,91 @@ fn sidebar(app: &App) -> Element<'_, Message> {
                     .font(fonts::INTER_MEDIUM)
                     .line_height(1.2)
                     .color(t.text),
-                text(brand_subtitle()).size(11).color(t.text_alpha(0.55)),
-            ],
+                text(brand_subtitle()).size(11).color(t.text_muted),
+            ]
+            .spacing(2),
         ]
-        .spacing(10)
+        .spacing(12)
         .align_y(Alignment::Center),
     )
-    .padding(Padding {
-        top: 0.0,
-        right: 8.0,
-        bottom: 18.0,
-        left: 8.0,
-    });
+    .padding([0, 10]);
 
-    let group = container(
-        text("Hub")
-            .size(12)
-            .font(fonts::INTER_MEDIUM)
-            .color(t.text_alpha(0.45)),
-    )
-    .padding(Padding {
-        top: 14.0,
-        right: 10.0,
-        bottom: 6.0,
-        left: 10.0,
-    });
+    let mut nav = column![].spacing(2);
+    for entry in nav_entries(app) {
+        if entry.screen == Screen::Connection {
+            nav = nav.push(
+                container(text("Hub").size(12).color(t.text_muted)).padding(Padding {
+                    top: 18.0,
+                    right: 12.0,
+                    bottom: 6.0,
+                    left: 12.0,
+                }),
+            );
+        }
+        nav = nav.push(nav_item(app, entry));
+    }
 
     let col = column![
         brand,
-        nav_item(
-            app,
-            Screen::Dashboard,
-            icons::CHART_PIE_SLICE,
-            "Dashboard",
-            None
-        ),
-        nav_item(
-            app,
-            Screen::Transactions,
-            icons::LIST_BULLETS,
-            "Lançamentos",
-            Some(transactions_count(app)),
-        ),
-        nav_item(
-            app,
-            Screen::Reserves,
-            icons::VAULT,
-            "Reservas",
-            Some(reserves_count(app)),
-        ),
-        group,
-        nav_item(
-            app,
-            Screen::Connection,
-            icons::QR_CODE,
-            "Conexão",
-            Some(active_devices(app)),
-        ),
+        nav,
         Space::new().height(Length::Fill),
-        status_card(app),
-        container(theme_switch(app)).padding(Padding {
-            top: 8.0,
-            ..Padding::ZERO
-        }),
+        column![status_card(app), theme_switch(app)].spacing(10),
     ]
-    .spacing(4)
-    .padding(Padding {
-        top: 18.0,
-        right: 12.0,
-        bottom: 14.0,
-        left: 12.0,
-    })
+    .spacing(28)
+    .padding([28, 14])
     .width(SIDEBAR_WIDTH)
     .height(Length::Fill);
 
-    container(col)
-        .height(Length::Fill)
-        .style(theme::fill(t.side, 0.0))
-        .into()
+    container(col).height(Length::Fill).into()
 }
 
-/// Lancamentos vivos no total.
+/// Uma linha da navegacao: tela, glifo, rotulo e a contagem a direita (Dashboard nao tem).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct NavEntry {
+    pub screen: Screen,
+    pub glyph: &'static str,
+    pub label: &'static str,
+    pub count: Option<usize>,
+}
+
+/// As quatro linhas na ordem do design; "Conexão" fica sob a secao "Hub".
+pub(super) fn nav_entries(app: &App) -> [NavEntry; 4] {
+    [
+        NavEntry {
+            screen: Screen::Dashboard,
+            glyph: icons::CHART_PIE_SLICE,
+            label: "Dashboard",
+            count: None,
+        },
+        NavEntry {
+            screen: Screen::Transactions,
+            glyph: icons::LIST_BULLETS,
+            label: "Lançamentos",
+            count: Some(transactions_count(app)),
+        },
+        NavEntry {
+            screen: Screen::Reserves,
+            glyph: icons::VAULT,
+            label: "Reservas",
+            count: Some(reserves_count(app)),
+        },
+        NavEntry {
+            screen: Screen::Connection,
+            glyph: icons::QR_CODE,
+            label: "Conexão",
+            count: Some(active_devices(app)),
+        },
+    ]
+}
+
+/// Lancamentos vivos da conta escolhida (do modelo do Dashboard, que ja os contou).
 pub(super) fn transactions_count(app: &App) -> usize {
-    app.scope.alive_transactions().count()
+    app.dashboard.sidebar.transactions
 }
 
-/// Reservas vivas no total.
+/// Reservas vivas da conta escolhida.
 pub(super) fn reserves_count(app: &App) -> usize {
-    app.scope.reserve_count()
+    app.dashboard.sidebar.reserves
 }
 
 /// Aparelhos ativos: e o numero de linhas da lista "Usuarios conectados" (sem a remocao
@@ -335,37 +329,37 @@ pub(super) fn active_devices(app: &App) -> usize {
         .count()
 }
 
-fn nav_item<'a>(
-    app: &'a App,
-    screen: Screen,
-    glyph: &'static str,
-    label: &'a str,
-    count: Option<usize>,
-) -> Element<'a, Message> {
+/// Item de 44 px, raio 8, icone 18 e rotulo 14 (Medium quando ativo). O icone ativo e o
+/// dourado `accent_400` do design; o inativo herda o texto de apoio do botao.
+fn nav_item(app: &App, entry: NavEntry) -> Element<'_, Message> {
     let t = app.tokens;
-    let active = app.screen == screen;
-    let icon_color = if active {
-        t.accent_300
+    let active = app.screen == entry.screen;
+    let icon = if active {
+        icons::icon(entry.glyph, 18.0, t.accent_400)
     } else {
-        t.text_alpha(0.55)
+        icons::icon_inherit(entry.glyph, 18.0)
     };
     let mut line = row![
-        icons::icon(glyph, 18.0, icon_color),
-        text(label)
-            .size(13)
-            .font(fonts::INTER_MEDIUM)
+        icon,
+        text(entry.label)
+            .size(14)
+            .font(if active {
+                fonts::INTER_MEDIUM
+            } else {
+                fonts::INTER
+            })
             .width(Length::Fill),
     ]
-    .spacing(10)
+    .spacing(12)
     .align_y(Alignment::Center);
-    if let Some(n) = count {
-        line = line.push(text(thousands(n)).size(11).color(t.text_alpha(0.50)));
+    if let Some(n) = entry.count {
+        line = line.push(text(thousands(n)).size(12).color(t.text_muted));
     }
-    button(container(line).height(36).align_y(Alignment::Center))
-        .padding([0, 10])
+    button(container(line).height(44).align_y(Alignment::Center))
+        .padding([0, 12])
         .width(Length::Fill)
         .style(theme::nav_item(t, active))
-        .on_press(Message::SelectScreen(screen))
+        .on_press(Message::SelectScreen(entry.screen))
         .into()
 }
 
@@ -396,31 +390,31 @@ pub(super) fn status_lines(app: &App) -> StatusLines {
             detail: Some(last_sync_line(app)),
         },
         Status::Running => StatusLines {
-            dot: t.amber,
+            dot: t.warning,
             title: "Hub ligado · sem dados".into(),
             address: address(app),
             detail: Some("Aguardando o primeiro sync de um celular pareado".into()),
         },
         Status::NoNetwork => StatusLines {
-            dot: t.amber,
+            dot: t.warning,
             title: "Sem rede local".into(),
             address: Some(format!("porta {} aberta", snap.https_port)),
             detail: Some("Conecte o computador ao Wi-Fi de casa".into()),
         },
         Status::Starting => StatusLines {
-            dot: t.neutral_600,
+            dot: t.idle(),
             title: "Iniciando…".into(),
             address: None,
             detail: None,
         },
         Status::Stopping => StatusLines {
-            dot: t.neutral_600,
+            dot: t.idle(),
             title: "Desligando…".into(),
             address: None,
             detail: None,
         },
         Status::Stopped => StatusLines {
-            dot: t.neutral_600,
+            dot: t.idle(),
             title: "Desligado".into(),
             address: None,
             detail: None,
@@ -441,7 +435,7 @@ pub(super) fn has_data(app: &App) -> bool {
 
 /// Ha lancamento vivo: o estado vazio do Dashboard e de Lancamentos e sobre lancamentos.
 pub(super) fn has_transactions(app: &App) -> bool {
-    !app.scope.is_empty()
+    app.dashboard.sidebar.has_data
 }
 
 /// "Último sync há 2 min · Pixel da Ana": o maior entre envio e recebimento de todos os
@@ -464,51 +458,53 @@ pub(super) fn last_sync_line(app: &App) -> String {
     }
 }
 
+/// Ponto de 7 px com halo de 3 px na cor a 18 % (o `box-shadow: 0 0 0 3px` do design): o
+/// iced nao tem sombra espalhada, entao o halo e um circulo de 13 px por baixo.
+fn halo_dot<'a>(color: iced::Color) -> Element<'a, Message> {
+    container(widgets::dot(color, 7.0))
+        .center(13)
+        .style(theme::fill(theme::alpha(color, 0.18), 6.5))
+        .into()
+}
+
+/// Card de status: `surface`, raio 8, 14 de respiro; titulo 13 e as linhas em `text_muted`.
 fn status_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let lines = status_lines(app);
     let mut col = column![
         row![
-            widgets::dot(lines.dot, 7.0),
-            text(lines.title)
-                .size(12)
-                .font(fonts::INTER_MEDIUM)
-                .color(t.text),
+            halo_dot(lines.dot),
+            text(lines.title).size(13).color(t.text)
         ]
-        .spacing(8)
+        .spacing(5)
         .align_y(Alignment::Center)
     ]
-    .spacing(6);
+    .spacing(5);
     if let Some(address) = lines.address {
-        col = col.push(text(address).size(11).color(t.text_alpha(0.70)));
+        col = col.push(text(address).size(12).color(t.text_muted));
     }
     if let Some(detail) = lines.detail {
-        col = col.push(
-            text(detail)
-                .size(11)
-                .line_height(1.45)
-                .color(t.text_alpha(0.55)),
-        );
+        col = col.push(text(detail).size(12).line_height(1.45).color(t.text_muted));
     }
     container(col)
-        .padding(12)
+        .padding(14)
         .width(Length::Fill)
-        .style(theme::card_inset(t))
+        .style(theme::fill(t.surface, 8.0))
         .into()
 }
 
+/// Escuro | Claro sem icone, como o design.
 fn theme_switch(app: &App) -> Element<'_, Message> {
-    widgets::seg_switch(
+    widgets::segmented(
         app.tokens,
+        true,
         [
             (
-                Some(icons::MOON),
                 "Escuro",
                 app.theme == ThemeMode::Dark,
                 Message::SetTheme(ThemeMode::Dark),
             ),
             (
-                Some(icons::SUN),
                 "Claro",
                 app.theme == ThemeMode::Light,
                 Message::SetTheme(ThemeMode::Light),
@@ -553,43 +549,112 @@ fn content(app: &App) -> Element<'_, Message> {
         .style(theme::scrollbar(t))
         .width(Length::Fill)
         .height(Length::Fill);
+    // Sem fundo proprio: o fundo e o do container de `frame`, que cobre lateral e conteudo
+    // (um fundo aqui esconderia o gradiente atras da rolagem).
     container(scroll)
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(theme::fill(t.bg, 0.0))
         .into()
 }
 
-/// Largura util do conteudo (sem a lateral, a borda e o padding de 32 + 32). Sem teto: com o
-/// maximo de 1180 da 0.0.2 a janela maximizada deixava uma faixa vazia a direita. As telas usam
-/// para decidir colunas: o iced nao tem `auto-fit`.
+/// Largura util do conteudo (sem a lateral e o padding de 32 + 32; a divisoria vertical saiu
+/// com a lateral Grafite). Sem teto: com o maximo de 1180 da 0.0.2 a janela maximizada deixava
+/// uma faixa vazia a direita. As telas usam para decidir colunas: o iced nao tem `auto-fit`.
 pub(super) fn content_width(app: &App) -> f32 {
-    app.window_size.width - SIDEBAR_WIDTH - 1.0 - 64.0
+    app.window_size.width - SIDEBAR_WIDTH - 64.0
 }
 
+/// Abaixo desta largura util os controles do cabecalho descem para baixo do titulo (o
+/// `flex-wrap` do design). Com chip, Pessoal | Comercial, mes e olho eles somam ~560 px, e o
+/// titulo de 30 px precisa de ~240 ao lado; na janela minima (1024) a linha unica espremia o
+/// titulo em duas linhas.
+const HEADER_WRAP_WIDTH: f32 = 900.0;
+
+/// Controles do cabecalho na mesma linha do titulo?
+pub(super) fn header_inline(width: f32) -> bool {
+    width >= HEADER_WRAP_WIDTH
+}
+
+/// Cabecalho: titulo e subtitulo a esquerda; a direita, conforme a tela, o chip "Parcial", o
+/// seletor de conta, o de mes e (so no Dashboard) o olho de ocultar valores.
 fn header(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let (title, subtitle) = titles(app);
-    let mut line = row![container(widgets::page_title(t, title, &subtitle)).width(Length::Fill)]
-        .spacing(24)
-        .align_y(Alignment::End);
+    let mut controls = row![].spacing(10).align_y(Alignment::Center);
+    if let Some(label) = partial_chip(app) {
+        controls = controls.push(widgets::partial_tag(t, label));
+    }
     if let Some(switch) = book_switch(app) {
-        line = line.push(switch);
+        controls = controls.push(switch);
     }
     // Reservas nao tem seletor de mes: saldos sao acumulados ate hoje.
     if matches!(app.screen, Screen::Dashboard | Screen::Transactions) {
-        line = line.push(month_controls(app));
+        let prev = (app.month_idx > 0).then_some(Message::PrevMonth);
+        let next = (app.month_idx + 1 < app.months.len()).then_some(Message::NextMonth);
+        controls = controls.push(widgets::month_picker(
+            t,
+            &app.dashboard.header.month_label,
+            prev,
+            next,
+        ));
     }
+    if app.screen == Screen::Dashboard {
+        controls = controls.push(hide_values_button(app));
+    }
+    let title = widgets::page_title(t, title, &subtitle);
+    let line: Element<'_, Message> = if header_inline(content_width(app)) {
+        row![container(title).width(Length::Fill), controls]
+            .spacing(16)
+            .align_y(Alignment::Center)
+            .into()
+    } else {
+        column![title, controls].spacing(16).into()
+    };
     container(line)
         .padding(Padding {
-            bottom: 8.0,
+            bottom: 4.0,
             ..Padding::ZERO
         })
         .into()
 }
 
-/// Largura do seletor Pessoal | Comercial: dois rotulos de 12 px e o respiro do segmento.
-const BOOK_SWITCH_WIDTH: f32 = 200.0;
+/// "Parcial · até 19 nov": so nas telas com seletor de mes, no mes corrente e com dados (o
+/// modelo ja decide as duas ultimas).
+pub(super) fn partial_chip(app: &App) -> Option<&str> {
+    matches!(app.screen, Screen::Dashboard | Screen::Transactions)
+        .then_some(app.dashboard.header.partial.as_deref())
+        .flatten()
+}
+
+/// Olho de 44 px com tooltip "Ocultar valores" / "Mostrar valores" (o `aria-label` do design).
+/// Com valores ocultos o glifo vira `eye-slash`, para o estado ficar visivel sem o tooltip.
+fn hide_values_button(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let glyph = if app.hide_values {
+        icons::EYE_SLASH
+    } else {
+        icons::EYE
+    };
+    let eye = button(container(icons::icon_inherit(glyph, 20.0)).center(Length::Fill))
+        .width(44)
+        .height(44)
+        .padding(0)
+        .style(theme::icon_button(t))
+        .on_press(Message::ToggleHideValues);
+    tooltip(
+        eye,
+        container(
+            text(app.dashboard.header.hide_toggle.as_str())
+                .size(12)
+                .color(t.text),
+        )
+        .padding([6, 10])
+        .style(theme::menu(t)),
+        tooltip::Position::Bottom,
+    )
+    .gap(4)
+    .into()
+}
 
 /// Seletor de conta. So aparece com uma linha `books` viva de conta comercial (derivado das
 /// linhas, como no app) e fora da Conexao, que e do hub e nao de uma conta.
@@ -597,57 +662,22 @@ pub(super) fn book_switch(app: &App) -> Option<Element<'_, Message>> {
     if app.screen == Screen::Connection || !app.snapshot.dashboard.has_business_book() {
         return None;
     }
-    let option = |book: Book| {
-        (
-            None,
-            book.label(),
-            app.book == book,
-            Message::SelectBook(book),
-        )
-    };
-    Some(
-        container(widgets::seg_switch(
-            app.tokens,
-            [option(Book::Personal), option(Book::Business)],
-        ))
-        .width(BOOK_SWITCH_WIDTH)
-        .into(),
-    )
+    let option = |book: Book| (book.label(), app.book == book, Message::SelectBook(book));
+    Some(widgets::segmented(
+        app.tokens,
+        false,
+        [option(Book::Personal), option(Book::Business)],
+    ))
 }
 
-/// Tag "Parcial · até 24 set" (so no mes corrente e com dados) e o seletor de mes. As setas
-/// ficam sem acao nos limites da janela de 12 meses.
-fn month_controls(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
-    let v = &app.dashboard;
-    let mut controls = row![].spacing(10).align_y(Alignment::Center);
-    if let Some(until) = v.partial_until.as_deref().filter(|_| !v.is_empty) {
-        controls = controls.push(widgets::partial_tag(t, until));
-    }
-    let prev = (app.month_idx > 0).then_some(Message::PrevMonth);
-    let next = (app.month_idx + 1 < app.months.len()).then_some(Message::NextMonth);
-    controls
-        .push(widgets::month_picker(t, &v.month_label, prev, next))
-        .into()
-}
-
-pub(super) fn titles(app: &App) -> (&'static str, String) {
+/// Titulo e subtitulo de cada tela. O do Dashboard vem pronto do modelo Grafite ("Resumo da
+/// casa"); a navegacao continua dizendo "Dashboard".
+pub(super) fn titles(app: &App) -> (&str, String) {
     let empty = !has_transactions(app);
     match app.screen {
         Screen::Dashboard => (
-            "Dashboard",
-            if empty {
-                "Nada sincronizado ainda".into()
-            } else if let Some(business) = app
-                .snapshot
-                .dashboard
-                .business_book()
-                .filter(|_| app.book == Book::Business)
-            {
-                format!("{} · somente leitura · dados do último sync", business.name)
-            } else {
-                "Somente leitura · dados do último sync".into()
-            },
+            app.dashboard.header.title.as_str(),
+            app.dashboard.header.subtitle.clone(),
         ),
         Screen::Transactions => (
             "Lançamentos",
@@ -711,10 +741,10 @@ fn failed_card<'a>(app: &'a App, msg: &'a str) -> Element<'a, Message> {
                 .size(16)
                 .font(fonts::INTER_MEDIUM)
                 .color(t.text),
-            text(msg).size(13).color(t.text_alpha(0.60)),
+            text(msg).size(13).color(t.text_muted),
             text(format!("Dados em {}", app.snapshot.data_dir.display()))
                 .size(12)
-                .color(t.text_alpha(0.50)),
+                .color(t.text_muted),
         ]
         .spacing(8),
     )
@@ -777,7 +807,7 @@ mod tests {
         let lines = status_lines(&app);
         assert_eq!(lines.title, "Hub ligado · sem dados");
         assert_eq!(lines.address.as_deref(), Some("192.168.0.12:7777"));
-        assert_eq!(lines.dot, app.tokens.amber);
+        assert_eq!(lines.dot, app.tokens.warning);
 
         app.snapshot.status = Status::NoNetwork;
         app.snapshot.addresses.clear();
@@ -895,6 +925,101 @@ mod tests {
             titles(&app).1,
             "Dinheiro separado do saldo do mês · somente leitura"
         );
+    }
+
+    #[test]
+    fn titulo_do_dashboard_e_resumo_da_casa_e_a_nav_continua_dashboard() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        assert_eq!(
+            titles(&app),
+            (
+                "Resumo da casa",
+                "Somente leitura · dados do último sync".to_string()
+            )
+        );
+        assert_eq!(nav_entries(&app)[0].label, "Dashboard");
+        let (empty, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        assert_eq!(
+            titles(&empty),
+            ("Resumo da casa", "Nada sincronizado ainda".to_string())
+        );
+    }
+
+    #[test]
+    fn chip_parcial_so_no_mes_corrente_com_dados() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        assert_eq!(partial_chip(&app), Some("Parcial · até 24 set"));
+        assert_eq!(app.dashboard.header.month_label, "Set 2026");
+        app.screen = Screen::Transactions;
+        assert_eq!(partial_chip(&app), Some("Parcial · até 24 set"));
+        // Reservas e Conexao nao tem seletor de mes.
+        app.screen = Screen::Reserves;
+        assert_eq!(partial_chip(&app), None);
+        app.screen = Screen::Connection;
+        assert_eq!(partial_chip(&app), None);
+
+        app.screen = Screen::Dashboard;
+        let _ = super::super::app::update(&mut app, Message::PrevMonth);
+        assert_eq!(partial_chip(&app), None);
+        assert_eq!(app.dashboard.header.month_label, "Ago 2026");
+
+        let (mut empty, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        empty.set_today("2026-09-24".into());
+        assert_eq!(partial_chip(&empty), None);
+    }
+
+    #[test]
+    fn status_sem_dados_usa_warning_e_com_dados_income() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        app.snapshot.status = Status::Running;
+        let lines = status_lines(&app);
+        assert_eq!(lines.title, "Hub ligado");
+        assert_eq!(lines.dot, app.tokens.income);
+
+        let snap = Snapshot {
+            status: Status::Running,
+            ..Snapshot::default()
+        };
+        let (empty, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
+        let lines = status_lines(&empty);
+        assert_eq!(lines.title, "Hub ligado · sem dados");
+        assert_eq!(lines.dot, empty.tokens.warning);
+        assert_ne!(lines.dot, empty.tokens.token("amber"));
+    }
+
+    #[test]
+    fn contagens_da_nav_vem_do_modelo_e_dos_aparelhos() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        let entries = nav_entries(&app);
+        let screens: Vec<Screen> = entries.iter().map(|e| e.screen).collect();
+        assert_eq!(
+            screens,
+            [
+                Screen::Dashboard,
+                Screen::Transactions,
+                Screen::Reserves,
+                Screen::Connection
+            ]
+        );
+        let labels: Vec<&str> = entries.iter().map(|e| e.label).collect();
+        assert_eq!(labels, ["Dashboard", "Lançamentos", "Reservas", "Conexão"]);
+        assert_eq!(entries[0].count, None);
+        assert_eq!(entries[1].count, Some(app.dashboard.sidebar.transactions));
+        assert_eq!(entries[1].count, Some(13));
+        assert_eq!(entries[2].count, Some(app.dashboard.sidebar.reserves));
+        // D1 e D2 ativos; D3 revogado.
+        assert_eq!(entries[3].count, Some(2));
+    }
+
+    #[test]
+    fn cabecalho_quebra_abaixo_de_900_de_largura_util() {
+        assert!(header_inline(1144.0)); // janela inicial de 1440
+        assert!(!header_inline(1024.0 - SIDEBAR_WIDTH - 64.0)); // janela minima
+        assert!(header_inline(900.0));
     }
 
     #[test]

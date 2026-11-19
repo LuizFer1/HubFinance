@@ -120,6 +120,47 @@ pub fn budget_report(dataset: &Dataset, month: &str) -> Vec<BudgetStatus> {
 }
 
 #[cfg(test)]
+mod grafite_tests {
+    use super::*;
+    use crate::dashboard::fixtures_grafite;
+
+    fn row<'a>(rows: &'a [BudgetStatus], name: &str) -> &'a BudgetStatus {
+        rows.iter().find(|r| r.name == name).expect("meta")
+    }
+
+    #[test]
+    fn metas_em_atencao_4_de_5() {
+        // 3.2: o design diz "4 de 7"; vale a contagem das metas da conta.
+        let rows = budget_report(&fixtures_grafite(), "2026-11");
+        assert_eq!(rows.len(), 5);
+        assert_eq!(
+            rows.iter().filter(|r| r.level != BudgetLevel::Ok).count(),
+            4
+        );
+    }
+
+    #[test]
+    fn mercado_76_por_cento() {
+        // 3.2: piso(76,98) = 76 (o design arredondou para 77).
+        let rows = budget_report(&fixtures_grafite(), "2026-11");
+        let m = row(&rows, "Mercado");
+        assert_eq!((m.used_ratio * 100.0).floor() as i64, 76);
+        assert_eq!(m.level, BudgetLevel::Ok);
+    }
+
+    #[test]
+    fn compras_128_por_cento_passou() {
+        let rows = budget_report(&fixtures_grafite(), "2026-11");
+        let c = row(&rows, "Compras");
+        assert_eq!((c.used_ratio * 100.0).floor() as i64, 128);
+        assert_eq!((c.level, c.over_minor), (BudgetLevel::Over, 11_515));
+        let conforto = row(&rows, "Conforto");
+        assert_eq!(conforto.remaining_minor, 564);
+        assert_eq!((conforto.used_ratio * 100.0).floor() as i64, 98);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
 

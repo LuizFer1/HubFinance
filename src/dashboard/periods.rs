@@ -6,7 +6,7 @@
 //! passa de proposito (o hub nao julga regra de negocio) e precisa aparecer como veio.
 
 use time::format_description::well_known::Rfc3339;
-use time::{Date, Month, OffsetDateTime, UtcOffset};
+use time::{Date, Month, OffsetDateTime, UtcOffset, Weekday};
 
 const LONG: [&str; 12] = [
     "janeiro",
@@ -184,6 +184,113 @@ pub fn paired_label(rfc3339: &str, offset: UtcOffset) -> String {
     }
 }
 
+/// Dia juliano de uma data na forma `YYYY-MM-DD`, com o dia **normalizado como o
+/// `Date.UTC` do app**: `2026-02-31` e 3 de marco, `2026-03-00` e 28 de fevereiro. O app faz
+/// toda a aritmetica de dias com `Date.UTC`, que nunca recusa; se o hub recusasse, uma data
+/// assim daria outro dia (ou laco parado) na projecao. Fora da forma -> `None`.
+fn day_number(date: &str) -> Option<i32> {
+    if !super::contract::is_iso_date(date) {
+        return None;
+    }
+    let (y, m) = parse_month(&date[..7])?;
+    let d: i32 = date[8..].parse().ok()?;
+    let first = Date::from_calendar_date(y, Month::try_from(m).ok()?, 1).ok()?;
+    Some(first.to_julian_day() + d - 1)
+}
+
+fn date_of(day: i32) -> Option<Date> {
+    Date::from_julian_day(day).ok()
+}
+
+fn iso(date: Date) -> String {
+    format!(
+        "{:04}-{:02}-{:02}",
+        date.year(),
+        u8::from(date.month()),
+        date.day()
+    )
+}
+
+/// `shiftDay` do app: soma `delta` dias. Fora da forma `YYYY-MM-DD` volta crua; quem anda em
+/// laco (`while cursor <= until`) so pode partir de data que `contract::is_iso_date` aceita,
+/// e para essas o passo sempre avanca.
+pub fn shift_day(date: &str, delta: i64) -> String {
+    let shifted = day_number(date)
+        .and_then(|n| i32::try_from(delta).ok().and_then(|d| n.checked_add(d)))
+        .and_then(date_of);
+    shifted.map_or_else(|| date.to_string(), iso)
+}
+
+/// `daysBetween` do app: dias corridos de `from` ate `to` (positivo quando `to` e depois).
+/// Data fora da forma -> 0 ("hoje"), nunca panico.
+pub fn days_between(from: &str, to: &str) -> i64 {
+    match (day_number(from), day_number(to)) {
+        (Some(a), Some(b)) => i64::from(b) - i64::from(a),
+        _ => 0,
+    }
+}
+
+/// `daysInMonth` do app; mes invalido -> 0 (quem divide por ele tem de tratar).
+pub fn days_in_month(month: &str) -> u8 {
+    parse_month(month)
+        .and_then(|(y, m)| {
+            Month::try_from(m)
+                .ok()
+                .map(|m| time::util::days_in_month(m, y))
+        })
+        .unwrap_or(0)
+}
+
+/// `lastDayOfMonth` do app: `"2026-02"` -> `"2026-02-28"`. Mes invalido volta cru.
+pub fn last_day_of_month(month: &str) -> String {
+    match days_in_month(month) {
+        0 => month.to_string(),
+        last => format!("{month}-{last:02}"),
+    }
+}
+
+/// `dayOfMonthClamped` do app: dia `n` do mes, limitado ao ultimo. `n <= 0` (lixo de versao
+/// futura chegando por sync) vale 1, como `Math.max(1, Math.trunc(n) || 1)`. Mes invalido
+/// volta cru.
+pub fn day_of_month_clamped(month: &str, n: i64) -> String {
+    match days_in_month(month) {
+        0 => month.to_string(),
+        last => format!("{month}-{:02}", n.clamp(1, i64::from(last))),
+    }
+}
+
+/// `isBusinessDay` do app: segunda a sexta, sem feriados (o app decidiu assim: a tabela de
+/// feriados muda todo ano). Data fora da forma -> `false`.
+pub fn is_business_day(date: &str) -> bool {
+    day_number(date)
+        .and_then(date_of)
+        .is_some_and(|d| !matches!(d.weekday(), Weekday::Saturday | Weekday::Sunday))
+}
+
+/// `nthBusinessDayOfMonth` do app: o `n`-esimo dia util; sem tantos, o ultimo util do mes
+/// (melhor um lancamento no fim do mes do que engolir a competencia). `n <= 0` vale 1. Mes
+/// invalido volta cru.
+pub fn nth_business_day(month: &str, n: i64) -> String {
+    let last = days_in_month(month);
+    if last == 0 {
+        return month.to_string();
+    }
+    let target = n.max(1);
+    let mut count = 0;
+    let mut last_business = format!("{month}-01");
+    for day in 1..=last {
+        let date = format!("{month}-{day:02}");
+        if is_business_day(&date) {
+            count += 1;
+            if count == target {
+                return date;
+            }
+            last_business = date;
+        }
+    }
+    last_business
+}
+
 /// "agora há pouco", "há 2 min", "há 1 h", "há 1 dia", "há 3 dias". Recebe segundos (quem
 /// chama faz `agora - t`); negativo, de relogio adiantado, vira "agora há pouco".
 pub fn relative_secs(secs: i64) -> String {
@@ -302,5 +409,106 @@ mod tests {
         assert_eq!(relative_secs(3 * 86_400), "há 3 dias");
         // Relogio adiantado nao vira "ha -2 min".
         assert_eq!(relative_secs(-120), "agora há pouco");
+    }
+
+    // ---- dias (calendar.test.ts, periods.test.ts, insights.test.ts do app) ----
+
+    #[test]
+    fn shift_day_anda_e_atravessa_mes_e_ano() {
+        assert_eq!(shift_day("2026-08-10", 1), "2026-08-11");
+        assert_eq!(shift_day("2026-08-10", -1), "2026-08-09");
+        assert_eq!(shift_day("2026-08-10", 7), "2026-08-17");
+        assert_eq!(shift_day("2026-08-31", 1), "2026-09-01");
+        assert_eq!(shift_day("2026-01-01", -1), "2025-12-31");
+        assert_eq!(shift_day("2024-02-28", 1), "2024-02-29");
+        assert_eq!(shift_day("2026-02-28", 1), "2026-03-01");
+        assert_eq!(shift_day("2026-02-28", 0), "2026-02-28");
+    }
+
+    #[test]
+    fn shift_day_normaliza_dia_impossivel_como_o_js() {
+        // `Date.UTC(2026, 1, 31)` e 3 de marco: o app normaliza, o hub tambem, senao uma serie
+        // com `startOn` assim ficaria parada no laco semanal da H2b.
+        assert_eq!(shift_day("2026-02-31", 0), "2026-03-03");
+        assert_eq!(shift_day("2026-02-31", 7), "2026-03-10");
+        // Fora da forma `YYYY-MM-DD` volta crua, sem panico.
+        assert_eq!(shift_day("ontem", 1), "ontem");
+        assert_eq!(shift_day("2026-13-01", 1), "2026-13-01");
+    }
+
+    #[test]
+    fn days_in_month_conhece_bissexto() {
+        assert_eq!(days_in_month("2028-02"), 29);
+        assert_eq!(days_in_month("2026-02"), 28);
+        assert_eq!(days_in_month("2026-09"), 30);
+        assert_eq!(days_in_month("2026-12"), 31);
+        assert_eq!(days_in_month("2026-13"), 0);
+    }
+
+    #[test]
+    fn days_between_conta_dias_corridos() {
+        assert_eq!(days_between("2026-09-24", "2026-09-30"), 6);
+        assert_eq!(days_between("2026-09-30", "2026-10-01"), 1);
+        assert_eq!(days_between("2026-10-01", "2026-09-30"), -1);
+        assert_eq!(days_between("2026-12-31", "2027-01-01"), 1);
+        assert_eq!(days_between("2026-11-19", "2026-11-19"), 0);
+        assert_eq!(days_between("lixo", "2026-11-19"), 0);
+    }
+
+    // ---- business-day.test.ts (os 7 casos) ----
+
+    #[test]
+    fn segunda_a_sexta_sao_uteis_sabado_e_domingo_nao() {
+        // 2026-08-10 = segunda, 11=ter, ..., 14=sex, 15=sab, 16=dom
+        assert!(is_business_day("2026-08-10"));
+        assert!(is_business_day("2026-08-14"));
+        assert!(!is_business_day("2026-08-15"));
+        assert!(!is_business_day("2026-08-16"));
+    }
+
+    #[test]
+    fn respeita_o_dia_pedido() {
+        assert_eq!(day_of_month_clamped("2026-08", 5), "2026-08-05");
+    }
+
+    #[test]
+    fn trinta_e_um_de_fevereiro_vira_o_ultimo_dia_do_mes() {
+        assert_eq!(day_of_month_clamped("2026-02", 31), "2026-02-28");
+        assert_eq!(day_of_month_clamped("2024-02", 31), "2024-02-29");
+    }
+
+    #[test]
+    fn primeiro_dia_util_de_agosto_2026_e_dia_3_mes_comeca_no_sabado() {
+        // 2026-08-01 sab, 02 dom, 03 seg
+        assert_eq!(nth_business_day("2026-08", 1), "2026-08-03");
+    }
+
+    #[test]
+    fn quinto_dia_util_de_agosto_2026_e_dia_7() {
+        // 3,4,5,6,7
+        assert_eq!(nth_business_day("2026-08", 5), "2026-08-07");
+    }
+
+    #[test]
+    fn n_maior_que_os_uteis_do_mes_devolve_o_ultimo_util() {
+        assert_eq!(nth_business_day("2026-08", 99), "2026-08-31");
+    }
+
+    #[test]
+    fn conhece_fevereiro_e_meses_de_30() {
+        assert_eq!(last_day_of_month("2026-02"), "2026-02-28");
+        assert_eq!(last_day_of_month("2026-04"), "2026-04-30");
+    }
+
+    #[test]
+    fn n_invalido_cai_no_dia_1() {
+        // `Math.max(1, Math.trunc(n) || 1)` do app: zero e negativo viram 1.
+        assert_eq!(day_of_month_clamped("2026-08", 0), "2026-08-01");
+        assert_eq!(day_of_month_clamped("2026-08", -3), "2026-08-01");
+        assert_eq!(nth_business_day("2026-08", 0), "2026-08-03");
+        // Mes invalido volta cru.
+        assert_eq!(day_of_month_clamped("2026-13", 5), "2026-13");
+        assert_eq!(nth_business_day("x", 1), "x");
+        assert_eq!(last_day_of_month("x"), "x");
     }
 }

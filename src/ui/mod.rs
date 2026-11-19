@@ -52,6 +52,7 @@ pub fn run(
     )
     .title("HubFinance")
     .subscription(app::subscription)
+    .font(fonts::INTER_LIGHT_BYTES)
     .font(fonts::INTER_REGULAR_BYTES)
     .font(fonts::INTER_MEDIUM_BYTES)
     .font(fonts::INTER_SEMIBOLD_BYTES)

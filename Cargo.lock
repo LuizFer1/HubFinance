@@ -1891,6 +1891,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "tray-icon",
+ "ttf-parser",
  "ulid",
  "windows-sys 0.61.2",
  "winresource",

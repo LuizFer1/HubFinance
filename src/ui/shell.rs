@@ -110,7 +110,7 @@ fn titlebar(app: &App) -> Element<'_, Message> {
     let mark = container(icons::icon(icons::HOUSE_LINE, 11.0, t.accent_400))
         .center(18)
         .style(theme::fill(t.accent_900, 5.0));
-    let brand = row![mark, text("HubFinance").size(12).color(t.text_alpha(0.75)),]
+    let brand = row![mark, text("HubFinance").size(12).color(t.text_soft()),]
         .spacing(8)
         .align_y(Alignment::Center);
     let grip = mouse_area(
@@ -402,19 +402,19 @@ pub(super) fn status_lines(app: &App) -> StatusLines {
             detail: Some("Conecte o computador ao Wi-Fi de casa".into()),
         },
         Status::Starting => StatusLines {
-            dot: t.neutral_600,
+            dot: t.idle(),
             title: "Iniciando…".into(),
             address: None,
             detail: None,
         },
         Status::Stopping => StatusLines {
-            dot: t.neutral_600,
+            dot: t.idle(),
             title: "Desligando…".into(),
             address: None,
             detail: None,
         },
         Status::Stopped => StatusLines {
-            dot: t.neutral_600,
+            dot: t.idle(),
             title: "Desligado".into(),
             address: None,
             detail: None,

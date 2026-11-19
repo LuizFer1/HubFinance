@@ -1568,7 +1568,7 @@ fn recent(app: &App) -> Element<'_, Message> {
         }
         meta = meta.push(txt(l.meta.clone(), 12.0, t.text_muted));
         let color = if l.excluded {
-            t.text_alpha(0.55)
+            t.text_muted
         } else if l.income {
             t.income_fg
         } else {
@@ -1625,12 +1625,9 @@ fn people(app: &App) -> Option<Element<'_, Message>> {
     let p = app.dashboard.people.as_ref()?;
     let mut col = column![txt(p.title.clone(), 13.0, t.text_muted)].spacing(14);
     for person in &p.rows {
-        // Avatar neutro: #C4C4C4 do design = `neutral_300` com texto `bg` no escuro; no claro
-        // a rampa e invertida e o cinza claro equivalente e `neutral_700`, com texto `fg`.
-        let (bg, fg) = match (&person.color, t.mode) {
-            (Some(tk), _) => (t.token(tk), t.bg),
-            (None, crate::dashboard::colors::Mode::Dark) => (t.neutral_300, t.bg),
-            (None, crate::dashboard::colors::Mode::Light) => (t.neutral_700, t.text),
+        let (bg, fg) = match &person.color {
+            Some(tk) => (t.token(tk), t.bg),
+            None => t.avatar_neutral(),
         };
         col = col.push(
             row![

@@ -40,7 +40,7 @@ pub(super) fn author_cell<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Messa
     author_cell_of(app, r.author.as_ref())
 }
 
-/// Avatar de 22 + nome; sem autor visivel, `circle-dashed` em `neutral_600` e "—". Serve as
+/// Avatar de 22 + nome; sem autor visivel, `circle-dashed` em `idle` e "—". Serve as
 /// linhas de lancamento e as de movimentacao de reserva.
 pub(super) fn author_cell_of<'a>(
     app: &'a App,
@@ -59,7 +59,7 @@ pub(super) fn author_cell_of<'a>(
             author.name.clone(),
         ),
         None => (
-            container(icons::icon(icons::CIRCLE_DASHED, 22.0, t.neutral_600))
+            container(icons::icon(icons::CIRCLE_DASHED, 22.0, t.idle()))
                 .center(22)
                 .into(),
             "—".to_string(),

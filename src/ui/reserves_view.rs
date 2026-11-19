@@ -216,7 +216,7 @@ fn total_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.reserves;
     let parts = money_parts(v.totals.total_minor);
-    let muted = t.text_alpha(0.60);
+    let muted = t.text_muted;
     let note = row![
         icons::icon(icons::ARROW_DOWN, 12.0, muted),
         text(format!(
@@ -243,7 +243,7 @@ fn total_card(app: &App) -> Element<'_, Message> {
                 &parts.whole,
                 &parts.cents,
                 t.text,
-                t.text_alpha(0.55)
+                t.text_muted
             ),
             note,
             container(split_bar(t, &shares)).padding(Padding {
@@ -299,7 +299,7 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
                 text(format!("de {multiple} meses"))
                     .size(16)
                     .line_height(1.0)
-                    .color(t.text_alpha(0.55))
+                    .color(t.text_muted)
             )
             .padding(Padding {
                 bottom: 2.0,
@@ -316,7 +316,7 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
                 .size(24)
                 .font(fonts::INTER_MEDIUM)
                 .line_height(1.0)
-                .color(t.text_alpha(0.55)),
+                .color(t.text_muted),
         )
         .height(32)
         .align_y(Alignment::End)
@@ -327,9 +327,7 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
         column![
             kicker_with_icon(t, icons::LIFEBUOY, t.accent_300, "Emergência coberta"),
             value,
-            text(remaining.to_string())
-                .size(12)
-                .color(t.text_alpha(0.60)),
+            text(remaining.to_string()).size(12).color(t.text_muted),
             container(meter(t, segments, 6.0)).padding(Padding {
                 top: 8.0,
                 ..Padding::ZERO
@@ -342,7 +340,7 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
 fn year_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.reserves;
-    let muted = t.text_alpha(0.55);
+    let muted = t.text_muted;
     let line = |glyph: &'static str,
                 icon_color: Color,
                 color: Color,
@@ -354,7 +352,7 @@ fn year_card(app: &App) -> Element<'_, Message> {
         row![
             row![
                 icons::icon(glyph, 13.0, icon_color),
-                text(label).size(13).color(t.text_alpha(0.75)),
+                text(label).size(13).color(t.text_soft()),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
@@ -400,7 +398,7 @@ fn year_card(app: &App) -> Element<'_, Message> {
         col.push(
             text(v.withdrawals_note.clone())
                 .size(12)
-                .color(t.text_alpha(0.60)),
+                .color(t.text_muted),
         )
     } else {
         col.push(Space::new().height(16))
@@ -481,7 +479,7 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
                 Space::new().height(16),
                 text("Nenhuma reserva de emergência sincronizada")
                     .size(13)
-                    .color(t.text_alpha(0.55)),
+                    .color(t.text_muted),
             ],
         );
     };
@@ -498,7 +496,7 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
             .clip(true),
             text(format!("Meta: {} × custo essencial", e.multiple))
                 .size(12)
-                .color(t.text_alpha(0.55)),
+                .color(t.text_muted),
         ]
         .width(Length::Fill),
         pill(t, e.pct_label.clone()),
@@ -511,19 +509,13 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
         &parts.whole,
         &parts.cents,
         t.text,
-        t.text_alpha(0.55)
+        t.text_muted
     )]
     .spacing(10)
     .align_y(Alignment::End);
     if let Some(goal) = goal_note(e.goal_minor) {
         balance = balance.push(
-            container(
-                text(goal)
-                    .size(13)
-                    .line_height(1.0)
-                    .color(t.text_alpha(0.55)),
-            )
-            .padding(Padding {
+            container(text(goal).size(13).line_height(1.0).color(t.text_muted)).padding(Padding {
                 bottom: 2.0,
                 ..Padding::ZERO
             }),
@@ -541,7 +533,7 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
     }
     let eta = row![
         icons::icon(icons::CALENDAR_CHECK, 13.0, t.accent_300),
-        text(e.eta_label.clone()).size(13).color(t.text_alpha(0.75)),
+        text(e.eta_label.clone()).size(13).color(t.text_soft()),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -574,7 +566,7 @@ fn meter_labels<'a>(t: &'static Tokens, e: &EmergencyView) -> Element<'a, Messag
             text(label)
                 .size(11)
                 .wrapping(Wrapping::None)
-                .color(t.text_alpha(0.50)),
+                .color(t.text_muted),
         )
         .width(Length::FillPortion(1))
         .into()
@@ -590,7 +582,7 @@ fn essential_section<'a>(
     inner_width: f32,
 ) -> Element<'a, Message> {
     let t = app.tokens;
-    let muted = t.text_alpha(0.55);
+    let muted = t.text_muted;
     let title = text("Custo essencial médio")
         .size(13)
         .font(fonts::INTER_MEDIUM)
@@ -668,7 +660,7 @@ fn essential_section<'a>(
             text(whole_brl(p.average_minor))
                 .size(13)
                 .wrapping(Wrapping::None)
-                .color(t.text_alpha(0.75)),
+                .color(t.text_soft()),
         ]
         .spacing(10)
         .height(28)
@@ -709,12 +701,7 @@ fn pots_card(app: &App) -> Element<'_, Message> {
     ];
     if v.pots.is_empty() {
         col = col.push(widgets::hdivider(t)).push(
-            container(
-                text("Nenhuma caixinha ainda")
-                    .size(13)
-                    .color(t.text_alpha(0.55)),
-            )
-            .padding([14, 0]),
+            container(text("Nenhuma caixinha ainda").size(13).color(t.text_muted)).padding([14, 0]),
         );
     }
     for p in &v.pots {
@@ -729,7 +716,7 @@ fn pace_style(t: &'static Tokens, pace: &Pace) -> (&'static str, Color) {
         Pace::OnTrack { .. } | Pace::Reached => (icons::CHECK_CIRCLE, t.income_fg),
         Pace::Overdue { .. } | Pace::Behind { .. } => (icons::WARNING_CIRCLE, t.token("orange")),
         Pace::NoRecurring { .. } | Pace::NoDeadline { .. } | Pace::NoGoal => {
-            (icons::REPEAT, t.text_alpha(0.55))
+            (icons::REPEAT, t.text_muted)
         }
     }
 }
@@ -740,7 +727,7 @@ fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
     let tile = container(icons::icon(reserve_glyph(&p.icon), 18.0, color))
         .center(36)
         .style(theme::fill(reserve_tint(t, &p.color), 8.0));
-    let muted = t.text_alpha(0.55);
+    let muted = t.text_muted;
     let mut meta = row![
         text(p.meta_left.clone())
             .size(12)
@@ -814,7 +801,7 @@ const EVOLUTION_HEIGHT: f32 = 230.0;
 fn evolution_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.reserves;
-    let muted = t.text_alpha(0.60);
+    let muted = t.text_muted;
     let title = text("Evolução do dinheiro separado")
         .size(15)
         .font(fonts::INTER_MEDIUM)
@@ -847,7 +834,7 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
     let body: Element<'_, Message> = if quiet {
         text("Nenhum saldo nos últimos 12 meses")
             .size(13)
-            .color(t.text_alpha(0.55))
+            .color(t.text_muted)
             .into()
     } else {
         canvas(StackedBarsProgram {
@@ -893,7 +880,7 @@ fn movements_card(app: &App) -> Element<'_, Message> {
             container(
                 text("Nenhuma movimentação nos últimos 12 meses")
                     .size(13)
-                    .color(t.text_alpha(0.55)),
+                    .color(t.text_muted),
             )
             .height(MOVEMENT_ROW_HEIGHT)
             .padding([0, 8])
@@ -954,7 +941,7 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
         text(short_date(&m.occurred_on))
             .size(12)
             .wrapping(Wrapping::None)
-            .color(t.text_alpha(0.55))
+            .color(t.text_muted)
     ]
     .spacing(6)
     .align_y(Alignment::Center);
@@ -980,7 +967,7 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
         text(m.reserve_name.clone())
             .size(13)
             .wrapping(Wrapping::None)
-            .color(t.text_alpha(0.80)),
+            .color(t.text_soft()),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -1040,7 +1027,7 @@ fn empty_card(app: &App) -> Element<'_, Message> {
         )
         .size(14)
         .line_height(1.55)
-        .color(t.text_alpha(0.65)),
+        .color(t.text_soft()),
     ]
     .max_width(460);
     let inner = shell::content_width(app) - 2.0 * EMPTY_PADDING_X;
@@ -1108,7 +1095,7 @@ mod tests {
     #[test]
     fn zero_sem_sinal_e_na_cor_secundaria() {
         let t = &theme::DARK;
-        let muted = t.text_alpha(0.55);
+        let muted = t.text_muted;
         assert_eq!(
             flow_value("\u{2212}", 0, t.expense_fg, muted),
             ("R$ 0,00".to_string(), muted)

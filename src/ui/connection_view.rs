@@ -224,7 +224,7 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
                 .push(
                     text(format!("expira em {}:{:02}", left / 60, left % 60))
                         .size(12)
-                        .color(t.text_alpha(0.55)),
+                        .color(t.text_muted),
                 )
                 .push(
                     button(
@@ -290,7 +290,7 @@ fn address_head(app: &App, inner: f32) -> Element<'_, Message> {
             container(
                 text(format!("Outros endereços: {}", others.join(", ")))
                     .size(12)
-                    .color(t.text_alpha(0.55)),
+                    .color(t.text_muted),
             )
             .padding(Padding {
                 top: 8.0,
@@ -310,7 +310,7 @@ fn address_steps(app: &App) -> Element<'_, Message> {
     ])
     .size(13)
     .line_height(1.45)
-    .color(t.text_alpha(0.75));
+    .color(t.text_soft());
     let steps = column![
         widgets::step(
             t,
@@ -335,10 +335,10 @@ fn address_steps(app: &App) -> Element<'_, Message> {
     ]
     .spacing(10);
     let footer = row![
-        icons::icon(icons::HOUSE_SIMPLE, 12.0, t.text_alpha(0.55)),
+        icons::icon(icons::HOUSE_SIMPLE, 12.0, t.text_muted),
         text("Funciona só na rede de casa. Nada passa pela internet.")
             .size(12)
-            .color(t.text_alpha(0.55)),
+            .color(t.text_muted),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -360,9 +360,7 @@ fn field<'a>(
     let enabled = value.is_some();
     let shown = match value {
         Some(v) => text(v).size(size).font(fonts::INTER_MEDIUM).color(t.text),
-        None => text("sem endereço de rede")
-            .size(15)
-            .color(t.text_alpha(0.55)),
+        None => text("sem endereço de rede").size(15).color(t.text_muted),
     };
     // O iced 0.14 nao tem reticencias: texto que nao cabe e cortado na borda do campo.
     let value = container(shown.wrapping(Wrapping::None))
@@ -422,9 +420,7 @@ fn releases_link(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     if app.releases_open_failed {
         return row![
-            text(config::RELEASES_URL)
-                .size(12)
-                .color(t.text_alpha(0.55)),
+            text(config::RELEASES_URL).size(12).color(t.text_muted),
             copy_button(app, CopyTarget::ReleasesUrl, true),
         ]
         .spacing(8)
@@ -503,17 +499,14 @@ fn about_card(app: &App) -> Element<'_, Message> {
     let path_row = |label: &'static str, path: &str, target: CopyTarget| {
         column![
             row![
-                text(label)
-                    .size(12)
-                    .color(t.text_alpha(0.55))
-                    .width(Length::Fill),
+                text(label).size(12).color(t.text_muted).width(Length::Fill),
                 copy_button(app, target, true),
             ]
             .align_y(Alignment::Center),
             text(breakable_path(path))
                 .size(12)
                 .line_height(1.45)
-                .color(t.text_alpha(0.75))
+                .color(t.text_soft())
                 .wrapping(Wrapping::WordOrGlyph)
                 .width(Length::Fill),
         ]
@@ -547,15 +540,15 @@ fn about_card(app: &App) -> Element<'_, Message> {
                  janela não desliga o hub: use Desligar o hub no ícone ao lado do relógio.",
             )
             .size(12)
-            .color(t.text_alpha(0.55)),
+            .color(t.text_muted),
         )
         .into()
     });
     let footer = row![
-        icons::icon(icons::HOUSE_SIMPLE, 12.0, t.text_alpha(0.55)),
+        icons::icon(icons::HOUSE_SIMPLE, 12.0, t.text_muted),
         text("Este programa nunca consulta a internet")
             .size(12)
-            .color(t.text_alpha(0.55)),
+            .color(t.text_muted),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -639,12 +632,8 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
     }
 
     let seen = presence(person.last_seen_at.as_deref(), now);
-    let dot = if seen.is_online() {
-        t.income
-    } else {
-        t.neutral_600
-    };
-    let muted = t.text_alpha(0.55);
+    let dot = if seen.is_online() { t.income } else { t.idle() };
+    let muted = t.text_muted;
     let meta = row![
         row![
             icons::icon(icons::DEVICE_MOBILE, 12.0, muted),
@@ -742,7 +731,7 @@ fn empty_users<'a>(t: &'static Tokens) -> Element<'a, Message> {
             )
             .size(13)
             .line_height(1.5)
-            .color(t.text_alpha(0.60))
+            .color(t.text_muted)
             .align_x(Alignment::Center),
         )
         .max_width(320),
@@ -834,7 +823,7 @@ fn certificate_card(app: &App, width: f32) -> Element<'_, Message> {
             )
             .size(13)
             .line_height(1.45)
-            .color(t.text_alpha(0.75)),
+            .color(t.text_soft()),
             Space::new().height(14),
             field(
                 app,
@@ -866,7 +855,7 @@ fn activity_card(app: &App) -> Element<'_, Message> {
         Space::new().height(8),
     ];
     if snap.activity.is_empty() {
-        col = col.push(container(text("Nada ainda").size(13).color(t.text_alpha(0.55))).height(28));
+        col = col.push(container(text("Nada ainda").size(13).color(t.text_muted)).height(28));
     }
     for entry in snap.activity.iter().take(20) {
         let at = time::format_time(::time::OffsetDateTime::from(entry.at), app.offset);
@@ -877,7 +866,7 @@ fn activity_card(app: &App) -> Element<'_, Message> {
         };
         col = col.push(
             row![
-                text(at).size(12).color(t.text_alpha(0.50)).width(44),
+                text(at).size(12).color(t.text_muted).width(44),
                 text(entry.text.clone()).size(13).color(color),
             ]
             .spacing(10)
@@ -889,9 +878,7 @@ fn activity_card(app: &App) -> Element<'_, Message> {
     col = col.push(
         container(
             // O caminho dos dados mora no card "Sobre o hub".
-            text(format!("epoch {epoch}"))
-                .size(11)
-                .color(t.text_alpha(0.45)),
+            text(format!("epoch {epoch}")).size(11).color(t.text_muted),
         )
         .padding(Padding {
             top: 10.0,

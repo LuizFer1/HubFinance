@@ -302,7 +302,7 @@ impl canvas::Program<Message> for StackedBarsProgram<'_> {
         // e redesenhar 12 pilhas por quadro e barato.
         let chart = self.cache.draw(renderer, size, |frame| {
             let grid = t.divider();
-            let muted = t.text_alpha(0.50);
+            let muted = t.text_muted;
             let marks = [
                 (plot.y, axis_label(self.axis_top)),
                 (plot.y + plot.height / 2.0, axis_label(self.axis_top / 2)),
@@ -331,7 +331,7 @@ impl canvas::Program<Message> for StackedBarsProgram<'_> {
                         month_short(month).to_string(),
                         Point::new(plot.x + (i as f32 + 0.5) * col_w, size.height - 8.0),
                         12.0,
-                        if current { t.text } else { t.text_alpha(0.55) },
+                        if current { t.text } else { t.text_muted },
                     )
                 });
             }

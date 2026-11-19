@@ -190,6 +190,27 @@ impl Tokens {
         }
     }
 
+    /// Ponto de estado e icone apagados (hub desligado, aparelho fora, "Sem autor"): sem texto,
+    /// pedem 3:1 sobre o fundo. O `neutral_600` serve no escuro; no claro a rampa invertida o
+    /// deixa em ~2:1 sobre `bg`, e o degrau que passa em todo fundo e o `neutral_400`.
+    pub fn idle(&self) -> Color {
+        match self.mode {
+            Mode::Dark => self.neutral_600,
+            Mode::Light => self.neutral_400,
+        }
+    }
+
+    /// Avatar de quem nao tem cor de perfil: (preenchimento, inicial). O #C4C4C4 do design e o
+    /// `neutral_300` com a inicial em `bg` no escuro; no claro o cinza claro equivalente e o
+    /// `neutral_700`, com a inicial em `fg` (o `neutral_300` com `bg` daria 2,2:1). Escolha da
+    /// H4b para "Quem lançou", valendo para toda tela.
+    pub fn avatar_neutral(&self) -> (Color, Color) {
+        match self.mode {
+            Mode::Dark => (self.neutral_300, self.bg),
+            Mode::Light => (self.neutral_700, self.text),
+        }
+    }
+
     /// Divisoria opaca: o hex da paleta sobre `surface` (sobre `bg` fica um tom mais clara que
     /// a do app, diferenca que a paleta aceita para o hub).
     pub fn divider(&self) -> Color {
@@ -462,7 +483,8 @@ pub fn icon_button(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> but
     }
 }
 
-/// Opcao de segmentado (tema, tipo): raio 6, ativo `accent_900` + `accent_200`, inativo a 60 %.
+/// Opcao de segmentado (tipo): raio 6, ativo `accent_900` + `accent_200`, inativo no texto de
+/// apoio (o texto a 60 % fica abaixo de 4,5:1 no claro).
 pub fn seg_option(
     t: &'static Tokens,
     active: bool,
@@ -475,11 +497,7 @@ pub fn seg_option(
         } else {
             None
         },
-        text_color: if active {
-            t.accent_200
-        } else {
-            t.text_alpha(0.60)
-        },
+        text_color: if active { t.accent_200 } else { t.text_soft() },
         border: rounded(6.0),
         ..button::Style::default()
     }
@@ -538,17 +556,19 @@ pub fn danger_outline(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> 
     }
 }
 
-/// "Remover" do dialogo: fundo da despesa a 14 % (hover 24 %), contorno a 55 %.
+/// "Remover" do dialogo: fundo da despesa a 14 % (hover 20 %), contorno a 55 %. O hover para
+/// em 20 % porque a 24 % o `expense_fg` do claro cai para 4,3:1.
 pub fn danger_filled(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |_, status| button::Style {
-        background: bg(alpha(t.expense, if hovered(status) { 0.24 } else { 0.14 })),
+        background: bg(alpha(t.expense, if hovered(status) { 0.20 } else { 0.14 })),
         text_color: t.expense_fg,
         border: outline(alpha(t.expense, 0.55), 8.0),
         ..button::Style::default()
     }
 }
 
-/// Botoes da barra de titulo: hover texto a 8 %; o fechar fica vermelho do Windows.
+/// Botoes da barra de titulo: icone no texto de apoio, hover texto a 8 %; o fechar fica vermelho
+/// do Windows.
 pub fn titlebar_button(
     t: &'static Tokens,
     close: bool,
@@ -564,7 +584,7 @@ pub fn titlebar_button(
             text_color: if hover && close {
                 t.close_hover_text
             } else {
-                t.text_alpha(0.70)
+                t.text_soft()
             },
             border: rounded(0.0),
             ..button::Style::default()
@@ -919,6 +939,130 @@ mod tests {
             assert!(fg > soft && soft > muted, "{:?}", t.mode);
         }
         assert_eq!(DARK.text_soft(), hex(0xbdbdbd));
+    }
+
+    /// Fundos onde um ponto de estado ou um icone apagado aparece: pagina, lateral, card, caixa
+    /// interna e linha sob o mouse (texto a 4 % sobre o card).
+    fn backgrounds(t: &Tokens) -> [(&'static str, Color); 5] {
+        [
+            ("bg", t.bg),
+            ("side", t.side()),
+            ("surface", t.surface),
+            ("surface_2", t.surface_2),
+            ("hover", mix(t.surface, t.text, 0.04)),
+        ]
+    }
+
+    /// WCAG 1.4.11: ponto de estado e icone sem texto pedem 3:1. O `neutral_600` do claro dava
+    /// ~2:1 (H1); `idle` e o degrau que passa nos dois temas.
+    #[test]
+    fn pontos_de_estado_passam_3_em_todo_fundo() {
+        for t in [&DARK, &LIGHT] {
+            for (fundo, cor) in backgrounds(t) {
+                for (nome, dot) in [
+                    ("idle", t.idle()),
+                    ("income", t.income),
+                    ("warning", t.warning),
+                    ("expense", t.expense),
+                ] {
+                    let c = contrast(dot, cor);
+                    assert!(c >= 3.0, "{nome}/{fundo} {:?}: {c:.2}", t.mode);
+                }
+            }
+        }
+        assert_eq!(DARK.idle(), DARK.neutral_600);
+        assert_eq!(LIGHT.idle(), LIGHT.neutral_400);
+    }
+
+    /// Avatar sem cor de perfil: a escolha da H4b para "Quem lançou" vale em toda tela.
+    #[test]
+    fn avatar_neutro_passa_4_5_nos_dois_temas() {
+        assert_eq!(DARK.avatar_neutral(), (DARK.neutral_300, DARK.bg));
+        assert_eq!(LIGHT.avatar_neutral(), (LIGHT.neutral_700, LIGHT.text));
+        for t in [&DARK, &LIGHT] {
+            let (fill, initial) = t.avatar_neutral();
+            let c = contrast(initial, fill);
+            assert!(c >= 4.5, "{:?}: {c:.2}", t.mode);
+        }
+    }
+
+    /// Pares texto/fundo de Conexao, Lancamentos, Reservas, dialogo de remocao, toasts e menus
+    /// (H4c), nos dois temas.
+    #[test]
+    fn textos_das_outras_telas_passam_4_5() {
+        for t in [&DARK, &LIGHT] {
+            let pairs = [
+                ("muted/card", t.text_muted, t.surface),
+                ("muted/bg", t.text_muted, t.bg),
+                ("apoio/card", t.text_soft(), t.surface),
+                ("apoio/caixa", t.text_soft(), t.surface_2),
+                ("apoio/pilula", t.text_soft(), t.neutral_800),
+                ("apoio/divisor", t.text_soft(), t.divider()),
+                (
+                    "muted/linha sob o mouse",
+                    t.text_muted,
+                    mix(t.surface, t.text, 0.04),
+                ),
+                ("chip ativo", t.accent_200, t.accent_900),
+                ("selo do acento", t.accent_300, t.accent_900),
+                (
+                    "tile do acento",
+                    t.accent_300,
+                    mix(t.surface, t.accent, 0.16),
+                ),
+                (
+                    "contorno do acento",
+                    t.accent_300,
+                    mix(t.surface, t.accent, 0.16),
+                ),
+                ("item escolhido", t.text, mix(t.surface, t.accent, 0.10)),
+                ("remover", t.expense_fg, t.surface),
+                (
+                    "remover cheio",
+                    t.expense_fg,
+                    mix(t.surface, t.expense, 0.14),
+                ),
+                (
+                    "remover cheio sob o mouse",
+                    t.expense_fg,
+                    mix(t.surface, t.expense, 0.20),
+                ),
+                ("aviso/card", t.warning, t.surface),
+                ("erro/card", t.expense_fg, t.surface),
+                ("texto/card", t.text, t.surface),
+            ];
+            for (name, fg, bg) in pairs {
+                let c = contrast(fg, bg);
+                assert!(c >= 4.5, "{name} {:?}: {c:.2}", t.mode);
+            }
+        }
+        // O quadro do QR e claro nos dois temas: aviso do claro e texto `bg` do escuro por cima.
+        assert!(contrast(LIGHT.warning, DARK.neutral_100) >= 4.5);
+        assert!(contrast(DARK.bg, DARK.neutral_100) >= 4.5);
+    }
+
+    /// Lacuna da paleta, registrada e nao corrigida (os `tag-*` nao mudam, paleta §1): no claro,
+    /// a inicial em `bg` sobre a cor da pessoa fica entre 3,1 e 4,5:1. Nenhum cinza fixo passa
+    /// nas doze (o `fg` da 3,3 no violeta); quem mexer precisa de outra regra, nao de outro hex.
+    #[test]
+    fn inicial_sobre_a_cor_da_pessoa_no_claro_fica_abaixo_do_piso() {
+        let worst = colors::TOKENS
+            .iter()
+            .map(|tk| contrast(LIGHT.bg, LIGHT.token(tk)))
+            .fold(f64::MAX, f64::min);
+        assert!(worst > 3.0 && worst < 4.5, "{worst:.2}");
+        for tk in colors::TOKENS {
+            assert!(contrast(DARK.bg, DARK.token(tk)) >= 4.5, "{tk}");
+        }
+    }
+
+    /// Spec 9: a serie da emergencia (Reservas) usa `accent`, que ficou quase igual ao
+    /// `tag-amber`. Medido aqui para o roteiro do `[Validação]` conferir a olho: caixinha ambar ao
+    /// lado da emergencia fica com a mesma cor no grafico.
+    #[test]
+    fn acento_e_tag_amber_quase_iguais() {
+        assert!(contrast(DARK.accent, DARK.token("amber")) < 1.2);
+        assert!(contrast(LIGHT.accent, LIGHT.token("amber")) < 1.6);
     }
 
     #[test]

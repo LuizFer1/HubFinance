@@ -66,7 +66,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 /// Cor de um token de categoria, com o marcador "neutral" de "Todas as categorias".
 fn option_color(t: &'static Tokens, token: &str) -> Color {
     if token == ALL_CATEGORIES_COLOR {
-        t.neutral_600
+        t.idle()
     } else {
         t.token(token)
     }
@@ -111,7 +111,7 @@ fn category_button(app: &App) -> Element<'_, Message> {
     let v = &app.transactions;
     let (label, dot) = match &v.selected_category {
         Some(selected) => (selected.name.clone(), option_color(t, &selected.color)),
-        None => ("Todas as categorias".to_string(), t.neutral_600),
+        None => ("Todas as categorias".to_string(), t.idle()),
     };
     let active = v.selected_category.is_some();
     let text_color = if active { t.accent_200 } else { t.text };
@@ -203,7 +203,7 @@ fn menu_item<'a>(
                     .clip(true),
                 text(group_thousands(option.count as u64))
                     .size(12)
-                    .color(t.text_alpha(0.50)),
+                    .color(t.text_muted),
                 container(check).width(14),
             ]
             .spacing(10)
@@ -266,7 +266,7 @@ fn author_chips(app: &App) -> Vec<Element<'_, Message>> {
     }
     if v.unauthored_chip {
         let content: Element<'static, Message> = row![
-            container(icons::icon(icons::CIRCLE_DASHED, 22.0, t.neutral_600)).center(24),
+            container(icons::icon(icons::CIRCLE_DASHED, 22.0, t.idle())).center(24),
             text("Sem autor").size(13),
         ]
         .spacing(8)
@@ -307,11 +307,11 @@ fn type_segment(app: &App) -> Element<'_, Message> {
 
 // ---- totais ----
 
-/// "**N** lançamentos · Receitas +R$ … · Despesas −R$ … · Saldo R$ …" (13, a 65 %).
+/// "**N** lançamentos · Receitas +R$ … · Despesas −R$ … · Saldo R$ …" (13, rotulos no texto de apoio).
 fn totals_line(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let list = &app.transactions.list;
-    let muted = t.text_alpha(0.65);
+    let muted = t.text_soft();
     let count = list.count;
     let pair = |label: &'static str, value: String, color: Color| {
         rich_text::<(), _, _, _>([
@@ -376,7 +376,7 @@ fn table(app: &App) -> Element<'_, Message> {
         text(label)
             .size(12)
             .font(fonts::INTER_MEDIUM)
-            .color(t.text_alpha(0.55))
+            .color(t.text_muted)
             .into()
     };
     let header = container(columns([
@@ -404,11 +404,11 @@ fn table(app: &App) -> Element<'_, Message> {
                     text(group.heading.clone())
                         .size(12)
                         .font(fonts::INTER_MEDIUM)
-                        .color(t.text_alpha(0.70))
+                        .color(t.text_soft())
                         .width(Length::Fill),
                     text(signed_brl_plus(group.net_minor))
                         .size(12)
-                        .color(t.text_alpha(0.55)),
+                        .color(t.text_muted),
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center),
@@ -436,7 +436,7 @@ fn state_tag<'a>(t: &'static Tokens, label: &str) -> Element<'a, Message> {
             .size(11)
             .font(fonts::INTER_MEDIUM)
             .line_height(1.0)
-            .color(t.text_alpha(0.70)),
+            .color(t.text_soft()),
     )
     .height(20)
     .padding([0, 7])
@@ -492,11 +492,11 @@ fn table_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
         text(r.category_name.clone())
             .size(13)
             .wrapping(Wrapping::None)
-            .color(t.text_alpha(0.80)),
+            .color(t.text_soft()),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
-    let muted = t.text_alpha(0.70);
+    let muted = t.text_soft();
     let payment = row![
         icons::icon(icons::glyph(&r.payment_icon), 15.0, muted),
         text(r.payment_name.clone())
@@ -558,7 +558,7 @@ fn empty(app: &App) -> Element<'_, Message> {
             text(body)
                 .size(13)
                 .line_height(1.5)
-                .color(t.text_alpha(0.60))
+                .color(t.text_muted)
                 .align_x(Alignment::Center),
         )
         .max_width(380),

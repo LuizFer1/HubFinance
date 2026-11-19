@@ -77,14 +77,14 @@ pub fn segmented<'a, M: Clone + 'a>(
     }
 }
 
-/// Rotulo em frase normal ("Saldo do mês"), 12 Medium a 55 %. Desvio do handoff, que pede
+/// Rotulo em frase normal ("Saldo do mês"), 12 Medium em `text_muted`. Desvio do handoff, que pede
 /// caixa alta com `letter-spacing`: sem o espacamento (o iced nao tem) a caixa alta ficava
 /// apertada e gritava mais que o valor embaixo. O texto vai como a tela passou.
 pub fn kicker<'a, M: 'a>(t: &'static Tokens, content: &str) -> Element<'a, M> {
     text(content.to_string())
         .size(12)
         .font(fonts::INTER_MEDIUM)
-        .color(t.text_alpha(0.55))
+        .color(t.text_muted)
         .into()
 }
 
@@ -112,7 +112,7 @@ pub fn page_title<'a, M: 'a>(t: &'static Tokens, title: &str, subtitle: &str) ->
     .into()
 }
 
-/// Titulo de card (15 Medium) com um aparte a direita (12 a 55 %).
+/// Titulo de card (15 Medium) com um aparte a direita (12 em `text_muted`).
 pub fn card_title<'a, M: 'a>(
     t: &'static Tokens,
     title: &str,
@@ -128,7 +128,7 @@ pub fn card_title<'a, M: 'a>(
     .align_y(Alignment::End)
     .spacing(12);
     if let Some(aside) = aside {
-        line = line.push(text(aside).size(12).color(t.text_alpha(0.55)));
+        line = line.push(text(aside).size(12).color(t.text_muted));
     }
     line.into()
 }
@@ -175,7 +175,8 @@ pub fn avatar<'a, M: 'a>(
     photo: Option<&image::Handle>,
     size: f32,
 ) -> Element<'a, M> {
-    let color = token.map_or(t.neutral_600, |tk| t.token(tk));
+    let (neutral, neutral_initial) = t.avatar_neutral();
+    let (color, initial_color) = token.map_or((neutral, neutral_initial), |tk| (t.token(tk), t.bg));
     if let Some(handle) = photo {
         let ring = 1.5;
         let gap = 2.0;
@@ -207,7 +208,7 @@ pub fn avatar<'a, M: 'a>(
             .size(initial_size(size))
             .font(fonts::INTER_SEMIBOLD)
             .line_height(1.0)
-            .color(t.bg),
+            .color(initial_color),
     )
     .center(size)
     .style(theme::fill(color, size / 2.0))
@@ -237,8 +238,8 @@ pub fn color_tag<'a, M: 'a>(t: &'static Tokens, token: &str) -> Element<'a, M> {
     .into()
 }
 
-/// Passo numerado: circulo de 20 px (`accent_900` / `accent_300`, 11 SemiBold) + texto 13 a
-/// 75 % (o texto vem pronto, pode ter link no meio).
+/// Passo numerado: circulo de 20 px (`accent_900` / `accent_300`, 11 SemiBold) + texto 13 no
+/// apoio (o texto vem pronto, pode ter link no meio).
 pub fn step<'a, M: 'a>(t: &'static Tokens, n: u8, content: Element<'a, M>) -> Element<'a, M> {
     let number = container(
         text(n.to_string())
@@ -255,12 +256,12 @@ pub fn step<'a, M: 'a>(t: &'static Tokens, n: u8, content: Element<'a, M>) -> El
         .into()
 }
 
-/// Texto de passo: 13 a 75 %, altura de linha 1,45 do prototipo.
+/// Texto de passo: 13 no texto de apoio (`text_soft`), altura de linha 1,45 do prototipo.
 pub fn step_text<'a>(t: &'static Tokens, content: impl text::IntoFragment<'a>) -> text::Text<'a> {
     text(content)
         .size(13)
         .line_height(1.45)
-        .color(t.text_alpha(0.75))
+        .color(t.text_soft())
 }
 
 /// Separador vertical de 1 x 20 no divisor, com 4 px de margem dos lados.

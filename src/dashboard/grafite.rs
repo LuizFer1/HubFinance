@@ -223,8 +223,8 @@ pub struct Savings {
     pub target: String,
     /// "11% até agora" / "28% no mês".
     pub rate: String,
-    /// "no ritmo atual, ~−27%".
-    pub pace: Option<String>,
+    /// "no ritmo atual, ~−27%": `expense-fg` quando a previsao e de faltar (taxa negativa).
+    pub pace: Option<Line>,
     /// Barra 0..20%.
     pub fill: f32,
     pub scale_start: String,
@@ -887,7 +887,10 @@ fn how_am_i(ds: &Dataset, today: &str, month: &str, m: Money) -> HowAmI {
         pace: fc
             .as_ref()
             .and_then(|f| f.expected_savings_rate)
-            .map(|r| format!("no ritmo atual, ~{}", pct(r))),
+            .map(|r| Line {
+                text: format!("no ritmo atual, ~{}", pct(r)),
+                tone: if r < 0 { Tone::Expense } else { Tone::Neutral },
+            }),
         fill: (rate as f64 / SAVINGS_TARGET_PERCENT as f64).clamp(0.0, 1.0) as f32,
         scale_start: "0%".to_string(),
         scale_end: format!("{SAVINGS_TARGET_PERCENT}%"),
@@ -2099,7 +2102,13 @@ mod tests {
         assert_eq!(s.title, "Taxa de poupança");
         assert_eq!(s.target, "alvo: 20% da renda");
         assert_eq!(s.rate, "11% até agora");
-        assert_eq!(s.pace.as_deref(), Some("no ritmo atual, ~\u{2212}27%"));
+        assert_eq!(
+            s.pace,
+            Some(Line {
+                text: "no ritmo atual, ~\u{2212}27%".into(),
+                tone: Tone::Expense,
+            })
+        );
         assert!(close(s.fill, 0.55));
         assert_eq!(
             (s.scale_start.as_str(), s.scale_end.as_str()),

@@ -1,8 +1,14 @@
-//! Paleta Nocturne em sRGB 8 bits, um valor por tema.
+//! Cores semanticas gravadas nas linhas (`income`/`expense` e os 12 tokens de categoria e
+//! pessoa) em sRGB 8 bits, um valor por tema.
 //!
 //! O app e dono do token (o nome gravado na linha: `rose`, `red`...); o handoff e dono do
 //! valor visual. Os literais vem de `scripts/oklch.py` (conversao OKLCH -> sRGB feita uma vez)
 //! e o teste os fixa: nada e convertido em runtime.
+//!
+//! A paleta Grafite trocou superficies, neutros e acento (`ui/theme.rs`), mas **nao** estes
+//! valores (paleta §1): o app os grava nas linhas e mudar exigiria regenerar a tabela sem ganho
+//! de leitura. `amber` continua token de categoria; a cor de atencao do hub e `warning`, que
+//! vive em `Tokens`, nao aqui.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {

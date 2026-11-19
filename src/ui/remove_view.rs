@@ -450,7 +450,7 @@ pub(super) fn orphan_banner(app: &App) -> Option<Element<'_, Message>> {
     Some(
         container(
             row![
-                icons::icon(icons::WARNING_CIRCLE, 18.0, t.amber),
+                icons::icon(icons::WARNING_CIRCLE, 18.0, t.warning),
                 text(message).size(13).color(t.text).width(Length::Fill),
                 later,
                 decide,
@@ -460,7 +460,7 @@ pub(super) fn orphan_banner(app: &App) -> Option<Element<'_, Message>> {
         )
         .padding([10, 14])
         .width(Length::Fill)
-        .style(theme::outlined(t.amber, 10.0))
+        .style(theme::outlined(t.warning, 10.0))
         .into(),
     )
 }

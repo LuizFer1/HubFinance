@@ -131,8 +131,12 @@ fn address_card(app: &App, card_width: f32) -> Element<'_, Message> {
         .into()
 }
 
-/// Quadro do QR (fundo `neutral_100`, raio 12, contorno `accent_700`) e o que fica embaixo:
-/// codigo e contagem com token ativo, "Gerar codigo" sem ele.
+/// Quadro do QR (fundo `neutral_100` do escuro nos dois temas, raio 12, contorno `accent_700`)
+/// e o que fica embaixo: codigo e contagem com token ativo, "Gerar codigo" sem ele.
+///
+/// O quadro e sempre claro porque o leitor de QR do celular espera modulos escuros sobre fundo
+/// claro. Na paleta Nocturne o `neutral_100` era igual nos dois temas; na Grafite a rampa do
+/// claro e invertida (`neutral_100` claro e quase preto), entao o quadro fixa o do escuro.
 fn pairing_block(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let snap = &app.snapshot;
@@ -145,7 +149,7 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
             .center_x(QR_FRAME)
             .center_y(QR_FRAME)
             .style(move |_: &Theme| container::Style {
-                background: Some(t.neutral_100.into()),
+                background: Some(theme::DARK.neutral_100.into()),
                 border: Border {
                     color: t.accent_700,
                     width: 1.0,
@@ -163,7 +167,8 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
         .align_x(Alignment::Center);
     if is_up(snap) && snap.addresses.is_empty() {
         let warning: Element<'static, Message> = column![
-            icons::icon(icons::WARNING_CIRCLE, 28.0, t.amber),
+            // `warning` do claro: o quadro e sempre claro, e o laranja do escuro some nele.
+            icons::icon(icons::WARNING_CIRCLE, 28.0, theme::LIGHT.warning),
             text("Sem rede local")
                 .size(13)
                 .font(fonts::INTER_MEDIUM)
@@ -198,7 +203,7 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
             .center_x(QR_FRAME)
             .center_y(QR_FRAME)
             .style(move |_: &Theme| container::Style {
-                background: Some(t.neutral_100.into()),
+                background: Some(theme::DARK.neutral_100.into()),
                 border: Border {
                     color: t.accent_700,
                     width: 1.0,
@@ -236,7 +241,7 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
                 .push(frame(placeholder(), 15.0))
                 .push(Space::new().height(4));
             if pairing.is_some() {
-                col = col.push(text("Código expirado").size(12).color(t.amber));
+                col = col.push(text("Código expirado").size(12).color(t.warning));
             }
             let mut generate = button(
                 container(text("Gerar código").size(13).font(fonts::INTER_MEDIUM))
@@ -865,7 +870,7 @@ fn activity_card(app: &App) -> Element<'_, Message> {
     for entry in snap.activity.iter().take(20) {
         let at = time::format_time(::time::OffsetDateTime::from(entry.at), app.offset);
         let color = match entry.kind {
-            ActivityKind::Warning => t.amber,
+            ActivityKind::Warning => t.warning,
             ActivityKind::Error => t.expense_fg,
             ActivityKind::Info | ActivityKind::Sync => t.text,
         };

@@ -562,7 +562,7 @@ fn budgets_card(app: &App) -> Element<'_, Message> {
         let over = b.level == BudgetLevel::Over;
         let fill = match b.level {
             BudgetLevel::Ok => t.accent,
-            BudgetLevel::Warning => t.amber,
+            BudgetLevel::Warning => t.warning,
             BudgetLevel::Over => t.expense,
         };
         let head = row![
@@ -919,7 +919,7 @@ fn empty_card(app: &App) -> Element<'_, Message> {
         .color(t.text_alpha(0.65)),
         Space::new().height(16),
         row![
-            widgets::dot(t.amber, 7.0),
+            widgets::dot(t.warning, 7.0),
             text(waiting).size(12).color(t.text_alpha(0.60)),
         ]
         .spacing(8)

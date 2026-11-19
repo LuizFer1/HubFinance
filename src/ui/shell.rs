@@ -137,7 +137,7 @@ fn titlebar(app: &App) -> Element<'_, Message> {
     container(row![grip, controls].align_y(Alignment::Center))
         .width(Length::Fill)
         .height(TITLEBAR_HEIGHT)
-        .style(theme::fill(t.side, 0.0))
+        .style(theme::fill(t.side(), 0.0))
         .into()
 }
 
@@ -310,7 +310,7 @@ fn sidebar(app: &App) -> Element<'_, Message> {
 
     container(col)
         .height(Length::Fill)
-        .style(theme::fill(t.side, 0.0))
+        .style(theme::fill(t.side(), 0.0))
         .into()
 }
 
@@ -396,13 +396,13 @@ pub(super) fn status_lines(app: &App) -> StatusLines {
             detail: Some(last_sync_line(app)),
         },
         Status::Running => StatusLines {
-            dot: t.amber,
+            dot: t.warning,
             title: "Hub ligado · sem dados".into(),
             address: address(app),
             detail: Some("Aguardando o primeiro sync de um celular pareado".into()),
         },
         Status::NoNetwork => StatusLines {
-            dot: t.amber,
+            dot: t.warning,
             title: "Sem rede local".into(),
             address: Some(format!("porta {} aberta", snap.https_port)),
             detail: Some("Conecte o computador ao Wi-Fi de casa".into()),
@@ -777,7 +777,7 @@ mod tests {
         let lines = status_lines(&app);
         assert_eq!(lines.title, "Hub ligado · sem dados");
         assert_eq!(lines.address.as_deref(), Some("192.168.0.12:7777"));
-        assert_eq!(lines.dot, app.tokens.amber);
+        assert_eq!(lines.dot, app.tokens.warning);
 
         app.snapshot.status = Status::NoNetwork;
         app.snapshot.addresses.clear();

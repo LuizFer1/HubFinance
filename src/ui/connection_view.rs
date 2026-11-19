@@ -938,7 +938,7 @@ mod tests {
         let url = "https://192.168.100.200:7777";
         for window in 1024..=2560 {
             // Mesma conta de `shell::content_width` e do padding do card.
-            let content = window as f32 - 232.0 - 1.0 - 64.0;
+            let content = window as f32 - 232.0 - 64.0;
             let inner = grid_card_width(content) - 48.0;
             let size = field_value_size(url, inner);
             assert!(

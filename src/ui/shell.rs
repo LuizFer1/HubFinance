@@ -549,18 +549,30 @@ fn content(app: &App) -> Element<'_, Message> {
         .style(theme::scrollbar(t))
         .width(Length::Fill)
         .height(Length::Fill);
+    // Sem fundo proprio: o fundo e o do container de `frame`, que cobre lateral e conteudo
+    // (um fundo aqui esconderia o gradiente da H4b atras da rolagem).
     container(scroll)
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(theme::fill(t.bg, 0.0))
         .into()
 }
 
-/// Largura util do conteudo (sem a lateral, a borda e o padding de 32 + 32). Sem teto: com o
-/// maximo de 1180 da 0.0.2 a janela maximizada deixava uma faixa vazia a direita. As telas usam
-/// para decidir colunas: o iced nao tem `auto-fit`.
+/// Largura util do conteudo (sem a lateral e o padding de 32 + 32; a divisoria vertical saiu
+/// com a lateral Grafite). Sem teto: com o maximo de 1180 da 0.0.2 a janela maximizada deixava
+/// uma faixa vazia a direita. As telas usam para decidir colunas: o iced nao tem `auto-fit`.
 pub(super) fn content_width(app: &App) -> f32 {
-    app.window_size.width - SIDEBAR_WIDTH - 1.0 - 64.0
+    app.window_size.width - SIDEBAR_WIDTH - 64.0
+}
+
+/// Abaixo desta largura util os controles do cabecalho descem para baixo do titulo (o
+/// `flex-wrap` do design). Com chip, Pessoal | Comercial, mes e olho eles somam ~560 px, e o
+/// titulo de 30 px precisa de ~240 ao lado; na janela minima (1024) a linha unica espremia o
+/// titulo em duas linhas.
+const HEADER_WRAP_WIDTH: f32 = 900.0;
+
+/// Controles do cabecalho na mesma linha do titulo?
+pub(super) fn header_inline(width: f32) -> bool {
+    width >= HEADER_WRAP_WIDTH
 }
 
 /// Cabecalho: titulo e subtitulo a esquerda; a direita, conforme a tela, o chip "Parcial", o
@@ -589,19 +601,21 @@ fn header(app: &App) -> Element<'_, Message> {
     if app.screen == Screen::Dashboard {
         controls = controls.push(hide_values_button(app));
     }
-    container(
-        row![
-            container(widgets::page_title(t, title, &subtitle)).width(Length::Fill),
-            controls,
-        ]
-        .spacing(16)
-        .align_y(Alignment::Center),
-    )
-    .padding(Padding {
-        bottom: 4.0,
-        ..Padding::ZERO
-    })
-    .into()
+    let title = widgets::page_title(t, title, &subtitle);
+    let line: Element<'_, Message> = if header_inline(content_width(app)) {
+        row![container(title).width(Length::Fill), controls]
+            .spacing(16)
+            .align_y(Alignment::Center)
+            .into()
+    } else {
+        column![title, controls].spacing(16).into()
+    };
+    container(line)
+        .padding(Padding {
+            bottom: 4.0,
+            ..Padding::ZERO
+        })
+        .into()
 }
 
 /// "Parcial · até 19 nov": so nas telas com seletor de mes, no mes corrente e com dados (o
@@ -727,10 +741,10 @@ fn failed_card<'a>(app: &'a App, msg: &'a str) -> Element<'a, Message> {
                 .size(16)
                 .font(fonts::INTER_MEDIUM)
                 .color(t.text),
-            text(msg).size(13).color(t.text_alpha(0.60)),
+            text(msg).size(13).color(t.text_muted),
             text(format!("Dados em {}", app.snapshot.data_dir.display()))
                 .size(12)
-                .color(t.text_alpha(0.50)),
+                .color(t.text_muted),
         ]
         .spacing(8),
     )
@@ -999,6 +1013,13 @@ mod tests {
         assert_eq!(entries[2].count, Some(app.grafite.sidebar.reserves));
         // D1 e D2 ativos; D3 revogado.
         assert_eq!(entries[3].count, Some(2));
+    }
+
+    #[test]
+    fn cabecalho_quebra_abaixo_de_900_de_largura_util() {
+        assert!(header_inline(1144.0)); // janela inicial de 1440
+        assert!(!header_inline(1024.0 - SIDEBAR_WIDTH - 64.0)); // janela minima
+        assert!(header_inline(900.0));
     }
 
     #[test]

@@ -1,94 +1,19 @@
-//! Modelos de tela: tudo o que Dashboard, Lancamentos e Reservas mostram, derivado do `Dataset` por
+//! Modelos de tela: tudo o que Lancamentos e Reservas mostram (o Dashboard e o `grafite`), derivado do `Dataset` por
 //! funcoes puras. A UI chama `build_*` so quando dados, mes, filtros ou "hoje" mudam e guarda
 //! o resultado; desenhar um quadro nunca percorre o dataset.
 
-use super::aggregate::{
-    MonthSummary, MonthTotals, NO_CATEGORY_COLOR, Slice, average_surplus, axis_top,
-    expense_by_category, month_summary, monthly_totals, recent,
-};
-use super::budgets::{BudgetStatus, budget_report};
+use super::aggregate::NO_CATEGORY_COLOR;
 use super::contract::ReserveKind;
 use super::dataset::Dataset;
 use super::list::{
-    CategoryOption, Filters, ListRow, ListView, NONE_KEY, category_options, has_unauthored,
-    list_month, to_row,
+    CategoryOption, Filters, ListView, NONE_KEY, category_options, has_unauthored, list_month,
 };
-use super::periods::{
-    last_months, month_label_capitalized, month_of, month_short, month_window, partial_label,
-};
+use super::periods::{month_label_capitalized, month_of, month_window};
 use super::reserves::{
     EmergencyView, MovementRow, PotRow, ReserveSeries, ReserveShare, ReserveTotals, emergency_goal,
     emergency_view, movements, ordered, pot_row, pots_note, reserve_axis_top, series, shares,
     totals, withdrawals_note,
 };
-
-/// Meses das barras de "Receita × despesa": seis terminando no mes escolhido.
-pub const BAR_MONTHS: usize = 6;
-/// Linhas de "Últimos lançamentos".
-pub const RECENT_ROWS: usize = 6;
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct DashboardView {
-    pub month: String,
-    /// "Setembro 2026" (seletor de mes).
-    pub month_label: String,
-    /// O mes escolhido e o de hoje: os dados ainda podem crescer.
-    pub is_current: bool,
-    /// "24 set" da tag "Parcial · até 24 set"; so no mes corrente.
-    pub partial_until: Option<String>,
-    pub summary: MonthSummary,
-    pub donut: Vec<Slice>,
-    /// Seis meses, o mais antigo primeiro; o ultimo e o escolhido.
-    pub bars: Vec<MonthTotals>,
-    pub axis_top: i64,
-    pub average_surplus: i64,
-    /// "entre abr e set".
-    pub bars_range_label: String,
-    pub recent: Vec<ListRow>,
-    /// Metas por categoria contra o gasto do mes, a mais usada primeiro. Vazio sem metas.
-    pub budgets: Vec<BudgetStatus>,
-    /// Hub sem nenhum lancamento vivo: o estado "Sem dados" (nao confundir com mes vazio).
-    pub is_empty: bool,
-    pub ignored_total: usize,
-}
-
-/// `today` e `YYYY-MM-DD` no fuso local, lido pela UI; `month` e `YYYY-MM`.
-pub fn build_dashboard(dataset: &Dataset, today: &str, month: &str) -> DashboardView {
-    let is_current = month == month_of(today);
-    let bars = monthly_totals(dataset, &last_months(month, BAR_MONTHS));
-    let peak = bars
-        .iter()
-        .map(|b| b.income_minor.max(b.expense_minor))
-        .max()
-        .unwrap_or(0);
-    let bars_range_label = match (bars.first(), bars.last()) {
-        (Some(first), Some(last)) => format!(
-            "entre {} e {}",
-            month_short(&first.month),
-            month_short(&last.month)
-        ),
-        _ => String::new(),
-    };
-    DashboardView {
-        month: month.to_string(),
-        month_label: month_label_capitalized(month),
-        is_current,
-        partial_until: is_current.then(|| partial_label(today)),
-        summary: month_summary(dataset, month),
-        donut: expense_by_category(dataset, month),
-        axis_top: axis_top(peak),
-        average_surplus: average_surplus(&bars),
-        bars,
-        bars_range_label,
-        recent: recent(dataset, month, RECENT_ROWS)
-            .into_iter()
-            .map(|tx| to_row(dataset, tx))
-            .collect(),
-        budgets: budget_report(dataset, month),
-        is_empty: dataset.is_empty(),
-        ignored_total: dataset.ignored_total(),
-    }
-}
 
 /// Um chip de autor: perfil vivo.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -249,116 +174,6 @@ mod tests {
     use crate::dashboard::list::{TypeFilter, category_options, list_month};
 
     #[test]
-    fn dashboard_traz_as_metas_do_mes_escolhido() {
-        use crate::dashboard::budgets::BudgetLevel;
-        use crate::dashboard::dataset::{BUDGETS, RawRow};
-
-        let mut ds = fixtures();
-        // Moradia: 1.800,00 de gasto em setembro contra uma meta de 1.500,00.
-        let housing = ds
-            .categories
-            .values()
-            .find(|c| c.name == "Moradia")
-            .map(|c| c.id.clone())
-            .expect("fixture tem Moradia");
-        ds.apply([RawRow {
-            table: BUDGETS.into(),
-            id: "B1".into(),
-            deleted_at: None,
-            seq: 10_000,
-            data: serde_json::json!({
-                "categoryId": housing, "limitMinor": 150_000, "updatedAt": "1-A"
-            })
-            .to_string(),
-        }]);
-
-        let sep = build_dashboard(&ds, "2026-09-24", "2026-09");
-        assert_eq!(sep.budgets.len(), 1);
-        assert_eq!(sep.budgets[0].level, BudgetLevel::Over);
-        assert_eq!(sep.budgets[0].over_minor, 30_000);
-
-        // Junho nao tem gasto: a meta vale todo mes e aparece zerada.
-        let jun = build_dashboard(&ds, "2026-09-24", "2026-06");
-        assert_eq!(jun.budgets.len(), 1);
-        assert_eq!(jun.budgets[0].spent_minor, 0);
-        assert_eq!(jun.budgets[0].level, BudgetLevel::Ok);
-
-        assert!(
-            build_dashboard(&fixtures(), "2026-09-24", "2026-09")
-                .budgets
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn dashboard_do_mes_corrente() {
-        let ds = fixtures();
-        let v = build_dashboard(&ds, "2026-09-24", "2026-09");
-        assert_eq!(v.month, "2026-09");
-        assert!(v.is_current);
-        assert_eq!(v.partial_until.as_deref(), Some("24 set"));
-        assert_eq!(v.month_label, "Setembro 2026");
-        assert_eq!(v.bars.len(), 6);
-        assert_eq!(v.bars.last().map(|b| b.month.as_str()), Some("2026-09"));
-        let peak = v
-            .bars
-            .iter()
-            .map(|b| b.income_minor.max(b.expense_minor))
-            .max()
-            .unwrap();
-        assert!(v.axis_top >= peak);
-        assert_eq!(v.axis_top, 800_000);
-        assert_eq!(v.bars_range_label, "entre abr e set");
-        // (6500 - 1800) + (6500 - 2100) + (6500 - 2310) em seis meses.
-        assert_eq!(v.average_surplus, 221_500);
-        assert_eq!(v.recent.len(), 6);
-        assert_eq!(v.recent[0].id, "T10");
-        assert!(!v.is_empty);
-        assert_eq!(v.donut.len(), 4);
-        assert_eq!(v.summary.current.expense_count, 6);
-        assert_eq!(v.ignored_total, 0);
-    }
-
-    #[test]
-    fn dashboard_de_mes_passado() {
-        let ds = fixtures();
-        let v = build_dashboard(&ds, "2026-09-24", "2026-08");
-        assert!(!v.is_current);
-        assert_eq!(v.partial_until, None);
-        assert_eq!(v.bars_range_label, "entre mar e ago");
-        assert_eq!(v.bars.last().map(|b| b.month.as_str()), Some("2026-08"));
-    }
-
-    #[test]
-    fn dashboard_na_virada_de_ano() {
-        let ds = fixtures();
-        let v = build_dashboard(&ds, "2027-01-03", "2027-01");
-        assert_eq!(v.bars_range_label, "entre ago e jan");
-        assert_eq!(v.bars[0].month, "2026-08");
-        assert_eq!(v.partial_until.as_deref(), Some("3 jan"));
-        assert!(v.donut.is_empty());
-        assert!(v.recent.is_empty());
-        // O hub tem dados; o mes e que esta vazio.
-        assert!(!v.is_empty);
-    }
-
-    #[test]
-    fn dashboard_sem_dados() {
-        let v = build_dashboard(&Dataset::default(), "2026-09-24", "2026-09");
-        assert!(v.is_empty);
-        assert_eq!(v.summary, MonthSummary::default());
-        assert!(v.donut.is_empty());
-        assert!(v.recent.is_empty());
-        assert!(
-            v.bars
-                .iter()
-                .all(|b| b.income_minor == 0 && b.expense_minor == 0)
-        );
-        assert_eq!(v.axis_top, 200_000);
-        assert_eq!(v.average_surplus, 0);
-    }
-
-    #[test]
     fn dashboard_conta_as_ignoradas() {
         use crate::dashboard::dataset::{RawRow, TRANSACTIONS};
         let mut ds = fixtures();
@@ -369,10 +184,14 @@ mod tests {
             seq: 999,
             data: serde_json::json!({ "kind": "expense" }).to_string(),
         }]);
-        assert_eq!(
-            build_dashboard(&ds, "2026-09-24", "2026-09").ignored_total,
-            1
+        let v = crate::dashboard::grafite::build_grafite(
+            &ds,
+            "2026-09-24",
+            "2026-09",
+            crate::dashboard::contract::Book::Personal,
+            false,
         );
+        assert_eq!(v.ignored_total, 1);
     }
 
     #[test]
@@ -437,7 +256,8 @@ mod tests {
     /// nem despesa. Se alguem um dia somar `reserve_movements` em `aggregate.rs` ou `list.rs`,
     /// e este teste que quebra.
     #[test]
-    fn reservas_nao_entram_no_dashboard_nem_nos_lancamentos() {
+    /// O lado do Dashboard esta em `grafite::movimentos_de_reserva_so_mudam_o_card_da_reserva`.
+    fn reservas_nao_entram_nos_lancamentos() {
         use crate::dashboard::fixtures_with_reserves;
         use crate::dashboard::periods::month_window;
         let plain = fixtures();
@@ -448,11 +268,6 @@ mod tests {
         );
         assert_eq!(plain.is_empty(), with.is_empty());
         for month in month_window("2026-09-24") {
-            assert_eq!(
-                build_dashboard(&plain, "2026-09-24", &month),
-                build_dashboard(&with, "2026-09-24", &month),
-                "{month}"
-            );
             assert_eq!(
                 build_transactions(&plain, "2026-09-24", &month, &Filters::default()),
                 build_transactions(&with, "2026-09-24", &month, &Filters::default()),

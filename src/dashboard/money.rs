@@ -109,7 +109,8 @@ pub struct BigMoney {
 }
 
 impl BigMoney {
-    /// O valor corrido ("R$ 386,59"): leitor de tela e testes.
+    /// O valor corrido ("R$ 386,59"), para os testes (a tela desenha os pedacos).
+    #[cfg(test)]
     pub fn text(&self) -> String {
         format!(
             "{}{} {}{}",

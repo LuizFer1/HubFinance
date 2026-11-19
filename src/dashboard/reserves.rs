@@ -2,8 +2,8 @@
 //! e a lista de movimentacoes, tudo puro e a partir do `Dataset`.
 //!
 //! Movimentacao de reserva nunca entra em receita nem despesa: `aggregate.rs` e `list.rs` so
-//! leem `transactions`, e o teste `reservas_nao_entram_no_dashboard_nem_nos_lancamentos` de
-//! `view.rs` prova isso. A unica leitura de `transactions` aqui e o custo essencial.
+//! leem `transactions`; os testes `view::reservas_nao_entram_nos_lancamentos` e
+//! `grafite::movimentos_de_reserva_so_mudam_o_card_da_reserva` provam isso. A unica leitura de `transactions` aqui e o custo essencial.
 
 use super::contract::{Kind, MovementKind, ReserveKind};
 use super::dataset::{Dataset, Reserve, ReserveMovement};

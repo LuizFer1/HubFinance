@@ -31,6 +31,7 @@ impl Frequency {
     }
 }
 
+#[cfg(test)] // vetor de paridade com o app; a projecao usa `Frequency::parse`
 /// `isKnownFrequency` do app. Valor de versao futura nao e conhecido: a serie fica parada.
 pub fn is_known_frequency(frequency: &str) -> bool {
     Frequency::parse(frequency).is_some()
@@ -46,6 +47,7 @@ pub fn period_of(frequency: Frequency, date: &str) -> String {
     }
 }
 
+#[cfg(test)] // vetor de paridade com o app; a projecao nao volta periodos
 /// `previousPeriod` do app: o dia ou o mes antes (nao um passo da serie).
 pub fn previous_period(period: &str) -> String {
     if period.len() == 10 {

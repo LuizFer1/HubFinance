@@ -5,7 +5,7 @@
 //! cuidado de cada tela. Pelo mesmo motivo o modelo nao carrega `_minor` cru: series e barras ja
 //! vem como fracoes (0..=1) do teto do eixo, e a forma continua visivel com os valores ocultos.
 //!
-//! Nasce ao lado do `DashboardView` antigo (`view.rs`); a H4b troca a tela e apaga o antigo.
+//! Substituiu o `DashboardView` antigo na H4b; a tela e `ui/dashboard_view.rs`.
 
 use super::aggregate::{
     NO_CATEGORY_COLOR, axis_top, expense_by_category, in_month, js_round, recent, totals,
@@ -274,6 +274,8 @@ pub struct PaceSentence {
 }
 
 impl PaceSentence {
+    /// A frase corrida, para os testes (a tela desenha os trechos com cor).
+    #[cfg(test)]
     pub fn text(&self) -> String {
         match (&self.change, &self.tail) {
             (Some(c), Some(t)) => format!("{} — {} {t}", self.lead, c.text),

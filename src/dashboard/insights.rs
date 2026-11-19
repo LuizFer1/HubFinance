@@ -42,6 +42,9 @@ fn expense_by_day<'a>(items: impl IntoIterator<Item = &'a Transaction>, month: &
     daily
 }
 
+/// Port de `dailyExpenses` mantido como vetor de paridade com o app: o Dashboard usa
+/// `expense_by_day` direto, mas os casos do TS continuam conferidos aqui.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DailyExpenses {
     /// Despesa de cada dia do mes (indice 0 = dia 1).
@@ -61,6 +64,7 @@ pub struct DailyExpenses {
 /// `dailyExpenses` do app. `through` limita as medias aos dias que ja aconteceram (hoje no mes
 /// corrente; o fim num mes passado): dividir pelo mes inteiro faria o mes em curso parecer
 /// barato. Quem chama passa so os lancamentos que quer contar (o Dashboard, os avulsos).
+#[cfg(test)]
 pub fn daily_expenses<'a>(
     items: impl IntoIterator<Item = &'a Transaction>,
     month: &str,

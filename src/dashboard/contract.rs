@@ -265,6 +265,8 @@ impl PaymentMethodFields {
         })
     }
 
+    /// So os testes: a tela le `card()` direto.
+    #[cfg(test)]
     pub fn is_complete_card(&self) -> bool {
         self.card().is_some()
     }

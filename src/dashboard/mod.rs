@@ -13,6 +13,7 @@ pub mod colors;
 pub mod contract;
 pub mod dataset;
 pub mod ids;
+pub mod insights;
 pub mod list;
 pub mod money;
 pub mod people;
@@ -39,6 +40,541 @@ pub(crate) fn dataset_of(rows: Vec<(&str, &str, bool, serde_json::Value)>) -> da
             }),
     );
     ds
+}
+
+/// "Hoje" da fixture Grafite: quinta, 19 de novembro de 2026.
+#[cfg(test)]
+pub(crate) const GRAFITE_TODAY: &str = "2026-11-19";
+
+/// Uma linha da fixture Grafite antes de virar `RawRow`: `(tabela, id, data)`, todas vivas.
+#[cfg(test)]
+pub(crate) type GrafiteRow = (&'static str, String, serde_json::Value);
+
+/// Linhas da fixture Grafite (spec do dashboard 3.1 e 3.1.1), as mesmas de `grafite.fake.ts` do
+/// app com os mesmos ids: a tabela 3.2 e conferida dos dois lados contra elas. Lista crua para
+/// um teste poder tirar uma linha antes de montar (o `delete` dos testes do app tira a linha do
+/// estado, o que nao e o mesmo que um tombstone para o dedupe de ocorrencia).
+#[cfg(test)]
+pub(crate) fn grafite_rows() -> Vec<GrafiteRow> {
+    use serde_json::{Value, json};
+
+    use dataset::{
+        BUDGETS, CATEGORIES, PAYMENT_METHODS, RECURRENCES, RESERVE_MOVEMENTS, RESERVES,
+        TRANSACTIONS, USERS,
+    };
+
+    let mut rows: Vec<GrafiteRow> = Vec::new();
+    let mut push = |table: &'static str, id: &str, data: Value| {
+        rows.push((table, id.to_string(), data));
+    };
+
+    push(USERS, "UL", json!({ "name": "Luiz", "color": "teal" }));
+    push(USERS, "UG", json!({ "name": "Gigi", "color": "rose" }));
+
+    for (id, name, icon, color) in [
+        ("CAT-COMPRAS", "Compras", "shopping-bag", "violet"),
+        ("CAT-CONFORTO", "Conforto", "coffee", "amber"),
+        ("CAT-ASSINATURAS", "Assinaturas", "film", "indigo"),
+        ("CAT-CONTAS", "Contas", "receipt", "sky"),
+        ("CAT-MERCADO", "Mercado", "shopping-cart", "emerald"),
+        ("CAT-SOGRINHA", "Sogrinha", "gift", "fuchsia"),
+        ("CAT-MANUTENCAO", "Manutenção", "house", "orange"),
+        ("CAT-PETS", "Pets", "paw-print", "lime"),
+        ("CAT-TRANSPORTE", "Transporte", "bus", "teal"),
+    ] {
+        push(
+            CATEGORIES,
+            id,
+            json!({ "name": name, "icon": icon, "color": color, "kind": "expense", "mergedInto": null }),
+        );
+    }
+
+    push(
+        PAYMENT_METHODS,
+        "PMP",
+        json!({
+            "name": "Mercado Pago",
+            "icon": "credit-card",
+            "color": "violet",
+            "kind": "credit",
+            "bank": "Mercado Pago",
+            "closingDay": 28,
+            "dueDay": 8,
+        }),
+    );
+
+    // Mensais, dia fixo (= dia de `startOn`), ativas, sem `variable`, autor UL.
+    let series = [
+        (
+            "RSAL",
+            "income",
+            "Salário",
+            None,
+            350_000,
+            "2026-11-05",
+            None,
+        ),
+        (
+            "RCON",
+            "expense",
+            "Contas da casa",
+            Some("CAT-CONTAS"),
+            53_901,
+            "2026-11-10",
+            None,
+        ),
+        // Sem categoria na serie (tile neutro); a ocorrencia entra em Assinaturas.
+        (
+            "RPRI",
+            "expense",
+            "Amazon prime",
+            None,
+            1_999,
+            "2026-11-01",
+            None,
+        ),
+        ("RMEL", "expense", "Meli+", None, 999, "2026-11-01", None),
+        (
+            "RCLA",
+            "expense",
+            "Claude code",
+            Some("CAT-ASSINATURAS"),
+            11_840,
+            "2026-11-18",
+            None,
+        ),
+        (
+            "RSPO",
+            "expense",
+            "Spotify",
+            Some("CAT-ASSINATURAS"),
+            1_999,
+            "2026-11-15",
+            None,
+        ),
+        (
+            "RSOG",
+            "expense",
+            "Mesada da sogrinha",
+            Some("CAT-SOGRINHA"),
+            16_862,
+            "2026-11-02",
+            None,
+        ),
+        (
+            "RCAD",
+            "expense",
+            "Cadeira (2x)",
+            Some("CAT-COMPRAS"),
+            5_052,
+            "2026-10-21",
+            Some("2026-11-21"),
+        ),
+    ];
+    for (id, kind, description, category, amount, start_on, end_on) in series {
+        let day: i64 = start_on[8..10].parse().unwrap_or(1);
+        push(
+            RECURRENCES,
+            id,
+            json!({
+                "frequency": "monthly",
+                "kind": kind,
+                "description": description,
+                "amountMinor": amount,
+                "currency": "BRL",
+                "categoryId": category,
+                "paymentMethodId": null,
+                "cashbackMinor": null,
+                "scheduleType": "dayOfMonth",
+                "scheduleN": day,
+                "startOn": start_on,
+                "endOn": end_on,
+                "active": true,
+                "userId": "UL",
+            }),
+        );
+    }
+
+    // Ocorrencias gravadas: id = stableEntityId("<serie>:<competencia>") (3.1.1, colado).
+    // RCAD de 2026-11 (QZM0FK4WFZC0Q3CWQFMGF34CFF) vence dia 21 e ainda nao foi gravada.
+    for (id, rid, kind, description, amount, on, category) in [
+        (
+            "7748FB44FQCR7BWM7Q4RFV4MF7",
+            "RSAL",
+            "income",
+            "Salário",
+            350_000,
+            "2026-11-05",
+            None,
+        ),
+        (
+            "FBCWZFMRQBMWQZCRFVCCZZM8QV",
+            "RCON",
+            "expense",
+            "Contas da casa",
+            53_901,
+            "2026-11-10",
+            Some("CAT-CONTAS"),
+        ),
+        (
+            "32AZFJ67VJJFQ2Y7K2TZZJP7BJ",
+            "RPRI",
+            "expense",
+            "Amazon prime",
+            1_999,
+            "2026-11-01",
+            Some("CAT-ASSINATURAS"),
+        ),
+        (
+            "VSRJZHCTV1RTF9CJV9R2Z1CAVH",
+            "RMEL",
+            "expense",
+            "Meli+",
+            999,
+            "2026-11-01",
+            Some("CAT-ASSINATURAS"),
+        ),
+        (
+            "FDMP3D8PZN4YK58EFXM63X86Z5",
+            "RCLA",
+            "expense",
+            "Claude code",
+            11_840,
+            "2026-11-18",
+            Some("CAT-ASSINATURAS"),
+        ),
+        (
+            "K7803KGMV7GGBKRMKQ8G33G4VQ",
+            "RSPO",
+            "expense",
+            "Spotify",
+            1_999,
+            "2026-11-15",
+            Some("CAT-ASSINATURAS"),
+        ),
+        (
+            "Q461Z06XFME170YX74P1F0PXZM",
+            "RSOG",
+            "expense",
+            "Mesada da sogrinha",
+            16_862,
+            "2026-11-02",
+            Some("CAT-SOGRINHA"),
+        ),
+        (
+            "ZWY97REN7CP9ZRPNFWE9QRYNQC",
+            "RCAD",
+            "expense",
+            "Cadeira (2x)",
+            5_052,
+            "2026-10-21",
+            Some("CAT-COMPRAS"),
+        ),
+    ] {
+        push(
+            TRANSACTIONS,
+            id,
+            json!({
+                "kind": kind,
+                "description": description,
+                "amountMinor": amount,
+                "currency": "BRL",
+                "occurredOn": on,
+                "categoryId": category,
+                "paymentMethodId": null,
+                "cashbackMinor": null,
+                "userId": "UL",
+                "recurrenceId": rid,
+                "occurrenceKey": format!("{rid}:{}", &on[..7]),
+            }),
+        );
+    }
+
+    // Avulsos (3.1.1): `recurrenceId`/`occurrenceKey` nulos, sem `estimated`/`reportState`.
+    for (id, on, kind, description, amount, category, user, method) in [
+        (
+            "1005-1-RECEITA",
+            "2026-10-05",
+            "income",
+            "Salário de outubro",
+            507_229,
+            None,
+            "UL",
+            None,
+        ),
+        (
+            "1010-1-COMPRAS",
+            "2026-10-10",
+            "expense",
+            "Compras do mês",
+            37_330,
+            Some("CAT-COMPRAS"),
+            "UL",
+            None,
+        ),
+        (
+            "1010-2-MERCADO",
+            "2026-10-10",
+            "expense",
+            "Mercado do mês",
+            233_170,
+            Some("CAT-MERCADO"),
+            "UL",
+            None,
+        ),
+        (
+            "1025-1-MERCADO",
+            "2026-10-25",
+            "expense",
+            "Mercado",
+            90_648,
+            Some("CAT-MERCADO"),
+            "UL",
+            None,
+        ),
+        (
+            "1103-1-COMPRAS",
+            "2026-11-03",
+            "expense",
+            "Fone de ouvido",
+            29_990,
+            Some("CAT-COMPRAS"),
+            "UL",
+            Some("PMP"),
+        ),
+        (
+            "1104-1-MERCADO",
+            "2026-11-04",
+            "expense",
+            "Mercado",
+            45_000,
+            Some("CAT-MERCADO"),
+            "UL",
+            None,
+        ),
+        (
+            "1106-1-PETS",
+            "2026-11-06",
+            "expense",
+            "Ração",
+            7_500,
+            Some("CAT-PETS"),
+            "UG",
+            None,
+        ),
+        (
+            "1107-1-CONFORTO",
+            "2026-11-07",
+            "expense",
+            "Restaurante",
+            18_000,
+            Some("CAT-CONFORTO"),
+            "UL",
+            None,
+        ),
+        (
+            "1109-1-MERCADO",
+            "2026-11-09",
+            "expense",
+            "Feira",
+            23_444,
+            Some("CAT-MERCADO"),
+            "UG",
+            None,
+        ),
+        (
+            "1111-1-SOGRINHA",
+            "2026-11-11",
+            "expense",
+            "Remédio da sogrinha",
+            628,
+            Some("CAT-SOGRINHA"),
+            "UG",
+            None,
+        ),
+        (
+            "1112-1-CONFORTO",
+            "2026-11-12",
+            "expense",
+            "Cinema e pipoca",
+            12_750,
+            Some("CAT-CONFORTO"),
+            "UL",
+            None,
+        ),
+        (
+            "1113-1-MANUTENCAO",
+            "2026-11-13",
+            "expense",
+            "Encanador",
+            10_728,
+            Some("CAT-MANUTENCAO"),
+            "UG",
+            None,
+        ),
+        (
+            "1114-1-COMPRAS",
+            "2026-11-14",
+            "expense",
+            "Tênis",
+            21_525,
+            Some("CAT-COMPRAS"),
+            "UL",
+            Some("PMP"),
+        ),
+        (
+            "1116-1-MERCADO",
+            "2026-11-16",
+            "expense",
+            "Mercado",
+            40_490,
+            Some("CAT-MERCADO"),
+            "UL",
+            None,
+        ),
+        (
+            "1117-1-TRANSPORTE",
+            "2026-11-17",
+            "expense",
+            "Uber",
+            5_000,
+            Some("CAT-TRANSPORTE"),
+            "UG",
+            None,
+        ),
+        (
+            "1118-2-ALMOCO",
+            "2026-11-18",
+            "expense",
+            "Almoço",
+            2_097,
+            Some("CAT-CONFORTO"),
+            "UL",
+            None,
+        ),
+        (
+            "1118-1-JANTINHA",
+            "2026-11-18",
+            "expense",
+            "Jantinha",
+            6_589,
+            Some("CAT-CONFORTO"),
+            "UL",
+            None,
+        ),
+    ] {
+        push(
+            TRANSACTIONS,
+            id,
+            json!({
+                "kind": kind,
+                "description": description,
+                "amountMinor": amount,
+                "currency": "BRL",
+                "occurredOn": on,
+                "categoryId": category,
+                "paymentMethodId": method,
+                "cashbackMinor": null,
+                "userId": user,
+                "recurrenceId": null,
+                "occurrenceKey": null,
+            }),
+        );
+    }
+
+    // Metas: id = budgetIdFor(categoria) = stableEntityId("budget:<categoria>").
+    for (id, category, limit) in [
+        ("P6H9YASDE69SPT1DPPHSYTSXEP", "CAT-COMPRAS", 40_000),
+        ("5C811CM9N48SH4M1NCR1HC4954", "CAT-CONFORTO", 40_000),
+        ("MKD247XYC35JC75E4KX2M7DYW3", "CAT-ASSINATURAS", 18_000),
+        ("EFQTTQV2YQQ2AZBTYF7TAQB2EQ", "CAT-CONTAS", 65_000),
+        ("PM5V2MS3PC532W9VP45B24SKPW", "CAT-MERCADO", 141_500),
+    ] {
+        push(
+            BUDGETS,
+            id,
+            json!({ "categoryId": category, "limitMinor": limit }),
+        );
+    }
+
+    push(
+        RESERVES,
+        "RE",
+        json!({
+            "kind": "emergency",
+            "name": "Reserva de emergência",
+            "icon": "lifebuoy",
+            "color": "violet",
+            "targetMinor": null,
+            "multiple": 6,
+            "essentialCategoryIds": null,
+            "essentialOverrideMinor": 250_000,
+            "deadline": null,
+            "recurring": { "amountMinor": 55_000, "day": 5, "since": "2026-11" },
+        }),
+    );
+    push(
+        RESERVES,
+        "RC",
+        json!({
+            "kind": "goal",
+            "name": "Casamento",
+            "icon": "gift",
+            "color": "rose",
+            "targetMinor": 150_000,
+            "multiple": null,
+            "essentialCategoryIds": null,
+            "essentialOverrideMinor": null,
+            "deadline": "2027-11",
+            "recurring": null,
+        }),
+    );
+    // O deposito recorrente de novembro de RE nao esta gravado.
+    for (id, reserve, amount, on, reason) in [
+        ("MOV-RE-1006", "RE", 55_000, "2026-10-06", Value::Null),
+        ("MOV-RE-1106", "RE", 10_000, "2026-11-06", Value::Null),
+        ("MOV-RE-1112", "RE", -30_000, "2026-11-12", json!("home")),
+        ("MOV-RC-1015", "RC", 15_000, "2026-10-15", Value::Null),
+    ] {
+        push(
+            RESERVE_MOVEMENTS,
+            id,
+            json!({
+                "reserveId": reserve,
+                "amountMinor": amount,
+                "occurredOn": on,
+                "userId": "UL",
+                "description": null,
+                "reason": reason,
+                "recurring": false,
+            }),
+        );
+    }
+    rows
+}
+
+/// Monta um `Dataset` das linhas pelo `apply` de verdade (contrato etapa 1 e 2).
+#[cfg(test)]
+pub(crate) fn dataset_from(rows: Vec<GrafiteRow>) -> dataset::Dataset {
+    let mut ds = dataset::Dataset::default();
+    ds.apply(
+        rows.into_iter()
+            .zip(1..)
+            .map(|((table, id, data), seq)| dataset::RawRow {
+                table: table.into(),
+                id,
+                deleted_at: None,
+                seq,
+                data: data.to_string(),
+            }),
+    );
+    ds
+}
+
+/// A fixture Grafite inteira (conta pessoal; `books` vazio).
+#[cfg(test)]
+pub(crate) fn fixtures_grafite() -> dataset::Dataset {
+    dataset_from(grafite_rows())
 }
 
 /// Dataset de exemplo das tarefas de agregacao, lista e telas: duas pessoas vivas e uma
@@ -622,4 +1158,105 @@ pub(crate) fn fixtures_with_merged() -> dataset::Dataset {
         ),
     ]);
     ds
+}
+
+#[cfg(test)]
+mod grafite_tests {
+    use super::*;
+    use crate::dashboard::aggregate::{in_month, recent, totals};
+    use crate::dashboard::contract::Kind;
+    use crate::dashboard::ids::stable_entity_id;
+    use crate::dashboard::recurrence::project_month;
+
+    #[test]
+    fn fixture_grafite_passa_inteira_pelo_contrato() {
+        let ds = fixtures_grafite();
+        assert_eq!(ds.ignored_total(), 0, "{:?}", ds.ignored);
+        assert_eq!(ds.recurrences.len(), 8);
+        for r in ds.recurrences.values() {
+            assert!(r.rule.is_some(), "{} sem regra", r.id);
+        }
+        assert!(ds.payment_methods["PMP"].card.is_some());
+        assert_eq!(ds.transactions.len(), 25);
+        assert_eq!(ds.budgets.len(), 5);
+        assert_eq!(ds.reserves.len(), 2);
+        assert_eq!(ds.reserve_movements.len(), 4);
+    }
+
+    #[test]
+    fn fixture_grafite_ids_das_ocorrencias_sao_os_estaveis() {
+        let ds = fixtures_grafite();
+        for (seed, id) in [
+            ("RSAL:2026-11", "7748FB44FQCR7BWM7Q4RFV4MF7"),
+            ("RCON:2026-11", "FBCWZFMRQBMWQZCRFVCCZZM8QV"),
+            ("RPRI:2026-11", "32AZFJ67VJJFQ2Y7K2TZZJP7BJ"),
+            ("RMEL:2026-11", "VSRJZHCTV1RTF9CJV9R2Z1CAVH"),
+            ("RCLA:2026-11", "FDMP3D8PZN4YK58EFXM63X86Z5"),
+            ("RSPO:2026-11", "K7803KGMV7GGBKRMKQ8G33G4VQ"),
+            ("RSOG:2026-11", "Q461Z06XFME170YX74P1F0PXZM"),
+            ("RCAD:2026-10", "ZWY97REN7CP9ZRPNFWE9QRYNQC"),
+            ("RCAD:2026-11", "QZM0FK4WFZC0Q3CWQFMGF34CFF"),
+        ] {
+            assert_eq!(stable_entity_id(seed), id, "{seed}");
+        }
+        assert!(!ds.knows_transaction("QZM0FK4WFZC0Q3CWQFMGF34CFF"));
+        for b in [
+            ("budget:CAT-COMPRAS", "P6H9YASDE69SPT1DPPHSYTSXEP"),
+            ("budget:CAT-MERCADO", "PM5V2MS3PC532W9VP45B24SKPW"),
+        ] {
+            assert_eq!(stable_entity_id(b.0), b.1);
+        }
+    }
+
+    #[test]
+    fn fixture_grafite_totais_de_outubro_e_novembro() {
+        let ds = fixtures_grafite();
+        let nov = totals(in_month(&ds, "2026-11"));
+        assert_eq!((nov.income_minor, nov.expense_minor), (350_000, 311_341));
+        let oct = totals(in_month(&ds, "2026-10"));
+        assert_eq!((oct.income_minor, oct.expense_minor), (507_229, 366_200));
+        let oct_19 =
+            totals(in_month(&ds, "2026-10").filter(|t| t.occurred_on.as_str() <= "2026-10-19"));
+        assert_eq!(oct_19.expense_minor, 270_500);
+        let sum = |f: &dyn Fn(&dataset::Transaction) -> bool| -> i64 {
+            in_month(&ds, "2026-11")
+                .filter(|t| t.kind == Kind::Expense && f(t))
+                .map(|t| t.amount_minor)
+                .sum()
+        };
+        assert_eq!(sum(&|t| t.recurrence_id.is_some()), 87_600);
+        assert_eq!(sum(&|t| t.recurrence_id.is_none()), 223_741);
+        assert_eq!(sum(&|t| t.user_id.as_deref() == Some("UL")), 264_041);
+        assert_eq!(sum(&|t| t.user_id.as_deref() == Some("UG")), 47_300);
+        assert_eq!(
+            sum(&|t| t.payment_method_id.as_deref() == Some("PMP")),
+            51_515
+        );
+    }
+
+    #[test]
+    fn fixture_grafite_por_vir_em_novembro_e_so_a_cadeira() {
+        let ds = fixtures_grafite();
+        let due = project_month(&ds, "2026-11");
+        assert_eq!(due.len(), 1);
+        assert_eq!(
+            (
+                due[0].recurrence_id.as_str(),
+                due[0].date.as_str(),
+                due[0].amount_minor
+            ),
+            ("RCAD", "2026-11-21", 5_052)
+        );
+    }
+
+    #[test]
+    fn fixture_grafite_ultimos_lancamentos() {
+        let ds = fixtures_grafite();
+        let names: Vec<&str> = recent(&ds, "2026-11", 3)
+            .iter()
+            .map(|t| t.description.as_str())
+            .collect();
+        assert_eq!(names, ["Claude code", "Almoço", "Jantinha"]);
+        assert_eq!(GRAFITE_TODAY, "2026-11-19");
+    }
 }

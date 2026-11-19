@@ -20,6 +20,7 @@ use crate::config::{self, ThemeMode, UiPrefs};
 use crate::dashboard::business::{BusinessPanel, business_panel};
 use crate::dashboard::contract::Book;
 use crate::dashboard::dataset::{Dataset, avatar_bytes};
+use crate::dashboard::grafite::{GrafiteView, build_grafite};
 use crate::dashboard::list::{Filters, NONE_KEY, TypeFilter};
 use crate::dashboard::people::{DeviceInfo, Person, people};
 use crate::dashboard::periods::month_window;
@@ -168,6 +169,9 @@ pub struct App {
     /// Modelos de tela, recalculados so quando dados, mes, filtros ou "hoje" mudam: desenhar
     /// um quadro nunca percorre o dataset.
     pub(super) dashboard: DashboardView,
+    /// Modelo do Dashboard Grafite. Na H4a a casca (lateral e cabecalho) ja le daqui; o corpo
+    /// passa a ler na H4b, que apaga o `dashboard` antigo.
+    pub(super) grafite: GrafiteView,
     pub(super) transactions: TransactionsView,
     /// Tela Reservas: sem mes escolhido (saldos sao acumulados), so depende de dados e "hoje".
     pub(super) reserves: ReservesView,
@@ -214,6 +218,8 @@ pub enum Message {
     NextMonth,
     /// Seletor Pessoal | Comercial.
     SelectBook(Book),
+    /// Olho do cabecalho do Dashboard: "Ocultar valores" / "Mostrar valores".
+    ToggleHideValues,
     /// Mouse entrou numa linha da legenda da rosca.
     HoverCategory(String),
     /// Mouse saiu: so limpa se ainda for a mesma (a saida pode chegar depois da entrada na
@@ -320,6 +326,7 @@ impl App {
             business: None,
             filters: Filters::default(),
             dashboard: DashboardView::default(),
+            grafite: GrafiteView::default(),
             transactions: TransactionsView::default(),
             reserves: ReservesView::default(),
             cat_menu_open: false,
@@ -402,6 +409,7 @@ impl App {
         self.business = (self.book == Book::Business).then(|| business_panel(dataset, &month));
         self.transactions = build_transactions(dataset, &self.today, &month, &self.filters);
         self.reserves = build_reserves(dataset, &self.today);
+        self.rebuild_grafite();
         // "N lançamentos sincronizados de K aparelhos": so aparelhos ativos que ja enviaram.
         self.transactions.synced_devices = self
             .snapshot
@@ -412,6 +420,17 @@ impl App {
         self.refresh_user_avatars();
         self.clear_charts();
         tracing::trace!("telas recalculadas para {month}");
+    }
+
+    /// So o modelo Grafite: ocultar valores muda o texto de cada R$, nada das outras telas.
+    fn rebuild_grafite(&mut self) {
+        self.grafite = build_grafite(
+            &self.scope,
+            &self.today,
+            self.month(),
+            self.book,
+            self.hide_values,
+        );
     }
 
     /// Troca a conta. Os filtros de categoria apontam para linhas da conta anterior e a
@@ -840,6 +859,13 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.set_filters(Filters::clear);
             Task::none()
         }
+        Message::ToggleHideValues => {
+            app.hide_values = !app.hide_values;
+            app.rebuild_grafite();
+            Task::perform(save_prefs(app.prefs(), app.prefs_dir.clone()), |_| {
+                Message::Noop
+            })
+        }
         Message::SetTheme(mode) => {
             if mode == app.theme {
                 return Task::none();
@@ -1233,6 +1259,72 @@ pub(super) mod tests {
         assert_eq!(app.screen, Screen::Dashboard);
         assert_eq!(app.theme, ThemeMode::Light);
         assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
+    }
+
+    /// Espera a thread de `save_prefs` gravar o que o teste quer ver.
+    fn wait_prefs(dir: &std::path::Path, done: impl Fn(&UiPrefs) -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !done(&UiPrefs::load(dir)) {
+            assert!(std::time::Instant::now() < deadline, "ui.json nao gravado");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn alternar_ocultar_grava_preferencia_e_refaz_o_dashboard() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        assert!(!app.hide_values);
+        assert!(!app.grafite.hidden);
+        assert_eq!(app.grafite.header.hide_toggle, "Ocultar valores");
+        let shown = format!("{:?}", app.grafite.how_am_i);
+        assert!(shown.contains("R$ "), "{shown}");
+
+        let _ = update(&mut app, Message::ToggleHideValues);
+        assert!(app.hide_values);
+        assert!(app.grafite.hidden);
+        assert_eq!(app.grafite.header.hide_toggle, "Mostrar valores");
+        // O mes e a conta continuam: so o texto dos valores muda.
+        assert_eq!(app.grafite.month, app.month());
+        let hidden = format!("{:?}", app.grafite.how_am_i);
+        assert!(hidden.contains("•••"), "{hidden}");
+        wait_prefs(dir.path(), |p| p.hide_values);
+
+        // Trocar o tema leva a escolha junto (a gravacao e do arquivo inteiro).
+        let _ = update(&mut app, Message::SetTheme(ThemeMode::Light));
+        wait_prefs(dir.path(), |p| p.theme == ThemeMode::Light);
+        assert!(UiPrefs::load(dir.path()).hide_values);
+
+        let _ = update(&mut app, Message::ToggleHideValues);
+        assert!(!app.grafite.hidden);
+        wait_prefs(dir.path(), |p| !p.hide_values);
+        assert_eq!(UiPrefs::load(dir.path()).theme, ThemeMode::Light);
+    }
+
+    #[test]
+    fn nasce_com_valores_ocultos_das_preferencias() {
+        let dir = tempfile::tempdir().unwrap();
+        let (cmd_tx, _rx) = mpsc::unbounded_channel();
+        let (_tx, snap_rx) = watch::channel(Snapshot {
+            dashboard: std::sync::Arc::new(crate::dashboard::fixtures()),
+            ..Snapshot::default()
+        });
+        let app = App::new(
+            HubHandle {
+                commands: cmd_tx,
+                snapshot: snap_rx,
+            },
+            UtcOffset::UTC,
+            UiPrefs {
+                hide_values: true,
+                ..UiPrefs::default()
+            },
+            dir.path().to_path_buf(),
+            Rc::new(Headless),
+        );
+        assert!(app.hide_values);
+        assert!(app.grafite.hidden);
+        assert_eq!(app.grafite.header.hide_toggle, "Mostrar valores");
     }
 
     #[test]

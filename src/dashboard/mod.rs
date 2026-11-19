@@ -1,11 +1,17 @@
 //! Interpretacao financeira das linhas: puro, sem rusqlite, iced, axum ou tokio.
 
+// Temporario (H4b remove): as H2a..H3 criam funcoes `pub` (id estavel, datas, contrato novo,
+// projecao de recorrencia) que so a tela da H4b passa a usar; sem isto o clippy com
+// `-D warnings` barraria cada tarefa intermediaria.
+#![allow(dead_code)]
+
 pub mod aggregate;
 pub mod budgets;
 pub mod business;
 pub mod colors;
 pub mod contract;
 pub mod dataset;
+pub mod ids;
 pub mod list;
 pub mod money;
 pub mod people;

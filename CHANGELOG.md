@@ -6,6 +6,18 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [1.3.1] - 2026-11-19
+
+Nenhuma mudança no protocolo `/v1` nem no banco.
+
+### Corrigido
+
+- **Desempate de reajustes de recorrência pela regra R.** Quando dois reajustes vivos da mesma
+  série e competência chegam ao hub (o id estável v1 do app pode colidir entre séries), vale o
+  de `updatedAt` maior e, só no empate, o de id maior; um reajuste sem `updatedAt` perde para
+  qualquer outro. Antes o desempate era só pelo id e o Dashboard podia mostrar o valor antigo.
+  É a mesma regra que o app e as metas já usam; as metas ganharam testes que a fixam.
+
 ## [1.3.0] - 2026-11-19
 
 Nenhuma mudança no protocolo `/v1` nem no banco: o hub continua guardando JSON opaco e lê
@@ -327,7 +339,8 @@ campo da 0.0.2 acontece.
 - Scripts `scripts/e2e.sh` (roteiro curl de pareamento e sync) e `scripts/seed-dashboard.sh`
   (carga de exemplo do dashboard).
 
-[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.3.0...HEAD
+[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/LuizFer1/HubFinance/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/LuizFer1/HubFinance/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/LuizFer1/HubFinance/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/LuizFer1/HubFinance/compare/v1.0.0...v1.1.0

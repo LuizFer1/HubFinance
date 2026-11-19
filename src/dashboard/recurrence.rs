@@ -303,6 +303,8 @@ mod grafite_tests {
             ("RCAD", "2026-11-21", 5_052)
         );
         assert!(next.iter().all(|o| o.date.as_str() > GRAFITE_TODAY));
+        // "Ver todas as 9" do app = 1 fatura + estas 8 (receita inclusive) em (19/11, 19/12].
+        assert_eq!(next.len(), 8);
     }
 }
 

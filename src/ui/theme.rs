@@ -29,13 +29,15 @@ pub struct Tokens {
     #[allow(dead_code)] // H4a/H4b removem
     pub surface_2: Color,
     pub text: Color,
+    /// Texto secundario (rotulos, legendas, contagens): paleta §4.4. Nao e degrau da rampa de
+    /// neutros porque no claro o `neutral_500` fica em 3,2:1 sobre `surface`.
+    pub text_muted: Color,
     divider: Color,
     pub accent: Color,
     #[allow(dead_code)] // H4a/H4b removem
     pub accent_100: Color,
     pub accent_200: Color,
     pub accent_300: Color,
-    #[allow(dead_code)] // H4a/H4b removem
     pub accent_400: Color,
     #[allow(dead_code)] // H4a/H4b removem
     pub accent_500: Color,
@@ -54,9 +56,7 @@ pub struct Tokens {
     pub neutral_100: Color,
     #[allow(dead_code)] // H4a/H4b removem
     pub neutral_200: Color,
-    #[allow(dead_code)] // H4a/H4b removem
     pub neutral_300: Color,
-    #[allow(dead_code)] // H4a/H4b removem
     pub neutral_400: Color,
     #[allow(dead_code)] // H4a/H4b removem
     pub neutral_500: Color,
@@ -91,6 +91,7 @@ pub static DARK: Tokens = Tokens {
     surface: hex(0x1e1e1e),
     surface_2: hex(0x262626),
     text: hex(0xf2f2f2),
+    text_muted: hex(0xa6a6a6),
     // `color-mix(fg 10%)` sobre `surface`: o iced nao mistura, entao vai o hex resultante.
     divider: hex(0x333333),
     accent: hex(0xe2c15a),
@@ -134,6 +135,7 @@ pub static LIGHT: Tokens = Tokens {
     surface: hex(0xffffff),
     surface_2: hex(0xeeeeee),
     text: hex(0x202020),
+    text_muted: hex(0x6b6b6b),
     // `color-mix(fg 12%)` sobre `surface`.
     divider: hex(0xe4e4e4),
     accent: hex(0x876c00),
@@ -200,6 +202,17 @@ impl Tokens {
     /// Texto secundario: o design usa o texto a 75/70/65/60/55/50/45 % de opacidade.
     pub fn text_alpha(&self, a: f32) -> Color {
         alpha(self.text, a)
+    }
+
+    /// Texto de apoio forte (nav inativa, setas, olho): o #BDBDBD do design, `neutral_400` no
+    /// escuro. No claro a rampa e invertida e o `neutral_400` (#747474) da 4,2:1 sobre `bg`;
+    /// vai o degrau acima (`neutral_300`), que fica mais escuro que `text_muted` como no escuro
+    /// fica mais claro: a hierarquia (fg > apoio > muted) e a mesma nos dois.
+    pub fn text_soft(&self) -> Color {
+        match self.mode {
+            Mode::Dark => self.neutral_400,
+            Mode::Light => self.neutral_300,
+        }
     }
 
     /// Divisoria opaca: o hex da paleta sobre `surface` (sobre `bg` fica um tom mais clara que
@@ -341,16 +354,6 @@ pub fn card(t: &'static Tokens) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
-/// Card de status da barra lateral: superficie com a borda interna no divisor.
-pub fn card_inset(t: &'static Tokens) -> impl Fn(&Theme) -> container::Style {
-    move |_| container::Style {
-        background: bg(t.surface),
-        border: outline(t.divider(), 8.0),
-        text_color: Some(t.text),
-        ..container::Style::default()
-    }
-}
-
 /// Campo de endereco: fundo da janela com a borda interna no divisor.
 pub fn field(t: &'static Tokens) -> impl Fn(&Theme) -> container::Style {
     move |_| container::Style {
@@ -418,30 +421,56 @@ pub fn scrim() -> impl Fn(&Theme) -> container::Style {
 
 // ---- botoes ----
 
-/// Item de navegacao: ativo `accent_900` + `accent_200`; hover `accent` a 10 % (no prototipo
-/// o hover vale tambem para o item ativo).
+/// Item de navegacao Grafite: ativo em `surface` com texto `fg`; inativo sem fundo, texto de
+/// apoio. O design nao desenha hover; o inativo ganha o texto a 4 % para o clique ter resposta.
 pub fn nav_item(
     t: &'static Tokens,
     active: bool,
 ) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |_, status| {
-        let background = if hovered(status) {
-            bg(alpha(t.accent, 0.10))
-        } else if active {
-            bg(t.accent_900)
+        let background = if active {
+            bg(t.surface)
+        } else if hovered(status) {
+            bg(t.text_alpha(0.04))
         } else {
             None
         };
         button::Style {
             background,
-            text_color: if active {
-                t.accent_200
-            } else {
-                t.text_alpha(0.75)
-            },
+            text_color: if active { t.text } else { t.text_soft() },
             border: rounded(8.0),
             ..button::Style::default()
         }
+    }
+}
+
+/// Opcao do segmentado Grafite (tema, Pessoal | Comercial): raio 6, ativo no #333333 do
+/// design (a divisoria opaca) com texto `fg`, inativo transparente com texto de apoio.
+pub fn segment(
+    t: &'static Tokens,
+    active: bool,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| button::Style {
+        background: if active {
+            bg(t.divider())
+        } else if hovered(status) {
+            bg(t.text_alpha(0.05))
+        } else {
+            None
+        },
+        text_color: if active { t.text } else { t.text_soft() },
+        border: rounded(6.0),
+        ..button::Style::default()
+    }
+}
+
+/// Botao so de icone (olho do cabecalho): 44 px, raio 8, transparente; hover texto a 6 %.
+pub fn icon_button(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| button::Style {
+        background: hovered(status).then(|| Background::Color(t.text_alpha(0.06))),
+        text_color: t.text_soft(),
+        border: rounded(8.0),
+        ..button::Style::default()
     }
 }
 
@@ -650,12 +679,13 @@ mod tests {
 
     /// Paleta Grafite §4.1 (`docs/mobile/specs/2026-11-19-paleta-grafite-design.md`): a unica
     /// fonte dos hex. `(nome, token, escuro, claro)`.
-    fn grafite(t: &Tokens) -> [(&'static str, Color); 26] {
+    fn grafite(t: &Tokens) -> [(&'static str, Color); 27] {
         [
             ("bg", t.bg),
             ("surface", t.surface),
             ("surface_2", t.surface_2),
             ("fg", t.text),
+            ("text_muted", t.text_muted),
             ("divider", t.divider()),
             ("accent", t.accent),
             ("accent_100", t.accent_100),
@@ -683,11 +713,12 @@ mod tests {
 
     #[test]
     fn tokens_por_modo() {
-        let expected: [(u32, u32); 26] = [
+        let expected: [(u32, u32); 27] = [
             (0x131313, 0xf5f5f5),
             (0x1e1e1e, 0xffffff),
             (0x262626, 0xeeeeee),
             (0xf2f2f2, 0x202020),
+            (0xa6a6a6, 0x6b6b6b),
             (0x333333, 0xe4e4e4),
             (0xe2c15a, 0x876c00),
             (0xf9f3dd, 0x392c01),
@@ -829,6 +860,46 @@ mod tests {
         assert!((c500 - 3.23).abs() < 0.01, "{c500:.2}");
         let c60 = contrast(mix(LIGHT.surface, LIGHT.text, 0.60), LIGHT.surface);
         assert!(c60 < 4.5, "{c60:.2}");
+    }
+
+    /// Paleta §4.4: o texto secundario do hub passa 4.5:1 em todo fundo onde aparece (lateral e
+    /// cabecalho sobre `bg`, card de status sobre `surface`, caixas internas sobre `surface_2`).
+    #[test]
+    fn text_muted_passa_4_5_nos_dois_temas() {
+        for t in [&DARK, &LIGHT] {
+            for (fundo, cor) in [
+                ("bg", t.bg),
+                ("surface", t.surface),
+                ("surface_2", t.surface_2),
+            ] {
+                let c = contrast(t.text_muted, cor);
+                assert!(c >= 4.5, "text_muted/{fundo} {:?}: {c:.2}", t.mode);
+            }
+        }
+        // A §4.4 diz 7,5:1 sobre #1e1e1e; a conta da 6,85 (7,63 e sobre `bg`). Os do claro batem.
+        let near = |got: f64, want: f64| (got - want).abs() < 0.01;
+        assert!(near(contrast(DARK.text_muted, DARK.surface), 6.85));
+        assert!(near(contrast(DARK.text_muted, DARK.bg), 7.63));
+        assert!(near(contrast(LIGHT.text_muted, LIGHT.surface), 5.33));
+        assert!(near(contrast(LIGHT.text_muted, LIGHT.bg), 4.89));
+        assert!(near(contrast(LIGHT.text_muted, LIGHT.surface_2), 4.59));
+    }
+
+    #[test]
+    fn texto_de_apoio_passa_4_5_e_fica_entre_fg_e_muted() {
+        for t in [&DARK, &LIGHT] {
+            for (fundo, cor) in [("bg", t.bg), ("surface", t.surface)] {
+                let c = contrast(t.text_soft(), cor);
+                assert!(c >= 4.5, "text_soft/{fundo} {:?}: {c:.2}", t.mode);
+            }
+            let (fg, soft, muted) = (
+                contrast(t.text, t.bg),
+                contrast(t.text_soft(), t.bg),
+                contrast(t.text_muted, t.bg),
+            );
+            assert!(fg > soft && soft > muted, "{:?}", t.mode);
+        }
+        assert_eq!(DARK.text_soft(), hex(0xbdbdbd));
     }
 
     #[test]

@@ -11,7 +11,7 @@ use iced::widget::{
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{App, Message};
-use super::dashboard_view::{author_cell, category_tile, hover_row, value_cell};
+use super::rows::{author_cell, category_tile, hover_row, value_cell};
 use super::theme::{self, Tokens, alpha, mix};
 use super::{fonts, icons, widgets};
 use crate::dashboard::list::{

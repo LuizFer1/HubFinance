@@ -9,6 +9,7 @@ mod icons;
 mod measure;
 mod remove_view;
 mod reserves_view;
+mod rows;
 mod shell;
 mod theme;
 mod time;

@@ -12,7 +12,7 @@ use super::app::{App, Message};
 use super::charts::{
     EMPTY_RESERVES_HEIGHT, EMPTY_RESERVES_WIDTH, EmptyReservesProgram, StackedBarsProgram,
 };
-use super::dashboard_view::{author_cell_of, hover_row, kicker_with_icon};
+use super::rows::{author_cell_of, hover_row, kicker_with_icon};
 use super::theme::{self, Tokens, mix};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::contract::MovementKind;

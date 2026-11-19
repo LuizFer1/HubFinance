@@ -41,8 +41,13 @@ pub struct Occurrence {
 ///
 /// Filtra serie e `deleted` aqui dentro: quem chama passa a tabela inteira, e um reajuste
 /// desfeito que ainda valesse faria a projecao prometer um valor que o usuario apagou.
-/// Dois reajustes vivos na mesma competencia (nao deveria haver: o id e estavel por serie e
-/// competencia) desempatam pelo maior `id`, para o numero nao oscilar com a ordem do mapa.
+/// Dois reajustes vivos na mesma competencia acontecem: o id estavel v1 colide entre series
+/// (um aparelho novo grava a chave em v2, um velho a regrava em v1) e dois aparelhos podem
+/// reajustar a mesma competencia offline. Desempate pela regra R, igual a do app e a de
+/// `budgets::current_budgets`: `updated_at` maior (HLC de largura fixa, a ordem de texto e a
+/// semantica; ausente perde de qualquer presente), depois `id` maior. `updated_at` antes do id
+/// porque a ultima edicao e a intencao do usuario; o id so desempata para o numero nao oscilar
+/// com a ordem do mapa nem divergir do celular.
 pub fn amount_for<'a>(
     recurrence_id: &str,
     rule: &RecurrenceRule,
@@ -56,6 +61,7 @@ pub fn amount_for<'a>(
         .max_by(|a, b| {
             a.from_period
                 .cmp(&b.from_period)
+                .then_with(|| a.updated_at.as_deref().cmp(&b.updated_at.as_deref()))
                 .then_with(|| a.id.cmp(&b.id))
         });
     if let Some(adjustment) = best {
@@ -494,6 +500,76 @@ mod tests {
                     adjustment("A9", "SERIE-1", "2027-01", 360_000),
                 ];
                 assert_eq!(amount(lista, "2027-03"), 360_000);
+            }
+        }
+
+        /// Regra R (spec 2026-11-19-id-estavel-colisao, secoes 4.3 e 8): entre reajustes vivos da
+        /// mesma serie e competencia vale o de `updatedAt` maior; empate, o de id maior; sem
+        /// `updatedAt`, perde de qualquer um com. Os vetores sao os mesmos do app (P1-2): mudar
+        /// um aqui sem mudar la faz o hub e o celular mostrarem valores diferentes.
+        mod regra_r {
+            use super::*;
+
+            const SERIES: &str = "01JZ0000000000000000000SR1";
+            const ID_A: &str = "01JZ000000000000000000ADJA";
+            const ID_B: &str = "01JZ000000000000000000ADJB";
+            const H1: &str = "1793000000000-0000-01JZ0000000000000000000DV1";
+            const H2: &str = "1793000000000-0001-01JZ0000000000000000000DV2";
+
+            fn row<'a>(
+                id: &'a str,
+                updated_at: Option<&str>,
+                amount: i64,
+                deleted: bool,
+            ) -> Row<'a> {
+                let mut data = json!({
+                    "recurrenceId": SERIES, "fromPeriod": "2027-01", "amountMinor": amount
+                });
+                if let Some(version) = updated_at {
+                    data["updatedAt"] = json!(version);
+                }
+                (RECURRENCE_ADJUSTMENTS, id, deleted, data)
+            }
+
+            /// Valor em 2027-03 com as linhas nas duas ordens; as duas tem de dar o mesmo.
+            fn winner(a: Row, b: Row) -> i64 {
+                let ds = dataset_of(vec![(RECURRENCES, SERIES, false, serie()), a, b]);
+                let mut rows: Vec<&RecurrenceAdjustment> =
+                    ds.recurrence_adjustments.values().collect();
+                rows.sort_by(|x, y| x.id.cmp(&y.id));
+                let rule = rule_of(&ds, SERIES);
+                let forward = amount_for(SERIES, rule, rows.iter().copied(), "2027-03");
+                let backward = amount_for(SERIES, rule, rows.iter().rev().copied(), "2027-03");
+                assert_eq!(forward, backward, "a ordem mudou o vencedor");
+                forward
+            }
+
+            #[test]
+            fn r1_updated_at_maior_vence_mesmo_com_id_menor() {
+                let a = row(ID_A, Some(H2), 350_000, false);
+                let b = row(ID_B, Some(H1), 360_000, false);
+                assert_eq!(winner(a, b), 350_000);
+            }
+
+            #[test]
+            fn r2_empate_de_updated_at_vence_o_id_maior() {
+                let a = row(ID_A, Some(H1), 350_000, false);
+                let b = row(ID_B, Some(H1), 360_000, false);
+                assert_eq!(winner(a, b), 360_000);
+            }
+
+            #[test]
+            fn r3_sem_updated_at_perde_mesmo_com_id_maior() {
+                let a = row(ID_A, Some(H1), 350_000, false);
+                let b = row(ID_B, None, 360_000, false);
+                assert_eq!(winner(a, b), 350_000);
+            }
+
+            #[test]
+            fn r4_apagado_nao_concorre_mesmo_mais_novo() {
+                let a = row(ID_A, Some(H2), 350_000, true);
+                let b = row(ID_B, Some(H1), 360_000, false);
+                assert_eq!(winner(a, b), 360_000);
             }
         }
     }

@@ -121,6 +121,8 @@ pub struct RecurrenceAdjustment {
     pub recurrence_id: String,
     pub from_period: String,
     pub amount_minor: i64,
+    /// HLC da linha; `None` perde para qualquer versao conhecida (regra R, `amount_for`).
+    pub updated_at: Option<String>,
     /// Conta da linha; ausente ou desconhecido vale `Personal` (ver `Book`).
     pub book: Book,
 }
@@ -417,6 +419,7 @@ impl Dataset {
                                 recurrence_id: f.recurrence_id,
                                 from_period: f.from_period,
                                 amount_minor: f.amount_minor,
+                                updated_at: f.updated_at,
                                 book,
                             },
                         );

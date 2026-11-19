@@ -464,6 +464,10 @@ pub struct RecurrenceAdjustmentFields {
     pub recurrence_id: String,
     pub from_period: String,
     pub amount_minor: i64,
+    /// HLC da linha, como em `BudgetFields`: desempata dois reajustes vivos da mesma serie e
+    /// competencia (`recurrence::amount_for`). Ausente, o reajuste perde para qualquer outro.
+    #[serde(default)]
+    pub updated_at: Option<String>,
     /// `book` do app; ver `Book::from_field`.
     #[serde(default)]
     pub book: Option<serde_json::Value>,
@@ -1365,9 +1369,20 @@ mod tests {
     fn reajuste_valido_e_fora_do_contrato() {
         let ok = json!({
             "id": "A1", "recurrenceId": "R1", "fromPeriod": "2026-12",
-            "amountMinor": 60000, "book": "business", "deletedAt": null
+            "amountMinor": 60000, "book": "business", "deletedAt": null,
+            "updatedAt": "1793000000000-0000-01JZ0000000000000000000DV1"
         });
         let a = parse_recurrence_adjustment(&ok.to_string()).unwrap();
+        assert_eq!(
+            a.updated_at.as_deref(),
+            Some("1793000000000-0000-01JZ0000000000000000000DV1")
+        );
+        assert_eq!(
+            parse_recurrence_adjustment(&without(ok.clone(), "updatedAt"))
+                .unwrap()
+                .updated_at,
+            None
+        );
         assert_eq!(a.recurrence_id, "R1");
         assert_eq!(a.from_period, "2026-12");
         assert_eq!(a.amount_minor, 60_000);

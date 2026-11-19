@@ -8,13 +8,18 @@
 #   <token>  codigo gerado em "Gerar codigo" na tela Conexao (com ou sem o hifen)
 #      DRY_RUN=1 ./scripts/seed-dashboard.sh
 #   so monta o lote e o imprime (JSON) na saida, sem rede: confere a carga sem hub nenhum.
+#   SEED_TODAY=AAAA-MM-DD finge outro dia (so as datas do lote; os HLC seguem o relogio).
+#
+# NUNCA contra o hub da casa: as linhas sincronizariam para os celulares. As portas sao fixas,
+# entao o hub de teste so sobe com o da casa desligado ("Desligar o hub" no icone ao lado do
+# relogio): rode `HUBFINANCE_DATA_DIR=$(mktemp -d) cargo run`, confira em "Sobre o hub" (tela
+# Conexao) que a pasta e a temporaria e que nao ha usuario conectado, e so entao gere o codigo.
 #
 # HTTPS_PORT e HTTP_PORT (ambiente) mudam as portas; padrao 7777 e 7778.
 # Os HLC usam o relogio atual: rodar de novo contra o mesmo hub gera versoes mais novas das
 # mesmas linhas (ids fixos), nunca duplicatas. As datas sao relativas ao dia em que roda (mes
 # corrente = o de hoje), entao o mes corrente sempre tem dado e a fatura aberta sempre vence
-# em ate 30 dias. Rodar em outro mes cria lancamentos novos (outros ids de ocorrencia); use
-# um hub de teste (HUBFINANCE_DATA_DIR=$(mktemp -d)), nunca o da casa.
+# em ate 30 dias. Rodar em outro mes cria lancamentos novos (outros ids de ocorrencia).
 #
 # O que entra:
 #   - aparelho "Pixel da Ana" com userId da Ana;
@@ -162,9 +167,13 @@ next_hlc() {
 }
 
 ROWS=()
+# Id repetido no lote sobrescreveria a linha sem aviso (LWW): `add` recusa.
+declare -A SEEN=()
 # <tabela> <id> <apagada:0|1> <campos JSON sem chaves>
 add() {
   local hlc deleted
+  [[ -z ${SEEN[$2]:-} ]] || fail "id repetido no lote: $2"
+  SEEN[$2]=1
   hlc=$(next_hlc)
   deleted=null
   [[ $3 == 1 ]] && deleted="\"$hlc\""
@@ -187,9 +196,20 @@ tx() {
 
 # Ocorrencia gravada de uma serie, como o app grava: id estavel e occurrenceKey.
 # <serie> <periodo> <kind> <descricao> <centavos> <data> <categoria|null> <forma|null> <autor>
+#
+# O id estavel do app tem no maximo 1024 valores distintos (cada caractere sai dos 5 bits
+# baixos de estados que so dependem dos 5 bits baixos da entrada; spec do dashboard 5.15), entao
+# duas ocorrencias do lote podem colidir. O app tambem nao gravaria as duas (a segunda
+# sobrescreve a primeira); aqui a segunda e pulada com aviso, e o hub a trata como gravada.
 occ() {
-  local key="$1:$2"
-  tx "$(stable_id "$key")" 0 "$3" "$4" "$5" "$6" "$7" "$8" "$9" "$1" "$key"
+  local key="$1:$2" id
+  id=$(stable_id "$key")
+  if [[ -n ${SEEN[$id]:-} ]]; then
+    printf 'aviso: ocorrencia %s pulada (id estavel %s ja esta no lote)
+' "$key" "$id" >&2
+    return 0
+  fi
+  tx "$id" 0 "$3" "$4" "$5" "$6" "$7" "$8" "$9" "$1" "$key"
 }
 
 # <id> <kind> <descricao> <centavos> <categoria|null> <forma|null> <frequency> <dia|null>
@@ -224,9 +244,9 @@ mv() {
     "\"reserveId\":\"$3\",\"amountMinor\":$amount,\"occurredOn\":\"$6\",\"userId\":$user,\"description\":$desc,\"reason\":$reason,\"recurring\":$9"
 }
 
-TODAY=$(date +%Y-%m-%d)
-FIRST=$(date +%Y-%m-01)
-TODAY_DAY=$((10#$(date +%d)))
+TODAY=${SEED_TODAY:-$(date +%Y-%m-%d)}
+FIRST=$(date -d "$TODAY" +%Y-%m-01)
+TODAY_DAY=$((10#$(date -d "$TODAY" +%d)))
 month_of() { date -d "$FIRST $1 month" +%Y-%m; }
 # Ocorrencia de serie so e gravada ate hoje (o app materializa o que ja venceu).
 until_today() { [[ ! $1 > $TODAY ]]; }
@@ -247,6 +267,8 @@ add categories "$C_OLD" 1 '"name":"Antiga","color":"slate","icon":"tag","kind":"
 add paymentMethods "$PM_PIX" 0 '"name":"Pix","icon":"zap","color":"teal","kind":"pix"'
 add paymentMethods "$PM_CASH" 0 '"name":"Dinheiro","icon":"banknote","color":"lime","kind":"cash"'
 
+BIZ=',"book":"business"'
+
 # Cartao completo (spec §4.3): fecha daqui a 5 dias (8 se cairia em 29..31, para o dia caber
 # em todo mes) e vence 7 dias depois do fechamento. Vencimento <= fechamento vira o mes
 # seguinte, como no app. Assim a fatura aberta vence sempre em ate ~18 dias.
@@ -255,6 +277,21 @@ CLOSE_DAY=$((10#$(date -d "$TODAY +5 day" +%d)))
 DUE_DAY=$((CLOSE_DAY + 7))
 ((DUE_DAY > 28)) && DUE_DAY=$((DUE_DAY - 28))
 add paymentMethods "$PM_CARD" 0 "\"name\":\"Crédito\",\"icon\":\"credit-card\",\"color\":\"indigo\",\"kind\":\"credit\",\"bank\":\"Nubank\",\"closingDay\":$CLOSE_DAY,\"dueDay\":$DUE_DAY"
+
+# Linhas de id estavel fixo antes das ocorrencias (que pulam quando colidem): a conta comercial
+# (a linha `books` viva do tipo business abre o seletor Pessoal | Comercial) e as metas.
+add books "$(stable_id "book:business")" 0 '"kind":"business","name":"Ateliê da Ana","color":"fuchsia","icon":"storefront"'
+
+# Metas (id estavel "budget:<categoria>", como o app): Alimentacao estoura com as feiras (no
+# comeco do mes, so o mercado: 80 %, em atencao), Transporte em atencao (combustivel ~95 %),
+# Lazer e Saude com folga.
+budget() {
+  add budgets "$(stable_id "budget:$1")" 0 "\"categoryId\":\"$1\",\"limitMinor\":$2"
+}
+budget "$C_FOOD" 60000
+budget "$C_CAR" 22000
+budget "$C_FUN" 90000
+budget "$C_HEALTH" 30000
 
 # Recorrencias. As mensais fixas comecam 3 meses atras (os meses 4 a 6 para tras sao os do
 # historico avulso, um deles vazio).
@@ -348,16 +385,6 @@ tx 01HZZZZZZZZZZZZZZZZZZZZZX3 1 expense "Lançamento apagado" 99999 "$M1-19" "$C
 add transactions 01HZZZZZZZZZZZZZZZZZZZZZX4 0 \
   "\"kind\":\"expense\",\"description\":\"Fora do contrato\",\"amountMinor\":\"muito\",\"currency\":\"BRL\",\"occurredOn\":\"$M1-20\",\"categoryId\":null,\"paymentMethodId\":null,\"cashbackMinor\":null,\"userId\":null,\"recurrenceId\":null,\"occurrenceKey\":null"
 
-# Metas (id estavel "budget:<categoria>", como o app): Alimentacao estoura (mercado + feiras),
-# Transporte fica em atencao (combustivel ~95 %), Lazer e Saude com folga.
-budget() {
-  add budgets "$(stable_id "budget:$1")" 0 "\"categoryId\":\"$1\",\"limitMinor\":$2"
-}
-budget "$C_FOOD" 60000
-budget "$C_CAR" 22000
-budget "$C_FUN" 90000
-budget "$C_HEALTH" 30000
-
 # Movimentacoes avulsas das reservas.
 mv 01HZZZZZZZZZZZZZZZZZZZZZY1 0 "$R_EMERG" withdrawal 64000 "$M1-18" "$ANA" "Conserto da geladeira" false home
 mv 01HZZZZZZZZZZZZZZZZZZZZZY2 0 "$R_TRIP" deposit 150000 "$M2-15" "$ANA" "Parte do freela" false
@@ -371,9 +398,7 @@ mv 01HZZZZZZZZZZZZZZZZZZZZZY6 1 "$R_EMERG" deposit 99999 "$M1-04" "$LUIZ" "Movim
 add reserveMovements 01HZZZZZZZZZZZZZZZZZZZZZY7 0 \
   "\"reserveId\":\"$R_EMERG\",\"amountMinor\":0,\"occurredOn\":\"$M1-05\",\"userId\":null,\"description\":null,\"reason\":null,\"recurring\":false"
 
-# Conta comercial: a linha `books` viva do tipo business abre o seletor Pessoal | Comercial.
-BIZ=',"book":"business"'
-add books "$(stable_id "book:business")" 0 '"kind":"business","name":"Ateliê da Ana","color":"fuchsia","icon":"storefront"'
+# Conta comercial (a linha `books` ja entrou acima).
 add categories "$C_SALES" 0 '"name":"Vendas","color":"emerald","icon":"storefront","kind":"income"'"$BIZ"
 add categories "$C_SUPPLY" 0 '"name":"Insumos","color":"orange","icon":"package","kind":"expense"'"$BIZ"
 for k in 0 1 2; do
@@ -393,17 +418,6 @@ add assets 01HZZZZZZZZZZZZZZZZZZZZZA2 0 "\"kind\":\"inventory\",\"name\":\"Tecid
 add assets 01HZZZZZZZZZZZZZZZZZZZZZA3 0 "\"kind\":\"equipment\",\"name\":\"Máquina de costura\",\"valueMinor\":380000,\"acquiredOn\":\"$M3-15\",\"note\":null$BIZ"
 add debts 01HZZZZZZZZZZZZZZZZZZZZZD1 0 "\"name\":\"Empréstimo da máquina\",\"creditor\":\"Banco\",\"principalMinor\":400000,\"balanceMinor\":260000,\"dueOn\":\"$(month_of +10)-15\"$BIZ"
 add debts 01HZZZZZZZZZZZZZZZZZZZZZD2 0 "\"name\":\"Fornecedor de tecidos\",\"creditor\":null,\"principalMinor\":80000,\"balanceMinor\":80000,\"dueOn\":null$BIZ"
-
-# Id repetido no lote sobrescreve a linha sem aviso (LWW). O id estavel do app colide em
-# seeds que diferem so por bits baixos em duas posicoes ("R2:2026-09" = "R3:2026-08"), por
-# isso os ids das series sao distantes entre si e o lote e conferido aqui.
-declare -A SEEN=()
-for r in "${ROWS[@]}"; do
-  id=${r#*\"row\":\{\"id\":\"}
-  id=${id%%\"*}
-  [[ -z ${SEEN[$id]:-} ]] || fail "id repetido no lote: $id"
-  SEEN[$id]=1
-done
 
 JOINED=$(IFS=,; printf '%s' "${ROWS[*]}")
 

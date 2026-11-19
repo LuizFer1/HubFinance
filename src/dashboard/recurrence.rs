@@ -237,10 +237,73 @@ pub fn recurring_month(ds: &Dataset, month: &str) -> RecurringMonth {
     out
 }
 
+/// "25% da renda fixa" (`committedPercent` do app, spec 6.2.8): quanto das entradas recorrentes as
+/// saidas recorrentes ja levam. Sem teto (150% e informacao; quem trava em 100% e a barra).
+/// `None` sem entrada recorrente: nao ha renda fixa para ser a regua.
+pub fn committed_percent(m: &RecurringMonth) -> Option<i64> {
+    (m.income_minor > 0).then(|| {
+        super::aggregate::js_round(m.expense_minor as f64 / m.income_minor as f64 * 100.0) as i64
+    })
+}
+
 /// `nextMonthFreeMoney` do app: o livre do mes seguinte ao de `today`.
 pub fn next_month_free(ds: &Dataset, today: &str) -> RecurringMonth {
     let month = today.get(..7).unwrap_or(today);
     recurring_month(ds, &shift_month(month, 1))
+}
+
+#[cfg(test)]
+mod grafite_tests {
+    use super::*;
+    use crate::dashboard::{GRAFITE_TODAY, fixtures_grafite};
+
+    #[test]
+    fn livre_em_dezembro() {
+        // 3.2: 350000 - 87600 = 262400 -> "R$ 2.624", sem "~" (nenhuma serie variavel).
+        let dec = next_month_free(&fixtures_grafite(), GRAFITE_TODAY);
+        assert_eq!(dec.month, "2026-12");
+        assert_eq!(
+            (dec.income_minor, dec.expense_minor, dec.free_minor),
+            (350_000, 87_600, 262_400)
+        );
+        assert!(!dec.estimated);
+    }
+
+    #[test]
+    fn comprometimento() {
+        // 3.2: js_round(87600 / 350000 x 100) = 25.
+        let dec = next_month_free(&fixtures_grafite(), GRAFITE_TODAY);
+        assert_eq!(committed_percent(&dec), Some(25));
+    }
+
+    #[test]
+    fn comprometimento_sem_receita_e_sem_teto() {
+        let month = |income_minor, expense_minor| RecurringMonth {
+            month: "2026-12".into(),
+            income_minor,
+            expense_minor,
+            free_minor: income_minor - expense_minor,
+            estimated: false,
+        };
+        assert_eq!(committed_percent(&month(0, 1_000)), None);
+        assert_eq!(committed_percent(&month(1_000, 1_500)), Some(150));
+    }
+
+    #[test]
+    fn proximas_saidas_da_fixture() {
+        // So a Cadeira (21/11, "em 2 dias") nos proximos 30 dias, antes das de dezembro.
+        let next = upcoming(&fixtures_grafite(), GRAFITE_TODAY, 30);
+        let first = next.first().expect("cadeira");
+        assert_eq!(
+            (
+                first.recurrence_id.as_str(),
+                first.date.as_str(),
+                first.amount_minor
+            ),
+            ("RCAD", "2026-11-21", 5_052)
+        );
+        assert!(next.iter().all(|o| o.date.as_str() > GRAFITE_TODAY));
+    }
 }
 
 #[cfg(test)]

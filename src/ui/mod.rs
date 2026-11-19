@@ -9,6 +9,7 @@ mod icons;
 mod measure;
 mod remove_view;
 mod reserves_view;
+mod rows;
 mod shell;
 mod theme;
 mod time;
@@ -52,6 +53,7 @@ pub fn run(
     )
     .title("HubFinance")
     .subscription(app::subscription)
+    .font(fonts::INTER_LIGHT_BYTES)
     .font(fonts::INTER_REGULAR_BYTES)
     .font(fonts::INTER_MEDIUM_BYTES)
     .font(fonts::INTER_SEMIBOLD_BYTES)

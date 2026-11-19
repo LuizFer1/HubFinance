@@ -87,9 +87,197 @@ pub fn axis_label(minor: i64) -> String {
     }
 }
 
+/// "Ocultar valores" (spec 7.4): o que aparece no lugar de todo valor em R$. O mesmo `MASK` de
+/// `features/privacy/privacy.ts` do app, para os dois paineis esconderem igual.
+pub const MASK: &str = "R$ •••••";
+/// No eixo do grafico cabe pouco: so os pontos.
+pub const AXIS_MASK: &str = "•••";
+/// Inteiro do valor grande quando oculto (o `moneyParts` do app).
+pub const MASK_DIGITS: &str = "•••••";
+
+/// Valor grande partido como o design desenha: `R$` e centavos pequenos, inteiro grande. Os
+/// centavos ja trazem a virgula (",59"), como o `moneyParts` do app: oculto, `cents` fica vazio
+/// e nao sobra uma virgula solta ao lado da mascara.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BigMoney {
+    /// "", "+" ou "−".
+    pub sign: &'static str,
+    pub currency: &'static str,
+    pub whole: String,
+    /// ",59"; vazio em reais inteiros ou oculto.
+    pub cents: String,
+}
+
+impl BigMoney {
+    /// O valor corrido ("R$ 386,59"), para os testes (a tela desenha os pedacos).
+    #[cfg(test)]
+    pub fn text(&self) -> String {
+        format!(
+            "{}{} {}{}",
+            self.sign, self.currency, self.whole, self.cents
+        )
+    }
+}
+
+/// Formatador de dinheiro das telas novas: o unico caminho do valor ate o texto, como o `brl`
+/// do app. Com `hidden`, todo valor em R$ vira a mascara; porcentagens, datas e contagens nao
+/// passam por aqui e continuam visiveis. Formatar com as funcoes soltas numa tela vazaria o
+/// numero por cima do botao de ocultar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Money {
+    pub hidden: bool,
+}
+
+impl Money {
+    pub fn new(hidden: bool) -> Self {
+        Self { hidden }
+    }
+
+    fn or_mask(self, shown: impl FnOnce() -> String) -> String {
+        if self.hidden {
+            MASK.to_string()
+        } else {
+            shown()
+        }
+    }
+
+    /// `format_brl` (absoluto, com centavos).
+    pub fn brl(self, minor: i64) -> String {
+        self.or_mask(|| format_brl(minor))
+    }
+
+    /// `signed_brl`: `−` so no negativo. Oculto nao mostra o sinal (como o `signedBRL` do app:
+    /// o sinal ja diz de que lado o valor caiu).
+    pub fn signed(self, minor: i64) -> String {
+        self.or_mask(|| signed_brl(minor))
+    }
+
+    /// `signed_brl_plus`: `+` no zero e no positivo.
+    pub fn signed_plus(self, minor: i64) -> String {
+        self.or_mask(|| signed_brl_plus(minor))
+    }
+
+    /// `whole_brl`: reais inteiros, para estimativas.
+    pub fn whole(self, minor: i64) -> String {
+        self.or_mask(|| whole_brl(minor))
+    }
+
+    /// Reais inteiros com `−` so no negativo ("R$ 387 até agora" no historico).
+    pub fn signed_whole(self, minor: i64) -> String {
+        self.or_mask(|| {
+            let sign = if minor < 0 { MINUS } else { "" };
+            format!("{sign}{}", whole_brl(minor))
+        })
+    }
+
+    /// `compactBRL` do app: sem ",00" quando redondo, com centavos quando nao ("R$ 200",
+    /// "R$ 333,33"). Para valores exatos, onde arredondar mostraria o que nao foi movido.
+    pub fn compact(self, minor: i64) -> String {
+        if minor % 100 == 0 {
+            self.whole(minor)
+        } else {
+            self.brl(minor)
+        }
+    }
+
+    /// Rotulo do eixo ("R$ 5 mil").
+    pub fn axis(self, minor: i64) -> String {
+        if self.hidden {
+            AXIS_MASK.to_string()
+        } else {
+            axis_label(minor)
+        }
+    }
+
+    /// Valor grande com centavos ("R$" "386" ",59"), sinal so no negativo.
+    pub fn big(self, minor: i64) -> BigMoney {
+        if self.hidden {
+            return BigMoney {
+                sign: "",
+                currency: "R$",
+                whole: MASK_DIGITS.to_string(),
+                cents: String::new(),
+            };
+        }
+        let parts = money_parts(minor);
+        BigMoney {
+            sign: parts.sign,
+            currency: "R$",
+            whole: parts.whole,
+            cents: format!(",{}", parts.cents),
+        }
+    }
+
+    /// Valor grande em reais inteiros ("R$" "2.624"), meio para cima como `whole_brl`.
+    pub fn big_whole(self, minor: i64) -> BigMoney {
+        if self.hidden {
+            return self.big(minor);
+        }
+        let abs = minor.unsigned_abs();
+        BigMoney {
+            sign: if minor < 0 { MINUS } else { "" },
+            currency: "R$",
+            whole: group_thousands(abs / 100 + u64::from(abs % 100 >= 50)),
+            cents: String::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formatador_visivel_repete_as_funcoes_soltas() {
+        let m = Money::new(false);
+        assert_eq!(m.brl(38_659), "R$ 386,59");
+        assert_eq!(m.signed(-30_000), "\u{2212}R$ 300,00");
+        assert_eq!(m.signed_plus(10_000), "+R$ 100,00");
+        assert_eq!(m.whole(11_776), "R$ 118");
+        assert_eq!(m.signed_whole(-38_659), "\u{2212}R$ 387");
+        assert_eq!(m.signed_whole(38_659), "R$ 387");
+        assert_eq!(m.compact(20_000), "R$ 200");
+        assert_eq!(m.compact(33_333), "R$ 333,33");
+        assert_eq!(m.axis(250_000), "R$ 2,5 mil");
+        let big = m.big(38_659);
+        assert_eq!(
+            (
+                big.sign,
+                big.currency,
+                big.whole.as_str(),
+                big.cents.as_str()
+            ),
+            ("", "R$", "386", ",59")
+        );
+        assert_eq!(big.text(), "R$ 386,59");
+        assert_eq!(m.big(-5).text(), "\u{2212}R$ 0,05");
+        let free = m.big_whole(262_400);
+        assert_eq!((free.whole.as_str(), free.cents.as_str()), ("2.624", ""));
+        assert_eq!(m.big_whole(-150).text(), "\u{2212}R$ 2");
+    }
+
+    #[test]
+    fn formatador_oculto_troca_todo_valor_pela_mascara() {
+        let m = Money::new(true);
+        for text in [
+            m.brl(38_659),
+            m.signed(-30_000),
+            m.signed_plus(10_000),
+            m.whole(11_776),
+            m.signed_whole(-38_659),
+            m.compact(20_000),
+            m.compact(33_333),
+        ] {
+            assert_eq!(text, "R$ •••••");
+        }
+        assert_eq!(m.axis(500_000), "•••");
+        let big = m.big(-38_659);
+        assert_eq!(
+            (big.sign, big.whole.as_str(), big.cents.as_str()),
+            ("", "•••••", "")
+        );
+        assert_eq!(m.big_whole(262_400), big);
+    }
 
     #[test]
     fn formata_absoluto() {

@@ -2,8 +2,8 @@
 //! e a lista de movimentacoes, tudo puro e a partir do `Dataset`.
 //!
 //! Movimentacao de reserva nunca entra em receita nem despesa: `aggregate.rs` e `list.rs` so
-//! leem `transactions`, e o teste `reservas_nao_entram_no_dashboard_nem_nos_lancamentos` de
-//! `view.rs` prova isso. A unica leitura de `transactions` aqui e o custo essencial.
+//! leem `transactions`; os testes `view::reservas_nao_entram_nos_lancamentos` e
+//! `grafite::movimentos_de_reserva_so_mudam_o_card_da_reserva` provam isso. A unica leitura de `transactions` aqui e o custo essencial.
 
 use super::contract::{Kind, MovementKind, ReserveKind};
 use super::dataset::{Dataset, Reserve, ReserveMovement};
@@ -702,6 +702,230 @@ pub fn movements(dataset: &Dataset, months: &[String]) -> (Vec<MovementRow>, usi
         })
         .collect();
     (rows, total)
+}
+
+/// Movimentos vivos de `month`, de **qualquer** reserva, inclusive apagada ou ausente: o conjunto
+/// de `savedInMonth` do app. Diferente de `alive_reserve_movements` (tela Reservas, decisao 13):
+/// o dinheiro mudou de lugar de fato, e a retirada final gravada na exclusao e quem o devolve;
+/// filtrar por reserva viva faria o mes antigo "ganhar" de volta o que foi guardado nela.
+fn movements_in_month<'a>(
+    dataset: &'a Dataset,
+    month: &'a str,
+) -> impl Iterator<Item = &'a ReserveMovement> + 'a {
+    dataset
+        .reserve_movements
+        .values()
+        .filter(move |m| !m.deleted && month_of(&m.occurred_on) == month)
+}
+
+/// `savedInMonth` do app: o liquido guardado no mes (depositos menos retiradas). E a linha "R$
+/// 200 saíram das reservas neste mes" do Dashboard; a tela Reservas mantem
+/// `ReserveTotals::saved_this_month_minor` (so depositos, so reservas vivas).
+pub fn saved_in_month(dataset: &Dataset, month: &str) -> i64 {
+    movements_in_month(dataset, month).fold(0i64, |acc, m| acc.saturating_add(signed(m)))
+}
+
+/// "Neste mes" do card de reserva: soma bruta de depositos e de retiradas do mes (o mesmo
+/// conjunto de `saved_in_month`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MonthMovements {
+    pub deposited_minor: i64,
+    /// Positivo: a tela poe o menos.
+    pub withdrawn_minor: i64,
+}
+
+pub fn month_movements(dataset: &Dataset, month: &str) -> MonthMovements {
+    let mut out = MonthMovements::default();
+    for m in movements_in_month(dataset, month) {
+        match m.kind {
+            MovementKind::Deposit => {
+                out.deposited_minor = out.deposited_minor.saturating_add(m.amount_minor)
+            }
+            MovementKind::Withdrawal => {
+                out.withdrawn_minor = out.withdrawn_minor.saturating_add(m.amount_minor)
+            }
+        }
+    }
+    out
+}
+
+/// "Proximo marco: 1 mes (R$ 2.500) · faltam R$ 2.150" (spec 2.2 e 7.14, inventada).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Milestone {
+    /// Meses de custo do marco (1..=multiple).
+    pub months: u8,
+    pub target_minor: i64,
+    pub missing_minor: i64,
+}
+
+/// `marco = min(floor(cobertura) + 1, multiple) x custo`; `faltam = marco - saldo`. Inteiro
+/// (`saldo / custo`), nao a `coverage` em `f64`: o marco decide texto. No ultimo segmento o marco
+/// e a propria meta. `None` sem custo, sem meta ou com a meta alcancada ("Meta alcançada").
+pub fn next_milestone(view: &EmergencyView) -> Option<Milestone> {
+    let cost = view
+        .cost
+        .as_ref()
+        .map(|c| c.total_minor)
+        .filter(|c| *c > 0)?;
+    if view.goal_minor <= 0 || view.balance_minor >= view.goal_minor {
+        return None;
+    }
+    let done = view.balance_minor.max(0) / cost;
+    let months = done.saturating_add(1).min(i64::from(view.multiple));
+    let target_minor = months.saturating_mul(cost);
+    Some(Milestone {
+        months: u8::try_from(months).unwrap_or(view.multiple),
+        target_minor,
+        missing_minor: target_minor.saturating_sub(view.balance_minor),
+    })
+}
+
+#[cfg(test)]
+mod grafite_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::dashboard::dataset::{RESERVE_MOVEMENTS, RESERVES};
+    use crate::dashboard::periods::month_of;
+    use crate::dashboard::{GRAFITE_TODAY, dataset_of, fixtures_grafite};
+
+    fn emergency() -> EmergencyView {
+        let ds = fixtures_grafite();
+        let (r, _) = ordered(&ds);
+        emergency_view(&ds, r.expect("emergencia"), &month_of(GRAFITE_TODAY))
+    }
+
+    #[test]
+    fn sairam_das_reservas() {
+        // 3.2: 10000 - 30000 = -20000 -> "R$ 200 saíram".
+        assert_eq!(saved_in_month(&fixtures_grafite(), "2026-11"), -20_000);
+    }
+
+    #[test]
+    fn neste_mes_guardado_e_retirado() {
+        assert_eq!(
+            month_movements(&fixtures_grafite(), "2026-11"),
+            MonthMovements {
+                deposited_minor: 10_000,
+                withdrawn_minor: 30_000,
+            }
+        );
+        assert_eq!(
+            month_movements(&fixtures_grafite(), "2026-10"),
+            MonthMovements {
+                deposited_minor: 70_000,
+                withdrawn_minor: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn saved_in_month_inclui_reserva_apagada() {
+        let goal = json!({ "kind": "goal", "name": "X", "icon": "gift", "color": "rose" });
+        let mv = |reserve: &str, amount: i64, on: &str| json!({ "reserveId": reserve, "amountMinor": amount, "occurredOn": on });
+        let ds = dataset_of(vec![
+            (RESERVES, "A", false, goal.clone()),
+            (RESERVES, "B", true, goal),
+            (
+                RESERVE_MOVEMENTS,
+                "m1",
+                false,
+                mv("A", 50_000, "2026-09-03"),
+            ),
+            (
+                RESERVE_MOVEMENTS,
+                "m2",
+                false,
+                mv("B", 20_000, "2026-09-05"),
+            ),
+            (
+                RESERVE_MOVEMENTS,
+                "m3",
+                false,
+                mv("A", -10_000, "2026-09-20"),
+            ),
+            (RESERVE_MOVEMENTS, "m4", true, mv("A", 99_999, "2026-09-21")),
+            (
+                RESERVE_MOVEMENTS,
+                "m5",
+                false,
+                mv("A", 30_000, "2026-08-01"),
+            ),
+        ]);
+        assert_eq!(saved_in_month(&ds, "2026-09"), 60_000);
+        assert_eq!(saved_in_month(&ds, "2026-08"), 30_000);
+        // A tela Reservas continua sem a reserva apagada (decisao 13).
+        assert_eq!(
+            totals(&ds, &["2026-09".to_string()]).saved_this_month_minor,
+            50_000
+        );
+    }
+
+    #[test]
+    fn cobertura() {
+        // 3.2: 35000 / 250000 = 0,14 -> "0,1"; segmento 1 = 0,14.
+        let v = emergency();
+        assert_eq!(v.balance_minor, 35_000);
+        assert_eq!(v.coverage_label, "0,1");
+        assert_eq!(v.segments.len(), 6);
+        assert!((v.segments[0] - 0.14).abs() < 1e-6);
+        assert_eq!(v.goal_minor, 1_500_000);
+    }
+
+    #[test]
+    fn marco() {
+        // 3.2: min(0 + 1, 6) x 250000; faltam 250000 - 35000.
+        assert_eq!(
+            next_milestone(&emergency()),
+            Some(Milestone {
+                months: 1,
+                target_minor: 250_000,
+                missing_minor: 215_000,
+            })
+        );
+    }
+
+    #[test]
+    fn marco_no_ultimo_segmento_e_a_meta_e_some_com_a_meta_alcancada() {
+        let mut v = emergency();
+        v.balance_minor = 1_300_000;
+        assert_eq!(
+            next_milestone(&v),
+            Some(Milestone {
+                months: 6,
+                target_minor: 1_500_000,
+                missing_minor: 200_000,
+            })
+        );
+        v.balance_minor = 1_500_000;
+        assert_eq!(next_milestone(&v), None);
+        v.balance_minor = -5_000;
+        assert_eq!(next_milestone(&v).map(|m| m.missing_minor), Some(255_000));
+        v.cost = None;
+        assert_eq!(next_milestone(&v), None);
+    }
+
+    #[test]
+    fn eta() {
+        // 3.2: ceil((1500000 - 35000) / 55000) = 27; nov 2026 + 27 = fev 2029.
+        assert_eq!(
+            emergency().eta,
+            EmergencyEta::Projected {
+                month: "2029-02".into()
+            }
+        );
+    }
+
+    #[test]
+    fn casamento() {
+        // 3.2: div_ceil(135000, 12 x 100) x 100 = 11300 -> "~R$ 113/mês".
+        let ds = fixtures_grafite();
+        let (_, pots) = ordered(&ds);
+        let row = pot_row(&ds, pots[0], &month_of(GRAFITE_TODAY), None);
+        assert_eq!(row.name, "Casamento");
+        assert_eq!(row.balance_minor, 15_000);
+        assert_eq!(row.pace, Pace::NoRecurring { needed: 11_300 });
+    }
 }
 
 #[cfg(test)]

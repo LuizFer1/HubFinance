@@ -1,28 +1,27 @@
-//! Graficos em `canvas`: rosca de gastos por categoria, barras de receita x despesa e o
+//! Graficos em `canvas`: ritmo de gastos, medidores com marca, historico de 12 meses e o
 //! esqueleto tracejado do estado "Sem dados" (Dashboard); barras empilhadas da evolucao e o
 //! medidor tracejado do estado vazio (Reservas).
 //!
-//! A geometria fica num `canvas::Cache` que a `App` limpa quando dados, mes, hover da legenda
-//! ou tema mudam; o hover das barras e estado do proprio `Program` e e desenhado num segundo
-//! `Frame`, sem cache, para passar o mouse nao refazer o grafico inteiro.
-
-use std::f32::consts::{FRAC_PI_2, TAU};
+//! A geometria fica num `canvas::Cache` que a `App` limpa quando dados, mes, tema ou "Ocultar
+//! valores" mudam (os rotulos em R$ ficam gravados na geometria); o hover das barras e estado
+//! do proprio `Program` e e desenhado num segundo `Frame`, sem cache, para passar o mouse nao
+//! refazer o grafico inteiro.
 
 use iced::alignment::Vertical;
 use iced::border::Radius;
 use iced::mouse;
 use iced::widget::canvas::{
-    self, Action, Event, Frame, Geometry, LineDash, Path, Stroke, Text, path::Arc,
+    self, Action, Event, Frame, Geometry, LineDash, LineJoin, Path, Stroke, Text,
 };
 use iced::widget::text::{Alignment as TextAlign, LineHeight, Shaping};
-use iced::{Color, Pixels, Point, Radians, Rectangle, Renderer, Size, Theme};
+use iced::{Color, Pixels, Point, Rectangle, Renderer, Size, Theme};
 
 use super::app::Message;
+use super::fonts;
 use super::theme::{Tokens, alpha};
-use super::{fonts, measure};
-use crate::dashboard::aggregate::{MonthTotals, Slice};
-use crate::dashboard::money::{axis_label, format_brl, signed_brl};
-use crate::dashboard::periods::{month_label, month_label_capitalized, month_short};
+use crate::dashboard::grafite::{HistoryChart, HistoryColumn, PaceChart};
+use crate::dashboard::money::{axis_label, format_brl};
+use crate::dashboard::periods::{month_label_capitalized, month_short};
 use crate::dashboard::reserves::{ReserveColor, ReserveSeries};
 
 /// Texto de canvas na Inter Hub (o canvas nao herda a fonte padrao da aplicacao).
@@ -53,176 +52,6 @@ fn clip_chars(s: &str, max: usize) -> String {
     }
 }
 
-// ---- rosca ----
-
-/// Raio e traco no `viewBox` 100 do prototipo; folga de 1,2 u de circunferencia entre fatias.
-const DONUT_RADIUS: f32 = 40.0;
-const DONUT_STROKE: f32 = 11.0;
-const DONUT_STROKE_HOVER: f32 = 13.0;
-const DONUT_GAP: f32 = 1.2 / DONUT_RADIUS;
-/// Folga minima, em px, entre o valor do miolo e a borda de dentro do anel.
-const DONUT_CLEARANCE: f32 = 8.0;
-/// Tamanhos do valor do miolo, do design (17) para baixo.
-const DONUT_VALUE_SIZES: [f32; 6] = [17.0, 16.0, 15.0, 14.0, 13.0, 12.0];
-/// Meia altura do valor em em, a partir do centro da caixa de linha: digitos sobem 0,73 em da
-/// base e a virgula desce; 0,45 cobre os dois com a base onde a Inter a poe na linha de 1,3.
-const DONUT_VALUE_HALF_HEIGHT: f32 = 0.45;
-/// Nome da categoria no miolo (com hover): 14 caracteres de 11 px cabem na corda a 19 px do
-/// centro sem encostar no anel.
-const DONUT_NAME_CHARS: usize = 14;
-
-pub struct DonutProgram<'a> {
-    pub slices: &'a [Slice],
-    pub total_minor: i64,
-    /// Chave da fatia sob o mouse na legenda.
-    pub hover: Option<&'a str>,
-    pub tokens: &'static Tokens,
-    pub cache: &'a canvas::Cache,
-}
-
-/// Tamanho do valor do miolo para `value` caber no circulo de dentro com `DONUT_CLEARANCE` de
-/// folga, numa rosca de escala `scale` (lado / 100). Conta com o traco do hover, o mais grosso:
-/// o valor da fatia sob o mouse usa a mesma linha.
-pub fn donut_value_size(value: &str, scale: f32) -> f32 {
-    let limit = (DONUT_RADIUS - DONUT_STROKE_HOVER / 2.0) * scale - DONUT_CLEARANCE;
-    DONUT_VALUE_SIZES
-        .iter()
-        .copied()
-        .find(|size| {
-            let half_width = measure::medium_width(value, *size) / 2.0;
-            // O valor fica 1 px abaixo do centro.
-            let half_height = 1.0 + DONUT_VALUE_HALF_HEIGHT * size;
-            half_width.hypot(half_height) <= limit
-        })
-        .unwrap_or(DONUT_VALUE_SIZES[DONUT_VALUE_SIZES.len() - 1])
-}
-
-/// Angulos (inicio, fim) de cada fatia, em radianos, a partir das 12 h no sentido horario. A
-/// folga fica no fim de cada fatia, limitada ao tamanho dela; com fatia unica nao ha folga
-/// (o anel fecha).
-pub fn donut_angles(shares: &[f64]) -> Vec<(f32, f32)> {
-    let mut start = -FRAC_PI_2;
-    let gap_on = shares.len() > 1;
-    shares
-        .iter()
-        .map(|share| {
-            let sweep = (*share as f32).clamp(0.0, 1.0) * TAU;
-            let gap = if gap_on { DONUT_GAP.min(sweep) } else { 0.0 };
-            let arc = (start, start + sweep - gap);
-            start += sweep;
-            arc
-        })
-        .collect()
-}
-
-impl canvas::Program<Message> for DonutProgram<'_> {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &(),
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let t = self.tokens;
-        vec![self.cache.draw(renderer, bounds.size(), |frame| {
-            let s = bounds.width.min(bounds.height) / 100.0;
-            let center = frame.center();
-            let radius = DONUT_RADIUS * s;
-            frame.stroke(
-                &Path::circle(center, radius),
-                Stroke::default()
-                    .with_color(t.neutral_900)
-                    .with_width(DONUT_STROKE * s),
-            );
-            let shares: Vec<f64> = self.slices.iter().map(|sl| sl.share).collect();
-            for (slice, (start, end)) in self.slices.iter().zip(donut_angles(&shares)) {
-                if end - start <= f32::EPSILON {
-                    continue;
-                }
-                let active = self.hover == Some(slice.key.as_str());
-                let faded = self.hover.is_some() && !active;
-                let color = t.token(&slice.color);
-                let color = if faded { alpha(color, 0.28) } else { color };
-                let width = if active {
-                    DONUT_STROKE_HOVER
-                } else {
-                    DONUT_STROKE
-                } * s;
-                let path = if end - start >= TAU - 1e-4 {
-                    Path::circle(center, radius)
-                } else {
-                    Path::new(|b| {
-                        b.arc(Arc {
-                            center,
-                            radius,
-                            start_angle: Radians(start),
-                            end_angle: Radians(end),
-                        });
-                    })
-                };
-                frame.stroke(&path, Stroke::default().with_color(color).with_width(width));
-            }
-            let (top, middle, bottom) =
-                donut_center_lines(self.slices, self.total_minor, self.hover);
-            let muted = t.text_alpha(0.55);
-            frame.fill_text(label(
-                clip_chars(&top, DONUT_NAME_CHARS),
-                Point::new(center.x, center.y - 19.0),
-                11.0,
-                muted,
-            ));
-            let size = donut_value_size(&middle, s);
-            frame.fill_text(Text {
-                font: fonts::INTER_MEDIUM,
-                ..label(middle, Point::new(center.x, center.y + 1.0), size, t.text)
-            });
-            frame.fill_text(label(
-                bottom,
-                Point::new(center.x, center.y + 19.0),
-                11.0,
-                muted,
-            ));
-        })]
-    }
-}
-
-/// Miolo da rosca: "Despesas" / total / "N categorias"; com hover, nome / valor / "X% do mês".
-pub fn donut_center_lines(
-    slices: &[Slice],
-    total_minor: i64,
-    hover: Option<&str>,
-) -> (String, String, String) {
-    match hover.and_then(|key| slices.iter().find(|s| s.key == key)) {
-        Some(slice) => (
-            slice.name.clone(),
-            format_brl(slice.amount_minor),
-            format!("{}% do mês", percent(slice.share)),
-        ),
-        None => (
-            "Despesas".to_string(),
-            format_brl(total_minor),
-            categories_label(slices.len()),
-        ),
-    }
-}
-
-/// "1 categoria" / "4 categorias".
-pub fn categories_label(n: usize) -> String {
-    if n == 1 {
-        "1 categoria".to_string()
-    } else {
-        format!("{n} categorias")
-    }
-}
-
-/// Porcentagem inteira como o `Math.round(f * 100)` do prototipo.
-pub fn percent(share: f64) -> i64 {
-    (share * 100.0 + 0.5).floor() as i64
-}
-
 // ---- barras ----
 
 /// Coluna do eixo Y, faixa dos rotulos dos meses e respiro no topo para o rotulo de cima.
@@ -233,17 +62,6 @@ const AXIS_W: f32 = 68.0;
 const AXIS_PAD: f32 = 8.0;
 const LABELS_H: f32 = 24.0;
 const TOP: f32 = 6.0;
-const BAR_W: f32 = 14.0;
-const BAR_GAP: f32 = 4.0;
-
-pub struct BarsProgram<'a> {
-    pub bars: &'a [MonthTotals],
-    pub axis_top: i64,
-    /// Indice do mes escolhido no seletor (o ultimo das seis barras).
-    pub selected: usize,
-    pub tokens: &'static Tokens,
-    pub cache: &'a canvas::Cache,
-}
 
 /// Area util das barras dentro do canvas.
 pub fn plot_area(size: Size) -> Rectangle {
@@ -276,203 +94,6 @@ fn bar_height(value: i64, top: i64, plot_h: f32) -> f32 {
         return 0.0;
     }
     ((value as f32 / top as f32).clamp(0.0, 1.0)) * plot_h
-}
-
-impl canvas::Program<Message> for BarsProgram<'_> {
-    /// Mes sob o cursor.
-    type State = Option<usize>;
-
-    fn update(
-        &self,
-        state: &mut Option<usize>,
-        event: &Event,
-        bounds: Rectangle,
-        cursor: mouse::Cursor,
-    ) -> Option<Action<Message>> {
-        if !matches!(event, Event::Mouse(_)) {
-            return None;
-        }
-        let hovered = cursor
-            .position_in(bounds)
-            .and_then(|p| bar_column(p, bounds.size(), self.bars.len()));
-        if hovered == *state {
-            return None;
-        }
-        *state = hovered;
-        Some(Action::request_redraw())
-    }
-
-    fn draw(
-        &self,
-        state: &Option<usize>,
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let t = self.tokens;
-        let size = bounds.size();
-        let plot = plot_area(size);
-        let columns = self.bars.len().max(1);
-        let col_w = plot.width / columns as f32;
-        let chart = self.cache.draw(renderer, size, |frame| {
-            let grid = t.divider();
-            let muted = t.text_alpha(0.50);
-            let marks = [
-                (plot.y, axis_label(self.axis_top)),
-                (plot.y + plot.height / 2.0, axis_label(self.axis_top / 2)),
-                (plot.y + plot.height, axis_label(0)),
-            ];
-            for (y, text) in marks {
-                frame.fill_rectangle(
-                    Point::new(plot.x, y.round() - 0.5),
-                    Size::new(plot.width, 1.0),
-                    grid,
-                );
-                frame.fill_text(Text {
-                    align_x: TextAlign::Right,
-                    ..label(text, Point::new(AXIS_W - AXIS_PAD, y), 11.0, muted)
-                });
-            }
-            for (i, bar) in self.bars.iter().enumerate() {
-                let selected = i == self.selected;
-                let opacity = if selected { 1.0 } else { 0.55 };
-                let x0 = plot.x + i as f32 * col_w + (col_w - 2.0 * BAR_W - BAR_GAP) / 2.0;
-                let base = plot.y + plot.height;
-                for (k, (value, color)) in
-                    [(bar.income_minor, t.income), (bar.expense_minor, t.expense)]
-                        .into_iter()
-                        .enumerate()
-                {
-                    let h = bar_height(value, self.axis_top, plot.height);
-                    if h <= 0.0 {
-                        continue;
-                    }
-                    let x = x0 + k as f32 * (BAR_W + BAR_GAP);
-                    frame.fill(
-                        &Path::rounded_rectangle(
-                            Point::new(x, base - h),
-                            Size::new(BAR_W, h),
-                            Radius {
-                                top_left: 3.0,
-                                top_right: 3.0,
-                                bottom_right: 0.0,
-                                bottom_left: 0.0,
-                            },
-                        ),
-                        alpha(color, opacity),
-                    );
-                }
-                let month = Text {
-                    font: if selected {
-                        fonts::INTER_MEDIUM
-                    } else {
-                        fonts::INTER
-                    },
-                    ..label(
-                        month_short(&bar.month).to_string(),
-                        Point::new(plot.x + (i as f32 + 0.5) * col_w, size.height - 8.0),
-                        12.0,
-                        if selected { t.text } else { t.text_alpha(0.55) },
-                    )
-                };
-                frame.fill_text(month);
-            }
-        });
-        let mut geometries = vec![chart];
-        if let Some(i) = *state
-            && let Some(bar) = self.bars.get(i)
-        {
-            let mut overlay = Frame::new(renderer, size);
-            draw_bar_hover(&mut overlay, t, bar, i, col_w, plot, self.axis_top, size);
-            geometries.push(overlay.into_geometry());
-        }
-        geometries
-    }
-}
-
-/// Fundo a 5 % na coluna e o tooltip.
-#[allow(clippy::too_many_arguments)]
-fn draw_bar_hover(
-    frame: &mut Frame,
-    t: &'static Tokens,
-    bar: &MonthTotals,
-    i: usize,
-    col_w: f32,
-    plot: Rectangle,
-    top: i64,
-    size: Size,
-) {
-    let col_x = plot.x + i as f32 * col_w;
-    frame.fill(
-        &Path::rounded_rectangle(
-            Point::new(col_x, plot.y),
-            Size::new(col_w, plot.height),
-            Radius {
-                top_left: 6.0,
-                top_right: 6.0,
-                bottom_right: 0.0,
-                bottom_left: 0.0,
-            },
-        ),
-        t.text_alpha(0.05),
-    );
-    let lines = [
-        (month_label(&bar.month), t.text, fonts::INTER_MEDIUM),
-        (
-            format!("+{}", format_brl(bar.income_minor)),
-            t.income_fg,
-            fonts::INTER,
-        ),
-        (
-            format!("\u{2212}{}", format_brl(bar.expense_minor)),
-            t.expense_fg,
-            fonts::INTER,
-        ),
-        (
-            format!("Sobrou {}", signed_brl(bar.net_minor())),
-            t.text_alpha(0.60),
-            fonts::INTER,
-        ),
-    ];
-    // Largura estimada (o canvas nao mede texto): ~7 px por caractere em 12 px tabular.
-    let longest = lines
-        .iter()
-        .map(|(s, _, _)| s.chars().count())
-        .max()
-        .unwrap_or(0);
-    let line_h = 15.0;
-    let gap = 3.0;
-    let box_w = longest as f32 * 7.0 + 20.0;
-    let box_h = 4.0 * line_h + 3.0 * gap + 16.0;
-    let tallest = bar_height(bar.income_minor.max(bar.expense_minor), top, plot.height);
-    let bar_top = plot.y + plot.height - tallest;
-    let (x, y) = tooltip_origin(
-        Size::new(box_w, box_h),
-        col_x,
-        col_w,
-        bar_top,
-        plot.y,
-        size.width,
-    );
-    let rect = Path::rounded_rectangle(Point::new(x, y), Size::new(box_w, box_h), 8.0.into());
-    // Fundo `bg` como o prototipo (`var(--color-bg)`), contorno de 1 px do `shadow-md`; o
-    // canvas nao tem sombra.
-    frame.fill(&rect, t.bg);
-    frame.stroke(
-        &rect,
-        Stroke::default()
-            .with_color(t.shadow_md_ring())
-            .with_width(1.0),
-    );
-    for (k, (content, color, font)) in lines.into_iter().enumerate() {
-        let ly = y + 8.0 + k as f32 * (line_h + gap) + line_h / 2.0;
-        frame.fill_text(Text {
-            align_x: TextAlign::Left,
-            font,
-            ..label(content, Point::new(x + 10.0, ly), 12.0, color)
-        });
-    }
 }
 
 /// Onde fica o tooltip (canto superior esquerdo). O do prototipo sai por cima do grafico; o
@@ -681,7 +302,7 @@ impl canvas::Program<Message> for StackedBarsProgram<'_> {
         // e redesenhar 12 pilhas por quadro e barato.
         let chart = self.cache.draw(renderer, size, |frame| {
             let grid = t.divider();
-            let muted = t.text_alpha(0.50);
+            let muted = t.text_muted;
             let marks = [
                 (plot.y, axis_label(self.axis_top)),
                 (plot.y + plot.height / 2.0, axis_label(self.axis_top / 2)),
@@ -710,7 +331,7 @@ impl canvas::Program<Message> for StackedBarsProgram<'_> {
                         month_short(month).to_string(),
                         Point::new(plot.x + (i as f32 + 0.5) * col_w, size.height - 8.0),
                         12.0,
-                        if current { t.text } else { t.text_alpha(0.55) },
+                        if current { t.text } else { t.text_muted },
                     )
                 });
             }
@@ -948,6 +569,696 @@ impl canvas::Program<Message> for EmptyReservesProgram<'_> {
     }
 }
 
+// ---- ritmo de gastos ----
+
+/// Coluna do eixo y (54 do design) e o respiro ate a area do grafico.
+const PACE_AXIS_W: f32 = 54.0;
+const PACE_AXIS_GAP: f32 = 10.0;
+/// Faixa dos rotulos a direita ("~R$ 4.460", "normal R$ 3.662"): o `padding-right: 108px`.
+const PACE_RIGHT: f32 = 108.0;
+const PACE_PLOT_H: f32 = 290.0;
+/// Respiro no topo: o rotulo de cima do eixo fica centrado na linha do teto e o canvas corta o
+/// que passa da borda (no HTML ele transborda para o padding).
+const PACE_TOP: f32 = 6.0;
+/// 10 de espaco + 16 da faixa dos dias.
+const PACE_X_LABELS: f32 = 26.0;
+pub const PACE_HEIGHT: f32 = PACE_TOP + PACE_PLOT_H + PACE_X_LABELS;
+/// Distancia minima entre os centros dos dois rotulos da direita (12 px a 1,3 de altura + 0,4).
+const PACE_LABEL_GAP: f32 = 16.0;
+
+/// Area das linhas dentro do canvas do ritmo.
+pub fn pace_plot(size: Size) -> Rectangle {
+    let x = PACE_AXIS_W + PACE_AXIS_GAP;
+    Rectangle {
+        x,
+        y: PACE_TOP,
+        width: (size.width - x - PACE_RIGHT).max(0.0),
+        height: PACE_PLOT_H.min((size.height - PACE_TOP - PACE_X_LABELS).max(0.0)),
+    }
+}
+
+/// x do dia `day` (1 = primeiro): `day / days` da largura, como o `viewBox` 300 do design (dia
+/// 1 em 10, ultimo dia na borda direita).
+pub fn day_x(day: usize, days: usize, plot: Rectangle) -> f32 {
+    if days == 0 {
+        return plot.x;
+    }
+    plot.x + plot.width * (day as f32 / days as f32)
+}
+
+/// y de uma fracao do teto (0 embaixo, 1 no topo), sem sair da area.
+pub fn value_y(v: f32, plot: Rectangle) -> f32 {
+    plot.y + plot.height * (1.0 - v.clamp(0.0, 1.0))
+}
+
+/// Um ponto por dia: `values[0]` e o dia 1.
+pub fn pace_points(values: &[f32], days: usize, plot: Rectangle) -> Vec<Point> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| Point::new(day_x(i + 1, days, plot), value_y(*v, plot)))
+        .collect()
+}
+
+/// Reta tracejada da previsao: do acumulado no dia do corte ate a despesa prevista no ultimo
+/// dia (fracoes do teto).
+pub fn forecast_segment(
+    cutoff: usize,
+    days: usize,
+    (from, to): (f32, f32),
+    plot: Rectangle,
+) -> (Point, Point) {
+    (
+        Point::new(day_x(cutoff, days, plot), value_y(from, plot)),
+        Point::new(day_x(days, days, plot), value_y(to, plot)),
+    )
+}
+
+/// Centro do rotulo "renda R$ X": 12 px acima da linha, como o design; sem espaco acima (renda
+/// no teto do eixo, que e multiplo de R$ 2.500 e pode ser a propria renda) desce para baixo da
+/// linha, senao o canvas cortaria o rotulo.
+pub fn income_label_y(line_y: f32) -> f32 {
+    const OFFSET: f32 = 12.0;
+    /// Meia altura do texto de 12 px a 1,3.
+    const HALF: f32 = 8.0;
+    if line_y - OFFSET - HALF >= 0.0 {
+        line_y - OFFSET
+    } else {
+        line_y + OFFSET
+    }
+}
+
+/// Afasta dois rotulos (centros em y) que se encostariam: cada um anda metade do que falta,
+/// sem sair de `[top, bottom]`. Previsao e normal no fim do mes costumam estar perto.
+pub fn separate_labels(a: f32, b: f32, min_gap: f32, top: f32, bottom: f32) -> (f32, f32) {
+    let d = (a - b).abs();
+    if d >= min_gap {
+        return (a, b);
+    }
+    let push = (min_gap - d) / 2.0;
+    let (a, b) = if a <= b {
+        (a - push, b + push)
+    } else {
+        (a + push, b - push)
+    };
+    let down = (top - a.min(b)).max(0.0);
+    let up = (a.max(b) - bottom).max(0.0);
+    let shift = down - up;
+    (a + shift, b + shift)
+}
+
+fn polyline(points: &[Point]) -> Path {
+    Path::new(|b| {
+        if let Some((first, rest)) = points.split_first() {
+            b.move_to(*first);
+            for p in rest {
+                b.line_to(*p);
+            }
+        }
+    })
+}
+
+fn dashed<'a>(color: Color, width: f32, segments: &'a [f32]) -> Stroke<'a> {
+    Stroke {
+        line_dash: LineDash {
+            segments,
+            offset: 0,
+        },
+        ..Stroke::default().with_color(color).with_width(width)
+    }
+}
+
+/// "Ritmo de gastos": eixo, grade, renda, area e linha do mes, normal e previsao tracejados,
+/// marcador de hoje, rotulos a direita e dias embaixo. Tudo no `Cache`: o grafico nao tem
+/// hover, e os rotulos em R$ vem prontos (mascarados) do modelo, por isso o cache e limpo
+/// quando "Ocultar valores" muda.
+pub struct PaceProgram<'a> {
+    pub chart: &'a PaceChart,
+    /// Mes corrente: linha vertical, marcador e rotulo "hoje".
+    pub today: bool,
+    pub tokens: &'static Tokens,
+    pub cache: &'a canvas::Cache,
+}
+
+impl canvas::Program<Message> for PaceProgram<'_> {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let t = self.tokens;
+        let c = self.chart;
+        let size = bounds.size();
+        let plot = pace_plot(size);
+        let geometry = self.cache.draw(renderer, size, |frame| {
+            let muted = t.text_muted;
+            for (k, text) in c.y_labels.iter().enumerate() {
+                let y = plot.y + plot.height * k as f32 / 2.0;
+                let grid = if k == 2 { t.neutral_800 } else { t.neutral_900 };
+                frame.fill_rectangle(
+                    Point::new(plot.x, y.round() - 0.5),
+                    Size::new(plot.width, 1.0),
+                    grid,
+                );
+                frame.fill_text(Text {
+                    align_x: TextAlign::Right,
+                    ..label(text.clone(), Point::new(PACE_AXIS_W, y), 11.0, muted)
+                });
+            }
+            if let Some(income) = c.income {
+                let y = value_y(income, plot).round() - 0.5;
+                frame.fill_rectangle(
+                    Point::new(plot.x, y),
+                    Size::new(plot.width, 1.0),
+                    alpha(t.income, 0.75),
+                );
+                if let Some(text) = &c.income_label {
+                    frame.fill_text(Text {
+                        align_x: TextAlign::Left,
+                        ..label(
+                            text.clone(),
+                            Point::new(plot.x, income_label_y(y)),
+                            12.0,
+                            t.income_fg,
+                        )
+                    });
+                }
+            }
+            if self.today && c.cutoff > 0 {
+                let x = day_x(c.cutoff, c.days, plot).round() + 0.5;
+                frame.stroke(
+                    &polyline(&[Point::new(x, plot.y), Point::new(x, plot.y + plot.height)]),
+                    dashed(t.neutral_600, 1.0, &[2.0, 3.0]),
+                );
+            }
+            let current = pace_points(&c.current, c.days, plot);
+            if let (Some(first), Some(last)) = (current.first(), current.last()) {
+                let bottom = plot.y + plot.height;
+                let area = Path::new(|b| {
+                    b.move_to(*first);
+                    for p in &current[1..] {
+                        b.line_to(*p);
+                    }
+                    b.line_to(Point::new(last.x, bottom));
+                    b.line_to(Point::new(first.x, bottom));
+                    b.close();
+                });
+                frame.fill(&area, alpha(t.accent, 0.16));
+            }
+            let normal = pace_points(&c.normal, c.days, plot);
+            if normal.len() > 1 {
+                frame.stroke(&polyline(&normal), dashed(t.neutral_500, 1.5, &[4.0, 4.0]));
+            }
+            let forecast = c
+                .forecast
+                .map(|f| forecast_segment(c.cutoff, c.days, f, plot));
+            if let Some((a, b)) = forecast {
+                frame.stroke(&polyline(&[a, b]), dashed(t.accent, 1.5, &[5.0, 4.0]));
+            }
+            if current.len() > 1 {
+                frame.stroke(
+                    &polyline(&current),
+                    Stroke::default()
+                        .with_color(t.accent)
+                        .with_width(2.0)
+                        .with_line_join(LineJoin::Round),
+                );
+            }
+            if self.today
+                && let Some(p) = current.last()
+            {
+                frame.stroke(
+                    &Path::circle(*p, 7.0),
+                    Stroke::default()
+                        .with_color(alpha(t.accent, 0.35))
+                        .with_width(4.0),
+                );
+                frame.fill(&Path::circle(*p, 5.0), t.text);
+            }
+            // Rotulos a direita: fim da previsao e fim do normal, afastados se encostarem.
+            let right = plot.x + plot.width + 10.0;
+            let forecast_y = forecast.map(|(_, b)| b.y);
+            let normal_y = normal.last().map(|p| p.y);
+            let (fy, ny) = match (forecast_y, normal_y) {
+                (Some(f), Some(n)) => {
+                    let (f, n) =
+                        separate_labels(f, n, PACE_LABEL_GAP, plot.y, plot.y + plot.height);
+                    (Some(f), Some(n))
+                }
+                other => other,
+            };
+            for (y, text, color) in [
+                (fy, c.forecast_label.as_ref(), t.accent_300),
+                (ny, c.normal_label.as_ref(), muted),
+            ] {
+                if let (Some(y), Some(text)) = (y, text) {
+                    frame.fill_text(Text {
+                        align_x: TextAlign::Left,
+                        ..label(text.clone(), Point::new(right, y), 12.0, color)
+                    });
+                }
+            }
+            let label_y = plot.y + plot.height + 10.0 + 8.0;
+            for (day, text) in &c.x_labels {
+                let is_today = self.today && *day == c.cutoff;
+                let color = if is_today { t.text } else { muted };
+                let last = *day == c.days;
+                let x = if last {
+                    plot.x + plot.width
+                } else {
+                    day_x(*day, c.days, plot)
+                };
+                frame.fill_text(Text {
+                    align_x: if last {
+                        TextAlign::Right
+                    } else {
+                        TextAlign::Center
+                    },
+                    ..label(text.clone(), Point::new(x, label_y), 12.0, color)
+                });
+            }
+        });
+        vec![geometry]
+    }
+}
+
+// ---- medidor ----
+
+/// Barra de progresso com marcas pontilhadas (meta nas linhas "em atenção", 50% e 70% no
+/// comprometido). Sem `Cache`: sao poucos retangulos, e um cache por linha teria de viver na
+/// `App` (um cache so para medidores de mesmo tamanho repetiria a geometria do primeiro).
+pub struct MeterProgram {
+    pub fill: f32,
+    pub fill_color: Color,
+    pub track: Color,
+    /// Altura da barra (4 nas categorias, 6 no comprometido).
+    pub bar: f32,
+    /// Posicao (0..=1) e rotulo embaixo (vazio = sem rotulo).
+    pub marks: Vec<(f32, String)>,
+    pub mark_color: Color,
+    pub label_color: Color,
+}
+
+/// A marca sobe 4 px acima da barra e desce 4 abaixo (o `top: -4px` do design).
+const METER_OVERHANG: f32 = 4.0;
+/// Faixa dos rotulos das marcas: 6 de espaco + 14.
+const METER_LABELS: f32 = 20.0;
+
+impl MeterProgram {
+    /// Altura do canvas para este medidor.
+    pub fn height(&self) -> f32 {
+        let labels = self.marks.iter().any(|(_, l)| !l.is_empty());
+        self.bar + 2.0 * METER_OVERHANG + if labels { METER_LABELS } else { 0.0 }
+    }
+}
+
+/// Largura do preenchimento e x de cada marca numa barra de `width`.
+pub fn meter_geometry(width: f32, fill: f32, marks: &[f32]) -> (f32, Vec<f32>) {
+    let at = |f: f32| width * f.clamp(0.0, 1.0);
+    (at(fill), marks.iter().map(|m| at(*m)).collect())
+}
+
+impl canvas::Program<Message> for MeterProgram {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let width = bounds.width;
+        let y = METER_OVERHANG;
+        let r = self.bar / 2.0;
+        let positions: Vec<f32> = self.marks.iter().map(|(m, _)| *m).collect();
+        let (fill_w, xs) = meter_geometry(width, self.fill, &positions);
+        frame.fill(
+            &Path::rounded_rectangle(Point::new(0.0, y), Size::new(width, self.bar), r.into()),
+            self.track,
+        );
+        if fill_w > 0.0 {
+            frame.fill(
+                &Path::rounded_rectangle(
+                    Point::new(0.0, y),
+                    Size::new(fill_w, self.bar),
+                    r.min(fill_w / 2.0).into(),
+                ),
+                self.fill_color,
+            );
+        }
+        let mark_h = self.bar + 2.0 * METER_OVERHANG;
+        for (x, (_, text)) in xs.into_iter().zip(&self.marks) {
+            // Pontilhado de 2 px: o canvas corta a marca no limite, entao ela fica dentro.
+            let x = x.clamp(1.0, (width - 1.0).max(1.0));
+            frame.stroke(
+                &polyline(&[Point::new(x, 0.0), Point::new(x, mark_h)]),
+                dashed(self.mark_color, 2.0, &[2.0, 2.0]),
+            );
+            if !text.is_empty() {
+                frame.fill_text(label(
+                    text.clone(),
+                    Point::new(x, mark_h + METER_LABELS / 2.0),
+                    11.0,
+                    self.label_color,
+                ));
+            }
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
+// ---- amostra da legenda ----
+
+/// Traco de 14 px da legenda do ritmo (linha cheia ou tracejada).
+pub struct SwatchProgram {
+    pub color: Color,
+    pub width: f32,
+    pub dashed: bool,
+}
+
+impl canvas::Program<Message> for SwatchProgram {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let y = bounds.height / 2.0;
+        let line = polyline(&[Point::new(0.0, y), Point::new(bounds.width, y)]);
+        let stroke = if self.dashed {
+            dashed(self.color, self.width, &[4.0, 3.0])
+        } else {
+            Stroke::default()
+                .with_color(self.color)
+                .with_width(self.width)
+        };
+        frame.stroke(&line, stroke);
+        vec![frame.into_geometry()]
+    }
+}
+
+// ---- historico de 12 meses ----
+
+/// Eixo R$ a esquerda, eixo % a direita, respiro no topo e faixa dos meses.
+const HIST_AXIS_L: f32 = 52.0;
+const HIST_AXIS_R: f32 = 36.0;
+const HIST_TOP: f32 = 8.0;
+const HIST_LABELS: f32 = 22.0;
+pub const HISTORY_HEIGHT: f32 = 200.0;
+const HIST_BAR_GAP: f32 = 2.0;
+
+pub fn history_plot(size: Size) -> Rectangle {
+    Rectangle {
+        x: HIST_AXIS_L,
+        y: HIST_TOP,
+        width: (size.width - HIST_AXIS_L - HIST_AXIS_R).max(0.0),
+        height: (size.height - HIST_TOP - HIST_LABELS).max(0.0),
+    }
+}
+
+/// Coluna sob o ponto; fora da area util (ou sem colunas) -> `None`.
+pub fn history_column_at(point: Point, size: Size, columns: usize) -> Option<usize> {
+    let plot = history_plot(size);
+    if columns == 0 || plot.width <= 0.0 {
+        return None;
+    }
+    if point.x < plot.x || point.x >= plot.x + plot.width || point.y < 0.0 || point.y > size.height
+    {
+        return None;
+    }
+    let col = ((point.x - plot.x) / (plot.width / columns as f32)).floor() as usize;
+    Some(col.min(columns - 1))
+}
+
+/// Barras de receita e despesa de uma coluna; `None` antes do primeiro lancamento (coluna
+/// vazia: "nao existia", nao zero).
+pub fn history_bars(
+    column: &HistoryColumn,
+    i: usize,
+    columns: usize,
+    plot: Rectangle,
+) -> Option<[Rectangle; 2]> {
+    if !column.existed || columns == 0 {
+        return None;
+    }
+    let slot = plot.width / columns as f32;
+    let bar_w = ((slot * 0.7 - HIST_BAR_GAP) / 2.0).clamp(2.0, 10.0);
+    let x0 = plot.x + i as f32 * slot + (slot - 2.0 * bar_w - HIST_BAR_GAP) / 2.0;
+    let base = plot.y + plot.height;
+    let bar = |k: usize, v: f32| {
+        let h = plot.height * v.clamp(0.0, 1.0);
+        Rectangle {
+            x: x0 + k as f32 * (bar_w + HIST_BAR_GAP),
+            y: base - h,
+            width: bar_w,
+            height: h,
+        }
+    };
+    Some([bar(0, column.income), bar(1, column.expense)])
+}
+
+/// Barras receita x despesa dos 12 meses, linha da taxa de poupanca com eixo % a direita e a
+/// faixa tracejada do alvo. O hover desenha o tooltip pronto do modelo num `Frame` sem cache.
+pub struct HistoryProgram<'a> {
+    pub chart: &'a HistoryChart,
+    pub tokens: &'static Tokens,
+    pub cache: &'a canvas::Cache,
+}
+
+impl canvas::Program<Message> for HistoryProgram<'_> {
+    /// Coluna sob o cursor.
+    type State = Option<usize>;
+
+    fn update(
+        &self,
+        state: &mut Option<usize>,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<Action<Message>> {
+        if !matches!(event, Event::Mouse(_)) {
+            return None;
+        }
+        let hovered = cursor
+            .position_in(bounds)
+            .and_then(|p| history_column_at(p, bounds.size(), self.chart.columns.len()))
+            .filter(|i| {
+                self.chart
+                    .columns
+                    .get(*i)
+                    .is_some_and(|c| c.tooltip.is_some())
+            });
+        if hovered == *state {
+            return None;
+        }
+        *state = hovered;
+        Some(Action::request_redraw())
+    }
+
+    fn draw(
+        &self,
+        state: &Option<usize>,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let t = self.tokens;
+        let c = self.chart;
+        let size = bounds.size();
+        let plot = history_plot(size);
+        let n = c.columns.len();
+        let slot = if n == 0 { 0.0 } else { plot.width / n as f32 };
+        let chart = self.cache.draw(renderer, size, |frame| {
+            let muted = t.text_muted;
+            for (k, text) in c.y_labels.iter().enumerate() {
+                let y = plot.y + plot.height * k as f32 / 2.0;
+                let grid = if k == 2 { t.neutral_800 } else { t.neutral_900 };
+                frame.fill_rectangle(
+                    Point::new(plot.x, y.round() - 0.5),
+                    Size::new(plot.width, 1.0),
+                    grid,
+                );
+                frame.fill_text(Text {
+                    align_x: TextAlign::Right,
+                    ..label(text.clone(), Point::new(HIST_AXIS_L - 6.0, y), 11.0, muted)
+                });
+            }
+            let right = plot.x + plot.width + 6.0;
+            let [low, high] = &c.rate_labels;
+            for (y, text) in [(plot.y, high), (plot.y + plot.height, low)] {
+                frame.fill_text(Text {
+                    align_x: TextAlign::Left,
+                    ..label(text.clone(), Point::new(right, y), 11.0, muted)
+                });
+            }
+            let target_y = value_y(c.target, plot);
+            frame.stroke(
+                &polyline(&[
+                    Point::new(plot.x, target_y),
+                    Point::new(plot.x + plot.width, target_y),
+                ]),
+                dashed(t.neutral_500, 2.0, &[4.0, 4.0]),
+            );
+            frame.fill_text(Text {
+                align_x: TextAlign::Left,
+                ..label(
+                    c.target_label.clone(),
+                    Point::new(plot.x + 4.0, target_y - 9.0),
+                    11.0,
+                    muted,
+                )
+            });
+            for (i, col) in c.columns.iter().enumerate() {
+                if let Some(bars) = history_bars(col, i, n, plot) {
+                    for (rect, color) in bars.into_iter().zip([t.income, t.expense]) {
+                        if rect.height <= 0.0 {
+                            continue;
+                        }
+                        let path = Path::rounded_rectangle(
+                            rect.position(),
+                            rect.size(),
+                            Radius {
+                                top_left: 2.0,
+                                top_right: 2.0,
+                                bottom_right: 0.0,
+                                bottom_left: 0.0,
+                            },
+                        );
+                        if col.partial {
+                            frame
+                                .stroke(&path, Stroke::default().with_color(color).with_width(1.0));
+                        } else {
+                            frame.fill(&path, color);
+                        }
+                    }
+                }
+                let last = i + 1 == n;
+                let color = if !col.existed {
+                    alpha(muted, 0.4)
+                } else if last {
+                    t.text
+                } else {
+                    muted
+                };
+                frame.fill_text(Text {
+                    font: if last {
+                        fonts::INTER_MEDIUM
+                    } else {
+                        fonts::INTER
+                    },
+                    ..label(
+                        col.label.clone(),
+                        Point::new(plot.x + (i as f32 + 0.5) * slot, size.height - 9.0),
+                        11.0,
+                        color,
+                    )
+                });
+            }
+            // Taxa de poupanca: trechos ligam meses vizinhos com receita; ponto em cada um.
+            let points: Vec<Option<Point>> = c
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(i, col)| {
+                    col.rate
+                        .map(|r| Point::new(plot.x + (i as f32 + 0.5) * slot, value_y(r, plot)))
+                })
+                .collect();
+            for pair in points.windows(2) {
+                if let [Some(a), Some(b)] = pair {
+                    frame.stroke(
+                        &polyline(&[*a, *b]),
+                        Stroke::default().with_color(t.accent).with_width(2.0),
+                    );
+                }
+            }
+            for p in points.iter().flatten() {
+                frame.fill(&Path::circle(*p, 3.0), t.accent);
+            }
+        });
+        let mut geometries = vec![chart];
+        if let Some(i) = *state
+            && let Some(col) = c.columns.get(i)
+            && let Some(tip) = &col.tooltip
+        {
+            let mut overlay = Frame::new(renderer, size);
+            let col_x = plot.x + i as f32 * slot;
+            draw_column_highlight(&mut overlay, t, col_x, slot, plot);
+            let top =
+                history_bars(col, i, n, plot).map_or(plot.y + plot.height, |[a, b]| a.y.min(b.y));
+            draw_text_tooltip(&mut overlay, t, tip, (col_x, slot), top, plot, size);
+            geometries.push(overlay.into_geometry());
+        }
+        geometries
+    }
+}
+
+/// Tooltip de texto pronto: cada trecho separado por " · " vira uma linha, a primeira em
+/// Medium ("out 2026", "receitas R$ X"...). Largura estimada (o canvas nao mede texto).
+fn draw_text_tooltip(
+    frame: &mut Frame,
+    t: &'static Tokens,
+    tip: &str,
+    (col_x, col_w): (f32, f32),
+    bar_top: f32,
+    plot: Rectangle,
+    size: Size,
+) {
+    let lines: Vec<&str> = tip.split(" · ").collect();
+    let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    let line_h = 15.0;
+    let gap = 3.0;
+    let box_w = longest as f32 * 6.6 + 20.0;
+    let box_h = lines.len() as f32 * line_h + (lines.len().saturating_sub(1)) as f32 * gap + 16.0;
+    let (x, y) = tooltip_origin(
+        Size::new(box_w, box_h),
+        col_x,
+        col_w,
+        bar_top,
+        plot.y,
+        size.width,
+    );
+    let rect = Path::rounded_rectangle(Point::new(x, y), Size::new(box_w, box_h), 8.0.into());
+    frame.fill(&rect, t.surface);
+    frame.stroke(
+        &rect,
+        Stroke::default()
+            .with_color(t.shadow_md_ring())
+            .with_width(1.0),
+    );
+    for (k, line) in lines.into_iter().enumerate() {
+        let ly = y + 8.0 + k as f32 * (line_h + gap) + line_h / 2.0;
+        frame.fill_text(Text {
+            align_x: TextAlign::Left,
+            font: if k == 0 {
+                fonts::INTER_MEDIUM
+            } else {
+                fonts::INTER
+            },
+            ..label(
+                line.to_string(),
+                Point::new(x + 10.0, ly),
+                12.0,
+                if k == 0 { t.text } else { t.text_muted },
+            )
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use iced::widget::canvas::Program;
@@ -955,72 +1266,161 @@ mod tests {
     use super::*;
     use crate::ui::theme::DARK;
 
-    fn slice(key: &str, amount: i64, share: f64) -> Slice {
-        Slice {
-            key: key.into(),
-            name: format!("Cat {key}"),
-            color: "sky".into(),
-            icon: "tag".into(),
-            amount_minor: amount,
-            share,
+    #[test]
+    fn pace_points_x_por_dia_e_y_pelo_teto() {
+        let plot = pace_plot(Size::new(64.0 + 300.0 + 108.0, PACE_HEIGHT));
+        assert_eq!(
+            (plot.x, plot.y, plot.width, plot.height),
+            (64.0, 6.0, 300.0, 290.0)
+        );
+        let pts = pace_points(&[0.0, 0.5, 1.0, 1.4], 30, plot);
+        // Dia 1 em 10 de 300 (o `viewBox` do design), dia 3 em 30.
+        assert_eq!(pts[0], Point::new(74.0, 296.0));
+        assert_eq!(pts[1], Point::new(84.0, 151.0));
+        assert_eq!(pts[2], Point::new(94.0, 6.0));
+        // Passar do teto nao sai da area.
+        assert_eq!(pts[3].y, 6.0);
+        assert_eq!(day_x(30, 30, plot), 364.0);
+        assert_eq!(day_x(5, 0, plot), 64.0);
+    }
+
+    #[test]
+    fn previsao_vai_do_corte_ao_ultimo_dia() {
+        let plot = Rectangle::new(Point::new(0.0, 0.0), Size::new(300.0, 100.0));
+        let (a, b) = forecast_segment(19, 30, (0.623, 0.892), plot);
+        assert_eq!(a.x, 190.0);
+        assert!((a.y - 37.7).abs() < 0.01);
+        assert_eq!(b.x, 300.0);
+        assert!((b.y - 10.8).abs() < 0.01);
+    }
+
+    #[test]
+    fn rotulo_da_renda_desce_quando_a_renda_e_o_teto() {
+        let plot = pace_plot(Size::new(600.0, PACE_HEIGHT));
+        // Renda no meio: acima da linha.
+        let mid = value_y(0.5, plot);
+        assert_eq!(income_label_y(mid), mid - 12.0);
+        // Renda = teto (R$ 5.000 com eixo de R$ 5 mil): a linha fica a 6 px do topo do canvas.
+        let top = value_y(1.0, plot);
+        assert_eq!(top, 6.0);
+        assert_eq!(income_label_y(top), 18.0);
+    }
+
+    #[test]
+    fn rotulos_da_direita_se_afastam() {
+        // Longe: ficam.
+        assert_eq!(separate_labels(30.0, 80.0, 16.0, 0.0, 290.0), (30.0, 80.0));
+        // Perto: cada um anda metade do que falta.
+        assert_eq!(
+            separate_labels(100.0, 106.0, 16.0, 0.0, 290.0),
+            (95.0, 111.0)
+        );
+        assert_eq!(
+            separate_labels(106.0, 100.0, 16.0, 0.0, 290.0),
+            (111.0, 95.0)
+        );
+        // Encostado no topo: o par desce junto.
+        assert_eq!(separate_labels(2.0, 4.0, 16.0, 0.0, 290.0), (0.0, 16.0));
+        // E no fundo, sobe.
+        assert_eq!(
+            separate_labels(289.0, 290.0, 16.0, 0.0, 290.0),
+            (274.0, 290.0)
+        );
+    }
+
+    #[test]
+    fn marcas_do_medidor() {
+        // Meta nas linhas "em atenção": 1 / 1,3 da escala.
+        let (fill, marks) = meter_geometry(200.0, 0.5, &[1.0 / 1.3]);
+        assert_eq!(fill, 100.0);
+        assert!((marks[0] - 153.846).abs() < 0.01);
+        // Comprometido: 50% e 70%; preenchimento nunca passa da barra.
+        let (fill, marks) = meter_geometry(300.0, 1.7, &[0.5, 0.7]);
+        assert_eq!(fill, 300.0);
+        assert_eq!(marks, vec![150.0, 210.0]);
+        let meter = |labels: bool| MeterProgram {
+            fill: 0.25,
+            fill_color: Color::WHITE,
+            track: Color::BLACK,
+            bar: 6.0,
+            marks: vec![(0.5, if labels { "50%".into() } else { String::new() })],
+            mark_color: Color::WHITE,
+            label_color: Color::WHITE,
+        };
+        assert_eq!(meter(false).height(), 14.0);
+        assert_eq!(meter(true).height(), 34.0);
+    }
+
+    fn column(existed: bool, income: f32, expense: f32) -> HistoryColumn {
+        HistoryColumn {
+            label: "out".into(),
+            existed,
+            partial: false,
+            income,
+            expense,
+            rate: None,
+            tooltip: existed.then(|| "out 2026 · receitas R$ 1,00".into()),
         }
     }
 
     #[test]
-    fn angulos_da_rosca() {
-        let arcs = donut_angles(&[0.5, 0.5]);
-        assert!((arcs[0].0 + FRAC_PI_2).abs() < 1e-6, "comeca as 12 h");
-        assert!((arcs[0].1 - (FRAC_PI_2 - DONUT_GAP)).abs() < 1e-5);
-        assert!((arcs[1].0 - FRAC_PI_2).abs() < 1e-5);
-        // Fatia unica: anel inteiro, sem folga.
-        let one = donut_angles(&[1.0]);
-        assert!((one[0].1 - one[0].0 - TAU).abs() < 1e-5);
-        // Fatia menor que a folga: some, sem angulo negativo.
-        let tiny = donut_angles(&[0.999, 0.001]);
-        assert!(tiny[1].1 >= tiny[1].0);
-        assert!(donut_angles(&[]).is_empty());
+    fn doze_colunas_do_historico_vazias_antes_do_primeiro_mes() {
+        let size = Size::new(52.0 + 240.0 + 36.0, HISTORY_HEIGHT);
+        let plot = history_plot(size);
+        assert_eq!((plot.x, plot.width), (52.0, 240.0));
+        let cols: Vec<HistoryColumn> = (0..12).map(|i| column(i >= 9, 1.0, 0.5)).collect();
+        let bars: Vec<_> = cols
+            .iter()
+            .enumerate()
+            .map(|(i, c)| history_bars(c, i, 12, plot))
+            .collect();
+        assert!(bars[..9].iter().all(Option::is_none));
+        let [inc, exp] = bars[9].expect("outubro existe");
+        // Coluna 9 ocupa 52 + 9 x 20 .. +20; as duas barras centradas nela.
+        assert!(inc.x >= 52.0 + 180.0 && exp.x + exp.width <= 52.0 + 200.0);
+        assert_eq!(inc.height, plot.height);
+        assert_eq!(exp.height, plot.height / 2.0);
+        assert_eq!(inc.y + inc.height, plot.y + plot.height);
+        assert_eq!(history_column_at(Point::new(60.0, 50.0), size, 12), Some(0));
+        assert_eq!(history_column_at(Point::new(10.0, 50.0), size, 12), None);
+        assert_eq!(
+            history_column_at(Point::new(291.0, 50.0), size, 12),
+            Some(11)
+        );
+        assert_eq!(history_column_at(Point::new(292.0, 50.0), size, 12), None);
     }
 
     #[test]
-    fn valor_do_miolo_desce_ate_caber_com_folga() {
-        // Rosca de 184 px, como no Dashboard.
-        let scale = 1.84;
-        assert_eq!(donut_value_size("R$ 1.234,56", scale), 17.0);
-        assert_eq!(donut_value_size("R$ 390.071,31", scale), 14.0);
-        assert_eq!(donut_value_size("R$ 9.999.999,99", scale), 12.0);
-        let limit = (DONUT_RADIUS - DONUT_STROKE_HOVER / 2.0) * scale - DONUT_CLEARANCE;
-        for value in ["R$ 0,00", "R$ 390.071,31", "R$ 9.999.999,99"] {
-            let size = donut_value_size(value, scale);
-            let corner = (measure::medium_width(value, size) / 2.0)
-                .hypot(1.0 + DONUT_VALUE_HALF_HEIGHT * size);
-            assert!(corner <= limit, "{value} a {size}: {corner} > {limit}");
-        }
-    }
-
-    #[test]
-    fn miolo_da_rosca_com_e_sem_hover() {
-        let slices = [slice("A", 30_000, 0.75), slice("B", 10_000, 0.25)];
-        assert_eq!(
-            donut_center_lines(&slices, 40_000, None),
+    fn hover_do_historico_so_em_mes_com_tooltip() {
+        let cache = canvas::Cache::new();
+        let chart = HistoryChart {
+            columns: (0..12).map(|i| column(i >= 6, 0.8, 0.4)).collect(),
+            ..HistoryChart::default()
+        };
+        let program = HistoryProgram {
+            chart: &chart,
+            tokens: &DARK,
+            cache: &cache,
+        };
+        let bounds = Rectangle::new(Point::new(0.0, 0.0), Size::new(328.0, HISTORY_HEIGHT));
+        let moved = |x: f32| {
             (
-                "Despesas".to_string(),
-                "R$ 400,00".to_string(),
-                "2 categorias".to_string()
+                Event::Mouse(mouse::Event::CursorMoved {
+                    position: Point::new(x, 50.0),
+                }),
+                mouse::Cursor::Available(Point::new(x, 50.0)),
             )
-        );
-        assert_eq!(
-            donut_center_lines(&slices, 40_000, Some("B")),
-            (
-                "Cat B".to_string(),
-                "R$ 100,00".to_string(),
-                "25% do mês".to_string()
-            )
-        );
-        // Hover de uma chave que sumiu (mes trocou): volta ao total.
-        assert_eq!(donut_center_lines(&slices, 40_000, Some("Z")).0, "Despesas");
-        assert_eq!(categories_label(1), "1 categoria");
-        assert_eq!(percent(0.125), 13);
-        assert_eq!(percent(0.0), 0);
+        };
+        let mut state = None;
+        // Coluna 0 nao existia: sem tooltip, nada muda.
+        let (event, cursor) = moved(60.0);
+        assert!(program.update(&mut state, &event, bounds, cursor).is_none());
+        assert_eq!(state, None);
+        let (event, cursor) = moved(52.0 + 7.0 * 20.0 + 5.0);
+        assert!(program.update(&mut state, &event, bounds, cursor).is_some());
+        assert_eq!(state, Some(7));
+        let (event, cursor) = moved(52.0 + 7.0 * 20.0 + 15.0);
+        assert!(program.update(&mut state, &event, bounds, cursor).is_none());
     }
 
     #[test]
@@ -1046,51 +1446,6 @@ mod tests {
         assert_eq!(bar_column(Point::new(667.0, 205.0), size, 6), Some(5));
         assert_eq!(bar_column(Point::new(668.0, 100.0), size, 6), None);
         assert_eq!(bar_column(Point::new(300.0, 100.0), size, 0), None);
-    }
-
-    #[test]
-    fn hover_das_barras_so_redesenha_quando_muda() {
-        let cache = canvas::Cache::new();
-        let bars: Vec<MonthTotals> = (4..10)
-            .map(|m| MonthTotals {
-                month: format!("2026-{m:02}"),
-                income_minor: 100_000,
-                expense_minor: 50_000,
-            })
-            .collect();
-        let program = BarsProgram {
-            bars: &bars,
-            axis_top: 200_000,
-            selected: 5,
-            tokens: &DARK,
-            cache: &cache,
-        };
-        let bounds = Rectangle::new(Point::new(100.0, 300.0), Size::new(668.0, 210.0));
-        let moved = |x: f32, y: f32| {
-            (
-                Event::Mouse(mouse::Event::CursorMoved {
-                    position: Point::new(x, y),
-                }),
-                mouse::Cursor::Available(Point::new(x, y)),
-            )
-        };
-        let mut state = None;
-        let (event, cursor) = moved(100.0 + 176.0, 400.0);
-        assert!(program.update(&mut state, &event, bounds, cursor).is_some());
-        assert_eq!(state, Some(1));
-        // Mesma coluna: nada a redesenhar.
-        let (event, cursor) = moved(100.0 + 186.0, 410.0);
-        assert!(program.update(&mut state, &event, bounds, cursor).is_none());
-        // Saiu do canvas: some o tooltip.
-        let (event, cursor) = moved(10.0, 10.0);
-        assert!(program.update(&mut state, &event, bounds, cursor).is_some());
-        assert_eq!(state, None);
-        let left = Event::Mouse(mouse::Event::CursorLeft);
-        assert!(
-            program
-                .update(&mut state, &left, bounds, mouse::Cursor::Unavailable)
-                .is_none()
-        );
     }
 
     #[test]

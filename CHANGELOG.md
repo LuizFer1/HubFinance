@@ -6,6 +6,84 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [1.3.0] - 2026-11-19
+
+Nenhuma mudança no protocolo `/v1` nem no banco: o hub continua guardando JSON opaco e lê
+campos novos que o app já grava.
+
+### Adicionado
+
+- **Dashboard "Resumo da casa"** (design Grafite), por seções, na conta pessoal e na comercial:
+  - **Como estou:** saldo até hoje, previsão de fechamento do mês ("Vão sobrar ~R$ X no fim do
+    mês, se continuar no ritmo atual"), quanto dá para gastar por dia para fechar no zero, taxa
+    de poupança e o gráfico de **ritmo de gastos** contra o **seu normal** (média dos três meses
+    anteriores com dado), com o prolongamento tracejado até o fim do mês e a linha da renda.
+  - **Reserva de emergência** com o próximo marco e a meta final, o que entrou e saiu dela no mês
+    e as caixinhas com o quanto precisam por mês; **Histórico** de 12 meses com a sobra de cada
+    mês e a sobra média dos meses fechados.
+  - **Para onde foi:** "O plano cabe na renda?" (gasto fixo × variável e o comprometido da renda
+    fixa, com marcas de 50 % e 70 %), metas em atenção e as demais categorias, com a seta "↑ do
+    normal" quando a categoria passa do que costuma gastar.
+  - **O que vem** (só no mês corrente): quanto fica livre no mês que vem, quanto o gasto
+    variável ainda pode levar e as **próximas saídas** da conta, com as **faturas de cartão** a
+    vencer em 30 dias antes das recorrências.
+  - **Últimos lançamentos** e **Quem lançou** (despesas e receitas por pessoa no mês).
+  - Botões de informação explicam as contas; "Ver reservas" e "Ver todos" levam às telas.
+- **Projeção de recorrência** igual à do app: ocorrências por vir de séries mensais, semanais,
+  quinzenais e mais espaçadas, reajustes de valor, primeira parcela, série "valor varia"
+  estimada pelas últimas ocorrências e o comprometido do mês. A ocorrência que o app já gravou é
+  achada pelo id estável e nunca conta duas vezes.
+- **Faturas de cartão** calculadas dos lançamentos no cartão (fechamento e vencimento do app);
+  a aberta aparece como estimativa ("~").
+- **Ocultar valores:** o olho no cabeçalho do Dashboard troca todo valor por "R$ •••••" (e os
+  rótulos dos eixos por "•••"); as porcentagens ficam. A escolha fica no `ui.json`
+  (`hide_values`), gravada só quando ligada.
+- Lateral e cabeçalho novos em todas as telas: marca em tile, contagens na navegação, seção
+  "Hub" com Conexão, card de status com halo; cabeçalho com o chip "Parcial" no mês corrente, o
+  seletor Pessoal | Comercial e o mês ("Nov 2026").
+- **Contrato ampliado** (todo campo novo é lido sem derrubar a linha; valor que não dá para
+  interpretar só deixa a série fora da projeção):
+  - `transactions`: `estimated` e `occurrenceKey`;
+  - `recurrences`: `kind`, `description`, `amountMinor`, `categoryId`, `paymentMethodId`,
+    `scheduleType`, `scheduleN`, `startOn`, `endOn`, `active`, `variable`, `firstAmountMinor`,
+    `userId` (série de app antigo, só com `frequency`, continua válida);
+  - `paymentMethods`: `kind`, `bank`, `closingDay`, `dueDay` (cartão completo);
+  - tabela nova `recurrenceAdjustments` (reajustes): linha sem `recurrenceId`, `fromPeriod` ou
+    `amountMinor` vai para as linhas ignoradas.
+
+### Alterado
+
+- **Paleta Grafite** em todas as telas, nos dois temas: cinzas neutros, acento dourado e
+  **atenção em laranja** (`warning`), que deixa de ser o âmbar das categorias; texto em Inter
+  Light nos números grandes. Receita, despesa e as cores de categoria e pessoa não mudam.
+- O Dashboard antigo sai: barra dividida, rosca de categorias, cards de receitas e despesas com
+  "±X% vs. mês" e barras dos últimos seis meses.
+- Texto secundário de Conexão, Lançamentos, Reservas, remover aparelho, menus e toasts passa a
+  ter contraste de pelo menos 4,5:1 nos dois temas; pontos de estado (hub desligado, aparelho
+  fora) e ícones apagados, pelo menos 3:1. O avatar de quem não tem cor de perfil fica legível no
+  tema claro.
+- `scripts/seed-dashboard.sh` semeia recorrências (fixas, valor varia, semanal, parcelada, com
+  reajuste), um cartão completo, metas, transferência, reservas e a conta comercial com bens e
+  dívidas; `DRY_RUN=1` só imprime o lote.
+
+### Corrigido
+
+- **Conta comercial num hub de verdade.** A 1.2.0 só carregava no dashboard as oito tabelas
+  antigas: `books`, `assets` e `debts` (e os reajustes) nunca chegavam à tela, então o seletor
+  Pessoal | Comercial e o bloco "Negócio" não apareciam fora dos testes. O hub agora carrega as
+  doze; como relê tudo no boot, atualizar o binário basta para as linhas que já estão no banco
+  aparecerem.
+
+### Atualizar
+
+Os números novos (ritmo contra o seu normal, previsão, taxa de poupança, fixo × variável,
+"↑ do normal", faturas em "Próximas saídas") seguem regras que o app ganha na mesma fase: o hub
+e o celular só mostram os mesmos valores com os dois atualizados. Hub novo com app antigo
+funciona (as séries sem os campos novos ficam fora da projeção); app novo com hub antigo também
+(o hub antigo ignora os campos e mostra o Dashboard antigo).
+
+## [1.2.0] - 2026-11-12
+
 Nenhuma mudança no protocolo `/v1` nem no banco: o hub continua guardando JSON opaco.
 
 ### Adicionado
@@ -249,7 +327,9 @@ campo da 0.0.2 acontece.
 - Scripts `scripts/e2e.sh` (roteiro curl de pareamento e sync) e `scripts/seed-dashboard.sh`
   (carga de exemplo do dashboard).
 
-[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.1.0...HEAD
+[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/LuizFer1/HubFinance/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/LuizFer1/HubFinance/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/LuizFer1/HubFinance/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/LuizFer1/HubFinance/compare/v0.0.5...v1.0.0
 [0.0.5]: https://github.com/LuizFer1/HubFinance/compare/v0.0.4...v0.0.5

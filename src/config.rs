@@ -87,6 +87,15 @@ pub struct UiPrefs {
     /// para o `ui.json` da 1.0.0 continuar identico ate alguem mexer na opcao.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autostart: Option<bool>,
+    /// "Ocultar valores" do Dashboard (spec 7.4): local a este PC, nunca sincronizado, como o
+    /// tema. Desligado nao vai para o arquivo, pelo mesmo motivo do `autostart`: o `ui.json`
+    /// de quem nunca usou o olho fica igual ao de antes.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hide_values: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 const UI_PREFS_FILE: &str = "ui.json";
@@ -202,6 +211,35 @@ mod tests {
         assert_eq!(UiPrefs::load(dir.path()), prefs);
         let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
         assert!(raw.contains("\"autostart\": false"), "{raw}");
+    }
+
+    #[test]
+    fn hide_values_ausente_no_arquivo_antigo_vale_false() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ui.json"),
+            r#"{"theme":"light","autostart":false}"#,
+        )
+        .unwrap();
+        let prefs = UiPrefs::load(dir.path());
+        assert_eq!(prefs.theme, ThemeMode::Light);
+        assert!(!prefs.hide_values);
+        prefs.save(dir.path()).unwrap();
+        let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
+        assert!(!raw.contains("hide_values"), "{raw}");
+    }
+
+    #[test]
+    fn hide_values_ligado_grava_e_le_de_volta() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefs = UiPrefs {
+            hide_values: true,
+            ..UiPrefs::default()
+        };
+        prefs.save(dir.path()).unwrap();
+        assert_eq!(UiPrefs::load(dir.path()), prefs);
+        let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
+        assert!(raw.contains("\"hide_values\": true"), "{raw}");
     }
 
     #[test]

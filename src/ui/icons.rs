@@ -14,20 +14,14 @@ pub const HOUSE_LINE: &str = "\u{E2C4}";
 pub const CHART_PIE_SLICE: &str = "\u{E15A}";
 pub const LIST_BULLETS: &str = "\u{E2F2}";
 pub const QR_CODE: &str = "\u{E3E6}";
-pub const MOON: &str = "\u{E330}";
-pub const SUN: &str = "\u{E472}";
 pub const MINUS: &str = "\u{E32A}";
 pub const SQUARE: &str = "\u{E45E}";
 pub const X: &str = "\u{E4F6}";
 pub const CARET_LEFT: &str = "\u{E138}";
 pub const CARET_RIGHT: &str = "\u{E13A}";
 pub const CARET_DOWN: &str = "\u{E136}";
-pub const CLOCK: &str = "\u{E19A}";
 pub const TREND_UP: &str = "\u{E4AE}";
 pub const TREND_DOWN: &str = "\u{E4AC}";
-pub const ARROW_DOWN_LEFT: &str = "\u{E040}";
-pub const ARROW_UP_RIGHT: &str = "\u{E092}";
-pub const ARROW_RIGHT: &str = "\u{E06C}";
 pub const CHECK: &str = "\u{E182}";
 pub const FUNNEL_X: &str = "\u{E26C}";
 pub const REPEAT: &str = "\u{E3F6}";
@@ -86,28 +80,25 @@ pub const WIFI_HIGH: &str = "\u{E4EA}";
 pub const LIGHTNING: &str = "\u{E2DE}";
 pub const INFO: &str = "\u{E2CE}";
 pub const ARROW_SQUARE_OUT: &str = "\u{E5DE}";
+/// Olho do cabecalho: `eye` com valores visiveis, `eye-slash` com valores ocultos.
+pub const EYE: &str = "\u{E220}";
+pub const EYE_SLASH: &str = "\u{E224}";
 
 /// Todas as constantes, para o teste garantir que nenhuma ficou vazia.
 #[cfg(test)]
-pub const ALL: [&str; 71] = [
+pub const ALL: [&str; 67] = [
     HOUSE_LINE,
     CHART_PIE_SLICE,
     LIST_BULLETS,
     QR_CODE,
-    MOON,
-    SUN,
     MINUS,
     SQUARE,
     X,
     CARET_LEFT,
     CARET_RIGHT,
     CARET_DOWN,
-    CLOCK,
     TREND_UP,
     TREND_DOWN,
-    ARROW_DOWN_LEFT,
-    ARROW_UP_RIGHT,
-    ARROW_RIGHT,
     CHECK,
     FUNNEL_X,
     REPEAT,
@@ -161,6 +152,8 @@ pub const ALL: [&str; 71] = [
     LIGHTNING,
     INFO,
     ARROW_SQUARE_OUT,
+    EYE,
+    EYE_SLASH,
 ];
 
 /// As 36 chaves de `HomeFinance_Mobile/src/features/icons/icon-set.ts`.

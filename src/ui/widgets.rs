@@ -42,14 +42,49 @@ pub fn seg_switch<'a, M: Clone + 'a>(
         .into()
 }
 
-/// Rotulo em frase normal ("Saldo do mês"), 12 Medium a 55 %. Desvio do handoff, que pede
+/// Segmentado Grafite (tema, Pessoal | Comercial): trilho `surface` raio 8 com 4 px de
+/// respiro, opcoes de 36 px em 13 Regular. `fill` divide a largura (seletor de tema da lateral);
+/// sem ele cada opcao tem o tamanho do rotulo + 14 px de cada lado (cabecalho).
+pub fn segmented<'a, M: Clone + 'a>(
+    t: &'static Tokens,
+    fill: bool,
+    options: [(&'static str, bool, M); 2],
+) -> Element<'a, M> {
+    let option = |(label, active, message): (&'static str, bool, M)| {
+        let content = container(text(label).size(13).line_height(1.0))
+            .height(36)
+            .align_y(Alignment::Center);
+        let content = if fill {
+            content.center_x(Length::Fill)
+        } else {
+            content.padding([0, 14])
+        };
+        let b = button(content)
+            .padding(0)
+            .style(theme::segment(t, active))
+            .on_press(message);
+        if fill { b.width(Length::Fill) } else { b }
+    };
+    let [a, b] = options;
+    let line = row![option(a), option(b)].spacing(4);
+    let rail = container(if fill { line.width(Length::Fill) } else { line })
+        .padding(4)
+        .style(theme::fill(t.surface, 8.0));
+    if fill {
+        rail.width(Length::Fill).into()
+    } else {
+        rail.into()
+    }
+}
+
+/// Rotulo em frase normal ("Saldo do mês"), 12 Medium em `text_muted`. Desvio do handoff, que pede
 /// caixa alta com `letter-spacing`: sem o espacamento (o iced nao tem) a caixa alta ficava
 /// apertada e gritava mais que o valor embaixo. O texto vai como a tela passou.
 pub fn kicker<'a, M: 'a>(t: &'static Tokens, content: &str) -> Element<'a, M> {
     text(content.to_string())
         .size(12)
         .font(fonts::INTER_MEDIUM)
-        .color(t.text_alpha(0.55))
+        .color(t.text_muted)
         .into()
 }
 
@@ -62,23 +97,22 @@ pub fn kicker_accent<'a, M: 'a>(t: &'static Tokens, content: &str) -> Element<'a
         .into()
 }
 
-/// Titulo da pagina (28 Medium) + subtitulo (13 a 55 %), separados por 4 px.
+/// Titulo da pagina (30 Regular, altura 1,1) + subtitulo (13 `text_muted`), separados por 6
+/// px, como o `h1` do design Grafite. O `letter-spacing: -0.02em` do design fica de fora: o
+/// iced nao tem espacamento de letra.
 pub fn page_title<'a, M: 'a>(t: &'static Tokens, title: &str, subtitle: &str) -> Element<'a, M> {
     iced::widget::column![
         text(title.to_string())
-            .size(28)
-            .font(fonts::INTER_MEDIUM)
-            .line_height(1.15)
+            .size(30)
+            .line_height(1.1)
             .color(t.text),
-        text(subtitle.to_string())
-            .size(13)
-            .color(t.text_alpha(0.55)),
+        text(subtitle.to_string()).size(13).color(t.text_muted),
     ]
-    .spacing(4)
+    .spacing(6)
     .into()
 }
 
-/// Titulo de card (15 Medium) com um aparte a direita (12 a 55 %).
+/// Titulo de card (15 Medium) com um aparte a direita (12 em `text_muted`).
 pub fn card_title<'a, M: 'a>(
     t: &'static Tokens,
     title: &str,
@@ -94,7 +128,7 @@ pub fn card_title<'a, M: 'a>(
     .align_y(Alignment::End)
     .spacing(12);
     if let Some(aside) = aside {
-        line = line.push(text(aside).size(12).color(t.text_alpha(0.55)));
+        line = line.push(text(aside).size(12).color(t.text_muted));
     }
     line.into()
 }
@@ -141,7 +175,8 @@ pub fn avatar<'a, M: 'a>(
     photo: Option<&image::Handle>,
     size: f32,
 ) -> Element<'a, M> {
-    let color = token.map_or(t.neutral_600, |tk| t.token(tk));
+    let (neutral, neutral_initial) = t.avatar_neutral();
+    let (color, initial_color) = token.map_or((neutral, neutral_initial), |tk| (t.token(tk), t.bg));
     if let Some(handle) = photo {
         let ring = 1.5;
         let gap = 2.0;
@@ -173,7 +208,7 @@ pub fn avatar<'a, M: 'a>(
             .size(initial_size(size))
             .font(fonts::INTER_SEMIBOLD)
             .line_height(1.0)
-            .color(t.bg),
+            .color(initial_color),
     )
     .center(size)
     .style(theme::fill(color, size / 2.0))
@@ -203,8 +238,8 @@ pub fn color_tag<'a, M: 'a>(t: &'static Tokens, token: &str) -> Element<'a, M> {
     .into()
 }
 
-/// Passo numerado: circulo de 20 px (`accent_900` / `accent_300`, 11 SemiBold) + texto 13 a
-/// 75 % (o texto vem pronto, pode ter link no meio).
+/// Passo numerado: circulo de 20 px (`accent_900` / `accent_300`, 11 SemiBold) + texto 13 no
+/// apoio (o texto vem pronto, pode ter link no meio).
 pub fn step<'a, M: 'a>(t: &'static Tokens, n: u8, content: Element<'a, M>) -> Element<'a, M> {
     let number = container(
         text(n.to_string())
@@ -221,12 +256,12 @@ pub fn step<'a, M: 'a>(t: &'static Tokens, n: u8, content: Element<'a, M>) -> El
         .into()
 }
 
-/// Texto de passo: 13 a 75 %, altura de linha 1,45 do prototipo.
+/// Texto de passo: 13 no texto de apoio (`text_soft`), altura de linha 1,45 do prototipo.
 pub fn step_text<'a>(t: &'static Tokens, content: impl text::IntoFragment<'a>) -> text::Text<'a> {
     text(content)
         .size(13)
         .line_height(1.45)
-        .color(t.text_alpha(0.75))
+        .color(t.text_soft())
 }
 
 /// Separador vertical de 1 x 20 no divisor, com 4 px de margem dos lados.
@@ -280,34 +315,27 @@ pub fn money_big<'a, M: 'a>(
     .into()
 }
 
-/// Tag "Parcial · até 24 set": pilula de 24 px em `accent_900` com `clock` e texto 11 Medium
-/// em `accent_300`. Avisa que o mes corrente ainda pode crescer.
-pub fn partial_tag<'a, M: 'a>(t: &'static Tokens, until: &str) -> Element<'a, M> {
+/// Chip "Parcial · até 19 nov" (texto pronto do modelo): pilula `accent_900` com 12 Regular em
+/// `accent_300`, 7 x 12 de respiro. Avisa que o mes corrente ainda pode crescer.
+pub fn partial_tag<'a, M: 'a>(t: &'static Tokens, label: &str) -> Element<'a, M> {
     container(
-        row![
-            icons::icon(icons::CLOCK, 11.0, t.accent_300),
-            text(format!("Parcial · até {until}"))
-                .size(11)
-                .font(fonts::INTER_MEDIUM)
-                .line_height(1.0)
-                .color(t.accent_300),
-        ]
-        .spacing(5)
-        .align_y(Alignment::Center),
+        text(label.to_string())
+            .size(12)
+            .line_height(1.0)
+            .color(t.accent_300),
     )
-    .height(24)
-    .padding([0, 9])
-    .align_y(Alignment::Center)
+    .padding([7, 12])
     .style(theme::fill(t.accent_900, 999.0))
     .into()
 }
 
-/// Largura do rotulo do seletor de mes. O prototipo pede `min-width: 116`; o iced nao tem
-/// largura minima, entao e fixa (o mes mais longo, "Fevereiro 2026", cabe com folga).
-const MONTH_LABEL_WIDTH: f32 = 116.0;
+/// Largura do rotulo do seletor de mes ("Nov 2026" em 14 Medium mais os 4 px de cada lado).
+/// Fixa para as setas nao andarem quando o mes troca ("Mai" e mais estreito que "Nov").
+const MONTH_LABEL_WIDTH: f32 = 76.0;
 
-/// Seletor de mes: 36 px, superficie, borda no divisor, raio 8; setas de 34 px e o mes em 13
-/// Medium no meio. Seta sem mensagem (limite da janela) fica a 30 % e nao reage.
+/// Seletor de mes Grafite: contorno de 1 px em `neutral_800`, raio 8, sem fundo; setas de 44 x
+/// 42 no texto de apoio e o mes ("Nov 2026") em 14 Medium no meio. Seta sem mensagem (limite
+/// da janela) vai a `neutral_600`, como a seta apagada do design, e nao reage.
 pub fn month_picker<'a, M: Clone + 'a>(
     t: &'static Tokens,
     label: &str,
@@ -316,13 +344,13 @@ pub fn month_picker<'a, M: Clone + 'a>(
 ) -> Element<'a, M> {
     let arrow = |glyph: &'static str, message: Option<M>| {
         let color = if message.is_some() {
-            t.text
+            t.text_soft()
         } else {
-            t.text_alpha(0.30)
+            t.neutral_600
         };
-        button(container(icons::icon(glyph, 14.0, color)).center(Length::Fill))
-            .width(34)
-            .height(Length::Fill)
+        button(container(icons::icon(glyph, 16.0, color)).center(Length::Fill))
+            .width(44)
+            .height(42)
             .padding(0)
             .style(theme::plain(color))
             .on_press_maybe(message)
@@ -332,19 +360,17 @@ pub fn month_picker<'a, M: Clone + 'a>(
             arrow(icons::CARET_LEFT, prev),
             container(
                 text(label.to_string())
-                    .size(13)
+                    .size(14)
                     .font(fonts::INTER_MEDIUM)
                     .color(t.text)
             )
-            .width(MONTH_LABEL_WIDTH)
             .center_x(MONTH_LABEL_WIDTH),
             arrow(icons::CARET_RIGHT, next),
         ]
-        .height(Length::Fill)
         .align_y(Alignment::Center),
     )
-    .height(36)
-    .style(theme::card_inset(t))
+    .padding(1)
+    .style(theme::outlined(t.neutral_800, 8.0))
     .into()
 }
 

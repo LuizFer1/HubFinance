@@ -13,7 +13,7 @@ use super::contract::{
     self, AssetKind, Book, Card, ContractError, Kind, MovementKind, RecurrenceRule, ReportState,
     ReserveKind,
 };
-use super::ids::stable_entity_id;
+use super::ids::{stable_entity_id_v1, stable_entity_id_v2};
 
 /// Uma linha como a store guarda: `id` e `deleted_at` vem das colunas ja validadas pela
 /// fatia 1; `data` e o JSON opaco do app.
@@ -330,8 +330,10 @@ impl OccurrenceIndex<'_> {
     /// 1. alguma transacao, viva ou tombstone, tem `recurrence_id == series` e
     ///    `occurrence_key == key` (em qualquer id: v1, v2 ou outro). Apagada conta: ocorrencia
     ///    removida pelo usuario nao volta pela regra;
-    /// 2. o lugar v1 da chave e uma linha fora do contrato: ilegivel, pode ser a ocorrencia, e
-    ///    projetar de novo contaria em dobro. O lugar v2 entra com `stable_entity_id_v2`;
+    /// 2. o lugar v1 **ou v2** da chave e uma linha fora do contrato: ilegivel, pode ser a
+    ///    ocorrencia, e projetar de novo contaria em dobro. O v2 entra porque o app grava ali
+    ///    quando o v1 e de outro fato (spec 4.2); sem ele, uma ocorrencia v2 ilegivel voltaria
+    ///    como "por vir";
     /// 3. a linha no lugar v1 (viva ou apagada) nao contradiz a chave: nenhum de
     ///    `recurrence_id`/`occurrence_key` esta preenchido com outro valor. Sem os dois e o
     ///    "ambiguo" da spec (ocorrencia de antes do campo existir); meio preenchida sem
@@ -344,12 +346,12 @@ impl OccurrenceIndex<'_> {
         if self.keys.get(key).is_some_and(|s| s.contains(series)) {
             return true;
         }
-        let slot = stable_entity_id(key);
+        let slot = stable_entity_id_v1(key);
         if self
             .ds
             .ignored
             .get(TRANSACTIONS)
-            .is_some_and(|ids| ids.contains(&slot))
+            .is_some_and(|ids| ids.contains(&slot) || ids.contains(&stable_entity_id_v2(key)))
         {
             return true;
         }
@@ -2022,7 +2024,7 @@ mod tests {
             ),
             raw(
                 TRANSACTIONS,
-                &stable_entity_id("R:2026-11"),
+                &stable_entity_id_v1("R:2026-11"),
                 None,
                 3,
                 json!({ "kind": "expense" }),
@@ -2039,12 +2041,28 @@ mod tests {
         let mut ds = Dataset::default();
         ds.apply([raw(
             CATEGORIES,
-            &stable_entity_id("R:2026-12"),
+            &stable_entity_id_v1("R:2026-12"),
             None,
             4,
             json!({}),
         )]);
         assert!(!ds.occurrence_index().knows_occurrence("R", "R:2026-12"));
+    }
+
+    #[test]
+    fn knows_occurrence_com_linha_ignorada_no_lugar_v2() {
+        let mut ds = Dataset::default();
+        ds.apply([raw(
+            TRANSACTIONS,
+            &stable_entity_id_v2("R:2026-11"),
+            None,
+            1,
+            json!({ "kind": "expense" }),
+        )]);
+        let known = ds.occurrence_index();
+        assert!(known.knows_occurrence("R", "R:2026-11"));
+        // So o v2 desta chave: outra chave segue desconhecida.
+        assert!(!known.knows_occurrence("R", "R:2026-12"));
     }
 
     #[test]

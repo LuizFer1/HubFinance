@@ -1161,7 +1161,7 @@ mod grafite_tests {
     use super::*;
     use crate::dashboard::aggregate::{in_month, recent, totals};
     use crate::dashboard::contract::Kind;
-    use crate::dashboard::ids::stable_entity_id;
+    use crate::dashboard::ids::stable_entity_id_v1;
     use crate::dashboard::recurrence::project_month;
 
     #[test]
@@ -1193,7 +1193,7 @@ mod grafite_tests {
             ("RCAD:2026-10", "ZWY97REN7CP9ZRPNFWE9QRYNQC"),
             ("RCAD:2026-11", "QZM0FK4WFZC0Q3CWQFMGF34CFF"),
         ] {
-            assert_eq!(stable_entity_id(seed), id, "{seed}");
+            assert_eq!(stable_entity_id_v1(seed), id, "{seed}");
         }
         assert!(
             !ds.occurrence_index()
@@ -1203,7 +1203,7 @@ mod grafite_tests {
             ("budget:CAT-COMPRAS", "P6H9YASDE69SPT1DPPHSYTSXEP"),
             ("budget:CAT-MERCADO", "PM5V2MS3PC532W9VP45B24SKPW"),
         ] {
-            assert_eq!(stable_entity_id(b.0), b.1);
+            assert_eq!(stable_entity_id_v1(b.0), b.1);
         }
     }
 

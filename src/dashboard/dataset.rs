@@ -13,6 +13,7 @@ use super::contract::{
     self, AssetKind, Book, Card, ContractError, Kind, MovementKind, RecurrenceRule, ReportState,
     ReserveKind,
 };
+use super::ids::stable_entity_id;
 
 /// Uma linha como a store guarda: `id` e `deleted_at` vem das colunas ja validadas pela
 /// fatia 1; `data` e o JSON opaco do app.
@@ -309,6 +310,54 @@ fn follow<'a>(id: Option<&'a str>, redirect: impl Fn(&str) -> Option<&'a str>) -
         }
     }
     Some(cur)
+}
+
+/// "Esta ocorrencia ja foi gravada?" pela chave, nao pelo id (spec
+/// 2026-11-19-id-estavel-colisao, 4.3 e 7.1). O id estavel v1 tem so 256 valores por
+/// comprimento de semente: duas ocorrencias de series ou meses diferentes caem no mesmo id, e
+/// perguntar "o id existe" escondia do "O que vem" e do comprometido a ocorrencia que o celular
+/// nunca gravou. O id so diz onde o app grava; quem identifica o fato e `(recurrenceId,
+/// occurrenceKey)`.
+pub struct OccurrenceIndex<'a> {
+    ds: &'a Dataset,
+    /// `occurrenceKey` -> series com linha dessa chave, vivas **e** apagadas.
+    keys: HashMap<&'a str, BTreeSet<&'a str>>,
+}
+
+impl OccurrenceIndex<'_> {
+    /// Conhece a ocorrencia `key` da serie `series` se:
+    ///
+    /// 1. alguma transacao, viva ou tombstone, tem `recurrence_id == series` e
+    ///    `occurrence_key == key` (em qualquer id: v1, v2 ou outro). Apagada conta: ocorrencia
+    ///    removida pelo usuario nao volta pela regra;
+    /// 2. o lugar v1 da chave e uma linha fora do contrato: ilegivel, pode ser a ocorrencia, e
+    ///    projetar de novo contaria em dobro. O lugar v2 entra com `stable_entity_id_v2`;
+    /// 3. a linha no lugar v1 (viva ou apagada) nao contradiz a chave: nenhum de
+    ///    `recurrence_id`/`occurrence_key` esta preenchido com outro valor. Sem os dois e o
+    ///    "ambiguo" da spec (ocorrencia de antes do campo existir); meio preenchida sem
+    ///    contradicao tambem fica aqui. Na duvida conta como gravada, igual ao app: o custo e
+    ///    uma avulsa colidida engolir a ocorrencia, o contrario prometeria o salario em dobro.
+    ///
+    /// Linha no lugar v1 com algum dos dois campos preenchido e diferente e **outro** fato e
+    /// nao esconde esta ocorrencia, viva ou apagada.
+    pub fn knows_occurrence(&self, series: &str, key: &str) -> bool {
+        if self.keys.get(key).is_some_and(|s| s.contains(series)) {
+            return true;
+        }
+        let slot = stable_entity_id(key);
+        if self
+            .ds
+            .ignored
+            .get(TRANSACTIONS)
+            .is_some_and(|ids| ids.contains(&slot))
+        {
+            return true;
+        }
+        self.ds.transactions.get(&slot).is_some_and(|t| {
+            t.recurrence_id.as_deref().is_none_or(|r| r == series)
+                && t.occurrence_key.as_deref().is_none_or(|k| k == key)
+        })
+    }
 }
 
 impl Dataset {
@@ -704,19 +753,23 @@ impl Dataset {
         }
     }
 
-    /// O hub ja tem uma linha com este id de lancamento: viva, tombstone ou fora do contrato.
-    /// E a pergunta do dedupe de ocorrencia (spec 5): ocorrencia apagada pelo usuario nao volta
-    /// pela regra, e uma linha ignorada continua sendo a ocorrencia gravada, so ilegivel.
-    /// `apply` garante que toda linha aplicada cai num dos dois lugares.
-    pub fn knows_transaction(&self, id: &str) -> bool {
-        self.transactions.contains_key(id)
-            || self
-                .ignored
-                .get(TRANSACTIONS)
-                .is_some_and(|ids| ids.contains(id))
+    /// Indice de ocorrencias gravadas para `OccurrenceIndex::knows_occurrence`. Montado por
+    /// chamada (uma vez por `project`), nunca guardado no `Dataset`: um indice guardado teria de
+    /// acompanhar `apply`, o `remove` da linha ignorada e o `for_book`, e um descuido daria
+    /// resposta velha em silencio.
+    pub fn occurrence_index(&self) -> OccurrenceIndex<'_> {
+        let mut keys: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+        for t in self.transactions.values() {
+            if let (Some(series), Some(key)) =
+                (t.recurrence_id.as_deref(), t.occurrence_key.as_deref())
+            {
+                keys.entry(key).or_default().insert(series);
+            }
+        }
+        OccurrenceIndex { ds: self, keys }
     }
 
-    /// `deleted_at IS NULL`, igual ao `isAlive` do app.
+    /// `deleted_at IS NULL`, igual ao `isAlive` do app.    /// `deleted_at IS NULL`, igual ao `isAlive` do app.
     pub fn alive_transactions(&self) -> impl Iterator<Item = &Transaction> {
         self.transactions.values().filter(|t| !t.deleted)
     }
@@ -1950,26 +2003,48 @@ mod tests {
     }
 
     #[test]
-    fn knows_transaction_viva_tombstone_e_ignorada() {
+    fn knows_occurrence_pela_chave_viva_tombstone_e_ignorada_no_v1() {
+        let occ = |series: &str, key: &str| {
+            let mut t = tx("o");
+            t["recurrenceId"] = json!(series);
+            t["occurrenceKey"] = json!(key);
+            t
+        };
         let mut ds = Dataset::default();
         ds.apply([
-            raw(TRANSACTIONS, "VIVA", None, 1, tx("a")),
+            raw(TRANSACTIONS, "VIVA", None, 1, occ("R", "R:2026-09")),
             raw(
                 TRANSACTIONS,
                 "APAGADA",
                 Some("2026-09-30T00:00:00Z"),
                 2,
-                tx("b"),
+                occ("R", "R:2026-10"),
             ),
-            raw(TRANSACTIONS, "TORTA", None, 3, json!({ "kind": "expense" })),
+            raw(
+                TRANSACTIONS,
+                &stable_entity_id("R:2026-11"),
+                None,
+                3,
+                json!({ "kind": "expense" }),
+            ),
         ]);
-        assert!(ds.knows_transaction("VIVA"));
-        assert!(ds.knows_transaction("APAGADA"));
-        assert!(ds.knows_transaction("TORTA"));
-        assert!(!ds.knows_transaction("NUNCA"));
+        let known = ds.occurrence_index();
+        assert!(known.knows_occurrence("R", "R:2026-09"));
+        assert!(known.knows_occurrence("R", "R:2026-10"));
+        assert!(known.knows_occurrence("R", "R:2026-11"));
+        assert!(!known.knows_occurrence("R", "R:2026-12"));
+        // A chave so vale com a serie dela.
+        assert!(!known.knows_occurrence("S", "R:2026-09"));
         // Ignorada em outra tabela nao e lancamento.
-        ds.apply([raw(CATEGORIES, "OUTRA", None, 4, json!({}))]);
-        assert!(!ds.knows_transaction("OUTRA"));
+        let mut ds = Dataset::default();
+        ds.apply([raw(
+            CATEGORIES,
+            &stable_entity_id("R:2026-12"),
+            None,
+            4,
+            json!({}),
+        )]);
+        assert!(!ds.occurrence_index().knows_occurrence("R", "R:2026-12"));
     }
 
     #[test]

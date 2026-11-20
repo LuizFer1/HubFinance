@@ -3,12 +3,11 @@
 //! `estimate.ts`, `upcoming.ts` e `free-money.ts` do app: as telas do hub e do celular tem de
 //! prometer o mesmo valor para a mesma ocorrencia.
 //!
-//! Calculado, nunca gravado (o hub nunca edita dado). Ocorrencia que o hub ja conhece pelo id
-//! estavel (`Dataset::knows_transaction`) fica de fora da projecao, entao nada conta duas vezes.
+//! Calculado, nunca gravado (o hub nunca edita dado). Ocorrencia que o hub ja conhece pela chave
+//! (`OccurrenceIndex::knows_occurrence`) fica de fora da projecao, entao nada conta duas vezes.
 
 use super::contract::{Kind, RecurrenceRule};
 use super::dataset::{Dataset, RecurrenceAdjustment, Transaction};
-use super::ids::stable_entity_id;
 use super::periods::{days_in_month, last_day_of_month, shift_day, shift_month};
 use super::reserves::div_round;
 use super::schedule::{each_period, occurrence_key, occurrence_on, period_of, period_of_key};
@@ -113,10 +112,11 @@ pub fn estimate_for<'a>(
 /// herda a ordem de insercao; aqui o mapa nao tem ordem e a lista nao pode piscar).
 ///
 /// Serie sem `rule` (app antigo, campo de tipo errado, frequencia de versao futura) nao
-/// projeta. Ocorrencia que o hub ja conhece pelo id estavel (viva, apagada ou ignorada) fica
-/// de fora: e a mesma regra de presenca do app, e uma ocorrencia com data editada continua
-/// deduplicada.
+/// projeta. Ocorrencia que o hub ja conhece pela chave (viva, apagada, ignorada ou ambigua no
+/// lugar v1, ver `knows_occurrence`) fica de fora: e a mesma regra de presenca do app, e uma
+/// ocorrencia com data editada continua deduplicada.
 pub fn project(ds: &Dataset, after: &str, limit: &str) -> Vec<Occurrence> {
+    let known = ds.occurrence_index();
     let mut found = Vec::new();
     for series in ds.recurrences.values() {
         if series.deleted {
@@ -139,7 +139,7 @@ pub fn project(ds: &Dataset, after: &str, limit: &str) -> Vec<Occurrence> {
             {
                 continue;
             }
-            if ds.knows_transaction(&stable_entity_id(&occurrence_key(&series.id, &period))) {
+            if known.knows_occurrence(&series.id, &occurrence_key(&series.id, &period)) {
                 continue;
             }
             let amount_minor = if rule.variable {
@@ -321,6 +321,7 @@ mod tests {
     use super::*;
     use crate::dashboard::dataset::{RECURRENCE_ADJUSTMENTS, RECURRENCES, TRANSACTIONS};
     use crate::dashboard::dataset_of;
+    use crate::dashboard::ids::stable_entity_id;
 
     type Row<'a> = (&'a str, &'a str, bool, Value);
 
@@ -1283,6 +1284,201 @@ mod tests {
                 let got = month(&ds, "2026-05");
                 assert_eq!((got.income_minor, got.expense_minor), (0, 0));
             }
+        }
+    }
+
+    /// Existencia por chave (spec 2026-11-19-id-estavel-colisao, 4.3, 7.1 e 8). O id v1 colide:
+    /// `A:2027-02` e `B:2027-01` caem no mesmo lugar, entao "o id existe" deixou de dizer "a
+    /// ocorrencia foi gravada". O par e o mesmo dos testes do app.
+    mod ocorrencia_por_chave {
+        use super::*;
+
+        const A: &str = "01JC0000000000000000000001";
+        const B: &str = "01JC0000000000000000000002";
+        const SLOT: &str = "T01F6RNFTRHQP057TG1Z68NZT8";
+        /// Id que nao e o v1 de nenhuma chave dos testes (no app, o v2 da chave).
+        const OTHER_ID: &str = "01JZ00000000000000000000V2";
+
+        fn monthly(start_on: &str, amount: i64) -> Value {
+            json!({
+                "kind": "expense", "description": "Conta", "amountMinor": amount,
+                "frequency": "monthly", "scheduleType": "dayOfMonth", "scheduleN": 10,
+                "startOn": start_on, "endOn": null, "active": true
+            })
+        }
+
+        /// Ocorrencia de `series` em `period` gravada no id `id`, com os campos de `over`.
+        fn row(series: &str, period: &str, over: Value) -> Value {
+            merge(
+                json!({
+                    "kind": "expense", "description": "ocorrencia", "amountMinor": 1,
+                    "occurredOn": format!("{period}-10"), "recurrenceId": series,
+                    "occurrenceKey": occurrence_key(series, period),
+                }),
+                over,
+            )
+        }
+
+        /// As duas series, so B na competencia 2027-01, mais as linhas de `extra`.
+        fn with(extra: Vec<Row>) -> Dataset {
+            let mut rows = vec![
+                (RECURRENCES, A, false, monthly("2027-02-10", 9_000)),
+                (RECURRENCES, B, false, monthly("2027-01-10", 4_000)),
+            ];
+            rows.extend(extra);
+            dataset_of(rows)
+        }
+
+        /// Competencias projetadas de B em janeiro de 2027.
+        fn b_in_january(ds: &Dataset) -> Vec<String> {
+            project_month(ds, "2027-01")
+                .into_iter()
+                .filter(|o| o.recurrence_id == B)
+                .map(|o| o.period)
+                .collect()
+        }
+
+        fn projected(ds: &Dataset) -> bool {
+            b_in_january(ds) == ["2027-01"]
+        }
+
+        #[test]
+        fn o_par_da_spec_colide_no_v1() {
+            assert_eq!(stable_entity_id(&occurrence_key(A, "2027-02")), SLOT);
+            assert_eq!(stable_entity_id(&occurrence_key(B, "2027-01")), SLOT);
+        }
+
+        #[test]
+        fn lugar_v1_de_outra_serie_nao_esconde_a_ocorrencia() {
+            let ds = with(vec![(
+                TRANSACTIONS,
+                SLOT,
+                false,
+                row(A, "2027-02", json!({})),
+            )]);
+            assert!(projected(&ds));
+            // O "O que vem" e o comprometido do mes mostram B; A segue gravada e fora.
+            let proximas: Vec<_> = upcoming(&ds, "2026-12-31", 15)
+                .into_iter()
+                .map(|o| (o.recurrence_id, o.period))
+                .collect();
+            assert_eq!(proximas, [(B.to_string(), "2027-01".to_string())]);
+            assert_eq!(recurring_month(&ds, "2027-01").expense_minor, 4_000);
+            assert!(
+                project_month(&ds, "2027-02")
+                    .iter()
+                    .all(|o| o.recurrence_id != A)
+            );
+        }
+
+        #[test]
+        fn tombstone_de_outro_fato_no_lugar_v1_nao_esconde_a_ocorrencia() {
+            let ds = with(vec![(
+                TRANSACTIONS,
+                SLOT,
+                true,
+                row(A, "2027-02", json!({})),
+            )]);
+            assert!(projected(&ds));
+        }
+
+        #[test]
+        fn ocorrencia_gravada_fora_do_v1_conta_como_gravada() {
+            let ds = with(vec![(
+                TRANSACTIONS,
+                OTHER_ID,
+                false,
+                row(B, "2027-01", json!({})),
+            )]);
+            assert!(b_in_january(&ds).is_empty());
+            assert_eq!(recurring_month(&ds, "2027-01").expense_minor, 1);
+        }
+
+        #[test]
+        fn ocorrencia_apagada_com_a_chave_nao_volta() {
+            for id in [SLOT, OTHER_ID] {
+                let ds = with(vec![(TRANSACTIONS, id, true, row(B, "2027-01", json!({})))]);
+                assert!(b_in_january(&ds).is_empty(), "{id}");
+            }
+            // Mesmo com o lugar v1 de outra serie e a apagada de B em outro id.
+            let ds = with(vec![
+                (TRANSACTIONS, SLOT, false, row(A, "2027-02", json!({}))),
+                (TRANSACTIONS, OTHER_ID, true, row(B, "2027-01", json!({}))),
+            ]);
+            assert!(b_in_january(&ds).is_empty());
+        }
+
+        /// A chave so vale com a serie certa: `occurrenceKey` igual em linha de outra serie
+        /// fora do lugar v1 nao e esta ocorrencia.
+        #[test]
+        fn chave_igual_de_outra_serie_fora_do_v1_nao_conta() {
+            let other = row(B, "2027-01", json!({ "recurrenceId": A }));
+            let ds = with(vec![(TRANSACTIONS, OTHER_ID, false, other)]);
+            assert!(projected(&ds));
+        }
+
+        /// Ambiguo (4.3): linha valida no lugar v1 sem `occurrenceKey` nem `recurrenceId` pode
+        /// ser a ocorrencia de antes do campo existir. Na duvida conta como gravada, igual ao
+        /// app: projetar de novo prometeria o salario em dobro.
+        #[test]
+        fn lugar_v1_ambiguo_conta_como_gravada() {
+            let avulsa = row(
+                B,
+                "2027-01",
+                json!({ "recurrenceId": null, "occurrenceKey": null }),
+            );
+            for deleted in [false, true] {
+                let ds = with(vec![(TRANSACTIONS, SLOT, deleted, avulsa.clone())]);
+                assert_eq!(ds.ignored_total(), 0, "a linha tem de passar pelo contrato");
+                assert!(b_in_january(&ds).is_empty(), "apagada: {deleted}");
+            }
+        }
+
+        /// Meio preenchida no lugar v1: nenhum campo contradiz a chave -> ambiguo (conta como
+        /// gravada); um campo preenchido e diferente -> outro fato (projeta).
+        #[test]
+        fn lugar_v1_meio_preenchido_so_e_outro_fato_se_um_campo_contradiz() {
+            let known = [
+                json!({ "occurrenceKey": null }),
+                json!({ "recurrenceId": null }),
+            ];
+            for over in known {
+                let ds = with(vec![(
+                    TRANSACTIONS,
+                    SLOT,
+                    false,
+                    row(B, "2027-01", over.clone()),
+                )]);
+                assert!(b_in_january(&ds).is_empty(), "{over}");
+            }
+            let other = [
+                json!({ "occurrenceKey": occurrence_key(B, "2026-12") }),
+                json!({ "recurrenceId": A }),
+                json!({ "recurrenceId": A, "occurrenceKey": null }),
+            ];
+            for over in other {
+                let ds = with(vec![(
+                    TRANSACTIONS,
+                    SLOT,
+                    false,
+                    row(B, "2027-01", over.clone()),
+                )]);
+                assert!(projected(&ds), "{over}");
+            }
+        }
+
+        /// Linha fora do contrato no lugar v1: nao da para ler a chave, entao conta como
+        /// gravada (a rede de 7.1; o lugar v2 entra com `stable_entity_id_v2`).
+        #[test]
+        fn linha_ignorada_no_lugar_v1_conta_como_gravada() {
+            let ds = with(vec![(
+                TRANSACTIONS,
+                SLOT,
+                false,
+                json!({ "kind": "expense" }),
+            )]);
+            assert_eq!(ds.ignored_total(), 1);
+            assert!(b_in_january(&ds).is_empty());
         }
     }
 }

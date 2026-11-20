@@ -112,9 +112,9 @@ pub fn estimate_for<'a>(
 /// herda a ordem de insercao; aqui o mapa nao tem ordem e a lista nao pode piscar).
 ///
 /// Serie sem `rule` (app antigo, campo de tipo errado, frequencia de versao futura) nao
-/// projeta. Ocorrencia que o hub ja conhece pela chave (viva, apagada, ignorada ou ambigua no
-/// lugar v1, ver `knows_occurrence`) fica de fora: e a mesma regra de presenca do app, e uma
-/// ocorrencia com data editada continua deduplicada.
+/// projeta. Ocorrencia que o hub ja conhece pela chave (viva, apagada, ignorada no lugar v1 ou
+/// v2, ou ambigua no lugar v1, ver `knows_occurrence`) fica de fora: e a mesma regra de presenca
+/// do app, e uma ocorrencia com data editada continua deduplicada.
 pub fn project(ds: &Dataset, after: &str, limit: &str) -> Vec<Occurrence> {
     let known = ds.occurrence_index();
     let mut found = Vec::new();

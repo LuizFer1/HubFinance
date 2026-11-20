@@ -321,7 +321,7 @@ mod tests {
     use super::*;
     use crate::dashboard::dataset::{RECURRENCE_ADJUSTMENTS, RECURRENCES, TRANSACTIONS};
     use crate::dashboard::dataset_of;
-    use crate::dashboard::ids::stable_entity_id;
+    use crate::dashboard::ids::{stable_entity_id_v1, stable_entity_id_v2};
 
     type Row<'a> = (&'a str, &'a str, bool, Value);
 
@@ -368,7 +368,7 @@ mod tests {
             }),
             over,
         );
-        (stable_entity_id(&key), data)
+        (stable_entity_id_v1(&key), data)
     }
 
     fn rule_of<'a>(ds: &'a Dataset, id: &str) -> &'a RecurrenceRule {
@@ -850,7 +850,7 @@ mod tests {
             /// e uma linha ignorada, e continua sendo a ocorrencia gravada.
             #[test]
             fn projeta_as_proximas_semanas_sem_as_ja_gravadas() {
-                let gravada = stable_entity_id(&occurrence_key(SERIES, "2026-06-10"));
+                let gravada = stable_entity_id_v1(&occurrence_key(SERIES, "2026-06-10"));
                 let ds = dataset_of(vec![
                     (
                         RECURRENCES,
@@ -907,7 +907,7 @@ mod tests {
         fn dedupe_por_id_estavel_inclui_tombstone_e_linha_ignorada() {
             let (viva, vd) = occurrence("R", "expense", "2026-07", "2026-07-10", 1, json!({}));
             let (apagada, ad) = occurrence("R", "expense", "2026-08", "2026-08-10", 1, json!({}));
-            let ignorada = stable_entity_id(&occurrence_key("R", "2026-09"));
+            let ignorada = stable_entity_id_v1(&occurrence_key("R", "2026-09"));
             // Data editada pelo usuario: a chave continua a mesma, entao continua deduplicada.
             let (editada, ed) = occurrence("R", "expense", "2026-10", "2026-10-25", 1, json!({}));
             let ds = dataset_of(vec![
@@ -1344,8 +1344,8 @@ mod tests {
 
         #[test]
         fn o_par_da_spec_colide_no_v1() {
-            assert_eq!(stable_entity_id(&occurrence_key(A, "2027-02")), SLOT);
-            assert_eq!(stable_entity_id(&occurrence_key(B, "2027-01")), SLOT);
+            assert_eq!(stable_entity_id_v1(&occurrence_key(A, "2027-02")), SLOT);
+            assert_eq!(stable_entity_id_v1(&occurrence_key(B, "2027-01")), SLOT);
         }
 
         #[test]
@@ -1468,7 +1468,7 @@ mod tests {
         }
 
         /// Linha fora do contrato no lugar v1: nao da para ler a chave, entao conta como
-        /// gravada (a rede de 7.1; o lugar v2 entra com `stable_entity_id_v2`).
+        /// gravada (a rede de 7.1).
         #[test]
         fn linha_ignorada_no_lugar_v1_conta_como_gravada() {
             let ds = with(vec![(
@@ -1479,6 +1479,33 @@ mod tests {
             )]);
             assert_eq!(ds.ignored_total(), 1);
             assert!(b_in_january(&ds).is_empty());
+        }
+
+        /// O caso da colisao: A gravada no lugar v1, e o app novo grava B em v2(chave de B).
+        /// Se essa linha v2 chega fora do contrato, ela ainda e B: projetar de novo contaria
+        /// em dobro (rede de 7.1 no lugar v2).
+        #[test]
+        fn linha_ignorada_no_lugar_v2_conta_como_gravada() {
+            let v2 = stable_entity_id_v2(&occurrence_key(B, "2027-01"));
+            assert_ne!(v2, SLOT);
+            let ds = with(vec![
+                (TRANSACTIONS, SLOT, false, row(A, "2027-02", json!({}))),
+                (TRANSACTIONS, &v2, false, json!({ "kind": "expense" })),
+            ]);
+            assert_eq!(ds.ignored_total(), 1);
+            assert!(b_in_january(&ds).is_empty());
+        }
+
+        /// O v2 de **outra** chave ignorado nao esconde B: a rede olha so os lugares da chave.
+        #[test]
+        fn linha_ignorada_no_v2_de_outra_chave_nao_esconde() {
+            let other = stable_entity_id_v2(&occurrence_key(A, "2027-01"));
+            let ds = with(vec![
+                (TRANSACTIONS, SLOT, false, row(A, "2027-02", json!({}))),
+                (TRANSACTIONS, &other, false, json!({ "kind": "expense" })),
+            ]);
+            assert_eq!(ds.ignored_total(), 1);
+            assert!(projected(&ds));
         }
     }
 }

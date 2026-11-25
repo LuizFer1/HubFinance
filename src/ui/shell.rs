@@ -334,7 +334,10 @@ pub(super) fn reserves_count(app: &App) -> usize {
 /// Aparelhos ativos: e o numero de linhas da lista "Usuarios conectados" (sem a remocao
 /// pendente, que ja sumiu da tela).
 pub(super) fn active_devices(app: &App) -> usize {
-    let pending = app.pending_removal.as_ref().map(|p| p.device_id.as_str());
+    let pending = app
+        .pending_removal
+        .as_ref()
+        .and_then(super::app::PendingRemoval::device_id);
     app.snapshot
         .devices
         .iter()

@@ -43,12 +43,35 @@ pub const UNDO_FOR: Duration = Duration::from_secs(5);
 /// Revogacao adiada, e nao "revogar e des-revogar": durante os 5 s o celular nunca recebe
 /// `401` (que a fatia 3 do app poderia tratar descartando a chave, e ai "Desfazer" mentiria).
 /// Custo aceito: se o hub cair nesses 5 s, a remocao nao aconteceu e a pessoa reaparece.
+///
+/// Apagar uma conversa da Analise usa o mesmo adiamento: um "Desfazer" so na tela, e o mesmo
+/// caminho de envio (prazo, troca de tela, fechar, desligar).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingRemoval {
-    pub device_id: String,
+    /// Id do aparelho, ou da conversa em `DeleteConversation`.
+    pub target_id: String,
     pub toast: String,
     pub deadline: Instant,
     pub action: PendingAction,
+}
+
+impl PendingRemoval {
+    /// O aparelho que esta saindo (some da lista na hora); `None` para conversa. Pelo tipo da
+    /// acao, e nao so pelo id: um id de conversa nunca pode esconder um aparelho.
+    pub fn device_id(&self) -> Option<&str> {
+        match self.action {
+            PendingAction::Remove(_) | PendingAction::Erase(_) => Some(&self.target_id),
+            PendingAction::DeleteConversation { .. } => None,
+        }
+    }
+
+    /// A conversa que esta sendo apagada (some da lista na hora).
+    pub fn conversation_id(&self) -> Option<&str> {
+        match self.action {
+            PendingAction::DeleteConversation { .. } => Some(&self.target_id),
+            PendingAction::Remove(_) | PendingAction::Erase(_) => None,
+        }
+    }
 }
 
 /// O que sai para o nucleo quando o prazo do "Desfazer" vence. Remocao e apagar andam juntos:
@@ -59,6 +82,9 @@ pub enum PendingAction {
     Remove(AreaSet),
     /// Aparelho ja removido: so apaga as areas.
     Erase(AreaSet),
+    /// "Apagar" de uma conversa da Analise. `reopen`: era a conversa aberta, entao "Desfazer"
+    /// a abre de novo (ela fecha na hora para nao ficar na tela uma conversa "apagada").
+    DeleteConversation { reopen: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -322,6 +348,8 @@ pub enum Message {
     OpenConversation(String),
     CloseConversation,
     DeleteConversation(String),
+    /// "Apagar" da lista de conversas: some na hora, com "Desfazer" de 5 s, e so entao sai.
+    AskDeleteConversation(String),
     /// Dois cliques: o primeiro arma (`confirm_delete_all`), o segundo apaga.
     DeleteAllConversations,
     ToggleAssistantSettings,
@@ -646,7 +674,10 @@ impl App {
 
     /// Pessoas que a tela mostra: sem a da remocao pendente (ela some na hora, como no design).
     pub(super) fn visible_people(&self) -> impl Iterator<Item = &Person> {
-        let pending = self.pending_removal.as_ref().map(|p| p.device_id.as_str());
+        let pending = self
+            .pending_removal
+            .as_ref()
+            .and_then(PendingRemoval::device_id);
         self.people
             .iter()
             .filter(move |p| Some(p.device_id.as_str()) != pending)
@@ -662,7 +693,10 @@ impl App {
     /// Aparelhos removidos que ainda tem dados a decidir, menos o que ja tem um apagar
     /// pendente (some na hora, como a pessoa removida).
     pub(super) fn orphans(&self) -> Vec<&DeviceView> {
-        let pending = self.pending_removal.as_ref().map(|p| p.device_id.as_str());
+        let pending = self
+            .pending_removal
+            .as_ref()
+            .and_then(PendingRemoval::device_id);
         self.snapshot
             .devices
             .iter()
@@ -674,10 +708,13 @@ impl App {
     /// tela ou fechamento).
     fn commit_pending(&mut self) {
         if let Some(pending) = self.pending_removal.take() {
-            let device_id = pending.device_id;
+            let device_id = pending.target_id;
             let command = match pending.action {
                 PendingAction::Remove(erase) => Command::RemoveDevice { device_id, erase },
                 PendingAction::Erase(areas) => Command::EraseDeviceData { device_id, areas },
+                PendingAction::DeleteConversation { .. } => {
+                    Command::Assistant(AssistantCommand::Delete(device_id))
+                }
             };
             let _ = self.handle.commands.send(command);
         }
@@ -1206,7 +1243,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 PendingAction::Remove(dialog.selected)
             };
             app.pending_removal = Some(PendingRemoval {
-                device_id: dialog.device_id,
+                target_id: dialog.device_id,
                 toast,
                 deadline: Instant::now() + UNDO_FOR,
                 action,
@@ -1215,8 +1252,15 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::UndoRemove => {
             // Nada foi enviado ao nucleo: desfazer e so esquecer. Vale para a remocao e para
-            // o apagar, que saem juntos no mesmo comando.
-            app.pending_removal = None;
+            // o apagar, que saem juntos no mesmo comando, e para a conversa.
+            if let Some(PendingRemoval {
+                target_id,
+                action: PendingAction::DeleteConversation { reopen: true },
+                ..
+            }) = app.pending_removal.take()
+            {
+                send_assistant(app, AssistantCommand::Open(target_id));
+            }
             Task::none()
         }
         Message::DecideOrphan => {
@@ -1301,12 +1345,39 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             send_assistant(app, AssistantCommand::Delete(id));
             Task::none()
         }
+        Message::AskDeleteConversation(id) => {
+            if app
+                .pending_removal
+                .as_ref()
+                .and_then(PendingRemoval::conversation_id)
+                == Some(id.as_str())
+            {
+                return Task::none();
+            }
+            // So um "Desfazer" por vez: o anterior vai agora.
+            app.commit_pending();
+            let reopen =
+                app.snapshot.assistant.open.as_ref().map(|o| o.id.as_str()) == Some(id.as_str());
+            if reopen {
+                send_assistant(app, AssistantCommand::Close);
+            }
+            app.pending_removal = Some(PendingRemoval {
+                target_id: id,
+                toast: "Conversa apagada".to_string(),
+                deadline: Instant::now() + UNDO_FOR,
+                action: PendingAction::DeleteConversation { reopen },
+            });
+            Task::none()
+        }
         Message::DeleteAllConversations => {
             let armed = app
                 .confirm_delete_all
                 .take()
                 .is_some_and(|deadline| Instant::now() < deadline);
             if armed {
+                // A conversa com "Desfazer" pendente some junto; o pendente sai antes para nao
+                // chegar depois do `DeleteAll` com um id que ja nao existe.
+                app.commit_pending();
                 send_assistant(app, AssistantCommand::DeleteAll);
             } else {
                 app.confirm_delete_all = Some(Instant::now() + DELETE_ALL_ARMED_FOR);
@@ -1936,7 +2007,7 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::ConfirmRemove);
         assert_eq!(app.confirm_remove, None);
         let pending = app.pending_removal.clone().unwrap();
-        assert_eq!(pending.device_id, "D1");
+        assert_eq!(pending.device_id(), Some("D1"));
         assert_eq!(pending.toast, "Pixel 7 foi removido do hub");
         assert_eq!(
             app.visible_people()
@@ -1974,7 +2045,10 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::AskRemove("D2".into()));
         let _ = update(&mut app, Message::ConfirmRemove);
         assert_eq!(revoked(&mut rx), vec!["D1".to_string()]);
-        assert_eq!(app.pending_removal.as_ref().unwrap().device_id, "D2");
+        assert_eq!(
+            app.pending_removal.as_ref().unwrap().device_id(),
+            Some("D2")
+        );
         let _ = update(&mut app, Message::SelectScreen(Screen::Dashboard));
         assert_eq!(revoked(&mut rx), vec!["D2".to_string()]);
     }
@@ -3997,6 +4071,104 @@ pub(super) mod tests {
         assert_eq!(ids(&app), ["P1", "P2"]);
         app.book = Book::Business;
         assert_eq!(ids(&app), ["B1"]);
+    }
+
+    fn conversation_ids(app: &App) -> Vec<String> {
+        super::super::analysis_view::conversations_of_book(app)
+            .iter()
+            .map(|c| c.id.clone())
+            .collect()
+    }
+
+    #[test]
+    fn apagar_conversa_some_na_hora_e_desfazer_nao_envia_nada() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        app.snapshot.assistant.conversations =
+            vec![summary("P1", Book::Personal), summary("P2", Book::Personal)];
+        let _ = update(&mut app, Message::AskDeleteConversation("P1".into()));
+        assert_eq!(conversation_ids(&app), ["P2"]);
+        assert!(drain(&mut rx).is_empty());
+        // O toast monta pela raiz e o pendente nao esconde nenhum aparelho.
+        let _ = super::super::shell::root(&app);
+        assert_eq!(app.pending_removal.as_ref().unwrap().device_id(), None);
+        let _ = update(&mut app, Message::UndoRemove);
+        assert_eq!(conversation_ids(&app), ["P1", "P2"]);
+        assert!(drain(&mut rx).is_empty());
+        assert_eq!(app.pending_removal, None);
+    }
+
+    #[test]
+    fn apagar_conversa_sai_no_prazo_na_troca_de_tela_e_antes_do_shutdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let delete = |id: &str| Command::Assistant(AssistantCommand::Delete(id.into()));
+        // Prazo: antes dele nada sai.
+        let _ = update(&mut app, Message::AskDeleteConversation("C1".into()));
+        let _ = update(&mut app, Message::Tick);
+        assert!(drain(&mut rx).is_empty());
+        app.pending_removal.as_mut().unwrap().deadline = Instant::now();
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(drain(&mut rx), [delete("C1")]);
+        // Troca de tela.
+        let _ = update(&mut app, Message::AskDeleteConversation("C2".into()));
+        let _ = update(&mut app, Message::SelectScreen(Screen::Dashboard));
+        assert_eq!(drain(&mut rx), [delete("C2")]);
+        // Outro apagar manda o anterior.
+        let _ = update(&mut app, Message::AskDeleteConversation("C3".into()));
+        let _ = update(&mut app, Message::AskDeleteConversation("C4".into()));
+        assert_eq!(drain(&mut rx), [delete("C3")]);
+        // Fechar (sem bandeja, desliga): o apagar sai antes do `Shutdown`.
+        let _ = update(&mut app, Message::CloseRequested);
+        assert_eq!(drain(&mut rx), [delete("C4"), Command::Shutdown]);
+    }
+
+    #[test]
+    fn apagar_a_conversa_aberta_fecha_e_desfazer_reabre() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let open = open_conv(Book::Personal, vec![]);
+        let id = open.id.clone();
+        app.snapshot.assistant.open = Some(open);
+        let _ = update(&mut app, Message::AskDeleteConversation(id.clone()));
+        assert!(super::super::analysis_view::open_conversation(&app).is_none());
+        assert_eq!(
+            drain(&mut rx),
+            [Command::Assistant(AssistantCommand::Close)]
+        );
+        let _ = update(&mut app, Message::UndoRemove);
+        assert_eq!(
+            drain(&mut rx),
+            [Command::Assistant(AssistantCommand::Open(id))]
+        );
+    }
+
+    #[test]
+    fn apagar_todas_manda_o_apagar_pendente_antes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let _ = update(&mut app, Message::AskDeleteConversation("C1".into()));
+        let _ = update(&mut app, Message::DeleteAllConversations);
+        let _ = update(&mut app, Message::DeleteAllConversations);
+        assert_eq!(
+            drain(&mut rx),
+            [
+                AssistantCommand::Delete("C1".into()),
+                AssistantCommand::DeleteAll
+            ]
+            .map(Command::Assistant)
+        );
+    }
+
+    #[test]
+    fn lista_de_conversas_monta_com_data_e_sem_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let mut dated = summary("P1", Book::Personal);
+        dated.created_at = "2026-11-25T10:00:00.000Z".into();
+        app.snapshot.assistant.conversations = vec![dated, summary("P2", Book::Personal)];
+        app.hover_row = Some("P1".into());
+        let _ = super::super::analysis_view::view(&app);
     }
 
     #[test]

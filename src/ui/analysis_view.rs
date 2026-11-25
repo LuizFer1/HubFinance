@@ -11,7 +11,7 @@ use iced::{Alignment, Color, Element, Length, Padding};
 use super::app::{App, Message, awaiting_cloud_consent};
 use super::assistant_settings_view;
 use super::theme::{self, Tokens};
-use super::{fonts, widgets};
+use super::{fonts, rows, time, widgets};
 use crate::advisor::{Finding, Severity};
 use crate::assistant::prompt::Role;
 use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
@@ -100,11 +100,19 @@ const HUB_DOWN: &str = "O hub não iniciou; a análise acima continua valendo.";
 /// A conversa aberta, so se for da conta que a tela mostra: com a outra conta aberta ela falaria
 /// de numeros que nao estao na tela.
 pub(super) fn open_conversation(app: &App) -> Option<&OpenConversation> {
+    let pending = pending_delete(app);
     app.snapshot
         .assistant
         .open
         .as_ref()
-        .filter(|c| c.book == app.book)
+        .filter(|c| c.book == app.book && Some(c.id.as_str()) != pending)
+}
+
+/// Conversa com "Desfazer" pendente: some da tela na hora, antes de o apagar sair.
+fn pending_delete(app: &App) -> Option<&str> {
+    app.pending_removal
+        .as_ref()
+        .and_then(super::app::PendingRemoval::conversation_id)
 }
 
 /// Os dados da conta mudaram desde que a conversa comecou (spec 3): o envelope guardado nela
@@ -116,11 +124,12 @@ pub(super) fn data_changed(app: &App) -> bool {
 
 /// Conversas da conta que a tela mostra (cada uma e presa a uma conta).
 pub(super) fn conversations_of_book(app: &App) -> Vec<&ConversationSummary> {
+    let pending = pending_delete(app);
     app.snapshot
         .assistant
         .conversations
         .iter()
-        .filter(|c| c.book == app.book)
+        .filter(|c| c.book == app.book && Some(c.id.as_str()) != pending)
         .collect()
 }
 
@@ -543,7 +552,8 @@ fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
     .width(Length::Fill);
     for c in items {
         let is_open = open_id == Some(c.id.as_str());
-        let title = button(
+        // Todas se chamam "Analise de <mes>": a data e a hora e que distinguem uma da outra.
+        let mut label = column![
             text(c.title.as_str())
                 .size(14)
                 .font(if is_open {
@@ -552,16 +562,22 @@ fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
                     fonts::INTER
                 })
                 .color(if is_open { t.accent_300 } else { t.text }),
-        )
-        .padding([6, 8])
-        .width(Length::Fill)
-        .style(theme::plain(t.text))
-        .on_press(Message::OpenConversation(c.id.clone()));
+        ]
+        .spacing(2);
+        if let Some(when) = time::date_time(&c.created_at, app.offset) {
+            label = label.push(text(when).size(12).color(t.text_muted));
+        }
+        let title = button(label)
+            .padding([6, 8])
+            .width(Length::Fill)
+            .style(theme::plain(t.text))
+            .on_press(Message::OpenConversation(c.id.clone()));
         let delete = button(text("Apagar").size(12).font(fonts::INTER_MEDIUM))
             .padding([4, 8])
             .style(theme::danger_outline(t))
-            .on_press(Message::DeleteConversation(c.id.clone()));
-        col = col.push(row![title, delete].spacing(8).align_y(Alignment::Center));
+            .on_press(Message::AskDeleteConversation(c.id.clone()));
+        let line = row![title, delete].spacing(8).align_y(Alignment::Center);
+        col = col.push(rows::hover_row(app, &c.id, line, [0, 4], 8.0, 52.0));
     }
     Some(card(t, col))
 }

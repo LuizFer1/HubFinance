@@ -29,6 +29,24 @@ pub fn relative(rfc3339: Option<&str>) -> String {
     }
 }
 
+/// "25 nov 2026, 14:32" no fuso local: data e hora da conversa, porque todas se chamam "Analise
+/// de <mes>" e so o momento as distingue. Ilegivel (ou vazio, registro antigo) vira `None` e a
+/// linha mostra so o titulo.
+pub fn date_time(rfc3339: &str, offset: UtcOffset) -> Option<String> {
+    let t = parse(rfc3339)?.to_offset(offset);
+    let month = crate::dashboard::periods::month_short(&format!(
+        "{:04}-{:02}",
+        t.year(),
+        u8::from(t.month())
+    ));
+    Some(format!(
+        "{} {month} {}, {}",
+        t.day(),
+        t.year(),
+        format_time(t, offset)
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,6 +77,22 @@ mod tests {
             relative_to(datetime!(2026-10-01 12:05 UTC), now),
             "agora há pouco"
         );
+    }
+
+    #[test]
+    fn data_e_hora_no_fuso_local() {
+        let br = UtcOffset::from_hms(-3, 0, 0).unwrap();
+        assert_eq!(
+            date_time("2026-11-25T10:00:00.000Z", br).as_deref(),
+            Some("25 nov 2026, 07:00")
+        );
+        // A virada do dia segue o fuso, nao o UTC.
+        assert_eq!(
+            date_time("2026-12-01T01:30:00Z", br).as_deref(),
+            Some("30 nov 2026, 22:30")
+        );
+        assert_eq!(date_time("", br), None);
+        assert_eq!(date_time("ontem", br), None);
     }
 
     #[test]

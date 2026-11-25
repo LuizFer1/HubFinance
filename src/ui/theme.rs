@@ -9,7 +9,8 @@
 //! novo nasce aqui; o que nao esta na tabela sai de `mix` entre tokens (spec do dashboard §9).
 
 use iced::gradient::{self, Gradient};
-use iced::widget::{button, container, scrollable, text_input};
+use iced::overlay::menu;
+use iced::widget::{button, container, pick_list, scrollable, text_input};
 use iced::{Background, Border, Color, Degrees, Shadow, Theme, Vector};
 
 use crate::config::ThemeMode;
@@ -689,6 +690,41 @@ pub fn plain(color: Color) -> impl Fn(&Theme, button::Status) -> button::Style {
         background: None,
         text_color: color,
         ..button::Style::default()
+    }
+}
+
+/// Lista de modelos (`pick_list`): a mesma cara do campo de texto (fundo da janela, borda no
+/// divisor, acento aberta), para nao ser a unica peca com as cores derivadas do iced.
+pub fn pick(t: &'static Tokens) -> impl Fn(&Theme, pick_list::Status) -> pick_list::Style {
+    move |_, status| pick_list::Style {
+        text_color: t.text,
+        placeholder_color: t.text_muted,
+        handle_color: t.text_soft(),
+        background: Background::Color(t.bg),
+        border: outline(
+            if matches!(status, pick_list::Status::Opened { .. }) {
+                t.accent
+            } else {
+                t.divider()
+            },
+            8.0,
+        ),
+    }
+}
+
+/// Menu aberto do `pick_list`: o `menu` do hub (superficie, sombra media) e o escolhido com o
+/// acento a 10 %, como o item do menu de categoria.
+pub fn pick_menu(t: &'static Tokens) -> impl Fn(&Theme) -> menu::Style {
+    move |_| {
+        let (border, shadow) = t.shadow_md();
+        menu::Style {
+            background: Background::Color(t.surface),
+            border,
+            text_color: t.text,
+            selected_text_color: t.text,
+            selected_background: Background::Color(mix(t.surface, t.accent, 0.10)),
+            shadow,
+        }
     }
 }
 

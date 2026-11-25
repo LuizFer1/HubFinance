@@ -145,6 +145,9 @@ fn local_section(app: &App) -> Element<'_, Message> {
                     )
                     .placeholder("Escolha um modelo")
                     .text_size(13)
+                    .padding([8, 10])
+                    .style(theme::pick(t))
+                    .menu_style(theme::pick_menu(t))
                     .width(Length::Fill),
                 ]
                 .spacing(6),

@@ -96,6 +96,27 @@ pub fn file_appender(dir: &Path) -> Result<RollingFileAppender, InitError> {
         .build(dir)
 }
 
+/// Alvos de rede que o log nunca deve ver abaixo de `info`.
+const WIRE_TARGETS: [&str; 3] = ["ureq", "ureq_proto", "rustls"];
+
+/// Filtro do `RUST_LOG` (ou `DEFAULT_FILTER`) com as dependencias de rede travadas em `info`.
+/// O `tracing-log` repassa os registros `log` do ureq 3, cujo nivel TRACE e "wire level, NOT
+/// REDACTED": com `RUST_LOG=trace` a chave `Authorization: Bearer` e o envelope da nuvem iam
+/// parar em `hub.*.log`. As diretivas fixas entram depois das do usuario e, para o mesmo alvo,
+/// a ultima substitui a anterior, entao nem `trace` nem `ureq=trace` as afrouxam.
+pub fn build_filter(spec: Option<&str>) -> EnvFilter {
+    let mut filter = match spec {
+        Some(spec) => EnvFilter::try_new(spec).unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER)),
+        None => EnvFilter::new(DEFAULT_FILTER),
+    };
+    for target in WIRE_TARGETS {
+        if let Ok(directive) = format!("{target}=info").parse() {
+            filter = filter.add_directive(directive);
+        }
+    }
+    filter
+}
+
 /// Instala o subscriber global. Devolve a pasta de logs quando o arquivo esta ativo; `None`
 /// quando caiu para console (ja avisado por `warn!`). Chamado uma vez, em `main`.
 pub fn init(data_dir: &Path, offset: time::UtcOffset) -> Option<PathBuf> {
@@ -105,8 +126,7 @@ pub fn init(data_dir: &Path, offset: time::UtcOffset) -> Option<PathBuf> {
         .map_err(|err| err.to_string())
         .and_then(|()| file_appender(&logs_dir).map_err(|err| err.to_string()));
 
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER));
+    let filter = build_filter(std::env::var("RUST_LOG").ok().as_deref());
     // Fuso local, lido por `main` antes de qualquer thread: as horas do arquivo batem com as da
     // janela.
     let timer = OffsetTime::new(offset, Rfc3339);
@@ -165,6 +185,66 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if let Ok(mut inner) = self.0.lock() {
+                inner.extend_from_slice(buf);
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for Capture {
+        type Writer = Capture;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Emite TRACE/DEBUG nos alvos de rede e no do hub sob `spec`; devolve o que chegou ao log.
+    fn captured(spec: &str) -> String {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(build_filter(Some(spec)))
+            .with(fmt::layer().with_ansi(false).with_writer(capture.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::trace!(target: "ureq", "WIRE-ureq Authorization: Bearer segredo");
+            tracing::debug!(target: "ureq", "WIRE-ureq-debug");
+            tracing::trace!(target: "ureq_proto", "WIRE-proto");
+            tracing::trace!(target: "rustls", "WIRE-rustls");
+            tracing::debug!(target: "hub_finance", "HUB-debug");
+            tracing::info!(target: "ureq", "WIRE-ureq-info");
+        });
+        let bytes = capture.0.lock().map(|b| b.clone()).unwrap_or_default();
+        String::from_utf8(bytes).unwrap_or_default()
+    }
+
+    #[test]
+    fn rust_log_nao_baixa_o_nivel_das_dependencias_de_rede() {
+        for spec in [
+            "trace",
+            "debug",
+            "ureq=trace,ureq_proto=trace,rustls=trace",
+            "hub_finance=trace",
+        ] {
+            let out = captured(spec);
+            assert!(!out.contains("WIRE-ureq Authorization"), "{spec}: {out}");
+            assert!(!out.contains("WIRE-ureq-debug"), "{spec}: {out}");
+            assert!(!out.contains("WIRE-proto"), "{spec}: {out}");
+            assert!(!out.contains("WIRE-rustls"), "{spec}: {out}");
+            assert!(!out.contains("segredo"), "{spec}: {out}");
+            assert!(out.contains("WIRE-ureq-info"), "{spec}: {out}");
+        }
+        // O que o usuario pediu para o proprio hub continua valendo.
+        assert!(captured("trace").contains("HUB-debug"));
     }
 
     #[test]

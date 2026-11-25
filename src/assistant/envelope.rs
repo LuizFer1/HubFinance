@@ -13,7 +13,7 @@ use crate::dashboard::aggregate::{
 use crate::dashboard::budgets::budget_report;
 use crate::dashboard::contract::Book;
 use crate::dashboard::dataset::Dataset;
-use crate::dashboard::money::format_brl;
+use crate::dashboard::money::{format_brl, signed_brl};
 use crate::dashboard::periods::{last_months, month_of, shift_month};
 use crate::dashboard::reserves::{balance_until, emergency_view, ordered};
 
@@ -51,7 +51,9 @@ pub fn build(analysis: &Analysis, ds: &Dataset, today: &str, book: Book) -> Enve
             }
             for fig in &f.figures {
                 let v = match &fig.value {
-                    FigureValue::Money(m) => format_brl(*m),
+                    // Com sinal: "Sobra prevista" negativa e a falta que o titulo anuncia; em valor
+                    // absoluto o modelo leria uma sobra.
+                    FigureValue::Money(m) => signed_brl(*m),
                     FigureValue::Percent(p) => format!("{p}%"),
                     FigureValue::MonthsTenths(t) => format!("{},{} meses", t / 10, t % 10),
                     FigureValue::Count(n) => n.to_string(),
@@ -126,6 +128,13 @@ pub fn render(e: &Envelope) -> String {
     }
     let _ = writeln!(s, "\n## Receita e despesa por mês (meses fechados)");
     for (m, inc, exp) in &e.months {
+        // Mes sem nenhum valor e mes sem lancamento (o hub so conhece o que os celulares
+        // enviaram, e o historico pode comecar depois): "R$ 0,00" diria ao modelo que a casa
+        // nao gastou nada, e ele trataria isso como fato.
+        if *inc == 0 && *exp == 0 {
+            let _ = writeln!(s, "- {m}: sem lançamentos");
+            continue;
+        }
         let _ = writeln!(
             s,
             "- {m}: receita {}, despesa {}",
@@ -143,7 +152,7 @@ pub fn render(e: &Envelope) -> String {
             s,
             "- {m}: {}",
             if list.is_empty() {
-                "—".to_string()
+                "sem despesas".to_string()
             } else {
                 list.join("; ")
             }
@@ -166,7 +175,7 @@ pub fn render(e: &Envelope) -> String {
         let _ = writeln!(s, "- nenhuma");
     }
     for (n, bal) in &e.reserves {
-        let _ = writeln!(s, "- {n}: saldo {}", format_brl(*bal));
+        let _ = writeln!(s, "- {n}: saldo {}", signed_brl(*bal));
     }
     if let Some(g) = e.emergency_goal_minor {
         let _ = writeln!(s, "- Meta da reserva de emergência: {}", format_brl(g));
@@ -177,103 +186,366 @@ pub fn render(e: &Envelope) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::advisor::analyze;
-    use crate::dashboard::{GRAFITE_TODAY, fixtures_grafite};
+    use crate::advisor::{FindingKind, analyze};
+    use crate::dashboard::dataset::{
+        CATEGORIES, PAYMENT_METHODS, RECURRENCES, RESERVE_MOVEMENTS, RESERVES, TRANSACTIONS, USERS,
+    };
+    use crate::dashboard::money::MINUS;
+    use crate::dashboard::{GRAFITE_TODAY, dataset_of, fixtures, fixtures_grafite};
+    use serde_json::{Value, json};
 
-    fn rendered() -> (String, Dataset) {
-        let ds = fixtures_grafite().for_book(Book::Personal);
-        let a = analyze(&ds, GRAFITE_TODAY);
-        (render(&build(&a, &ds, GRAFITE_TODAY, Book::Personal)), ds)
+    const ALL_KINDS: [FindingKind; 9] = [
+        FindingKind::Pace,
+        FindingKind::Forecast,
+        FindingKind::CategoryAboveNormal,
+        FindingKind::Budget,
+        FindingKind::SavingsRate,
+        FindingKind::FixedWeight,
+        FindingKind::NextMonthCommitted,
+        FindingKind::Emergency,
+        FindingKind::Invoices,
+    ];
+
+    fn envelope_of(ds: &Dataset, today: &str) -> (String, Vec<FindingKind>) {
+        let a = analyze(ds, today);
+        let kinds = a.findings.iter().map(|f| f.kind).collect();
+        (render(&build(&a, ds, today, Book::Personal)), kinds)
     }
 
-    #[test]
-    fn tem_os_seis_meses_e_os_achados() {
-        let (s, _) = rendered();
-        assert!(s.contains("Conta: pessoal"));
-        assert!(s.contains("Mês de referência: 2026-11"));
-        for m in [
-            "2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10",
-        ] {
-            assert!(s.contains(m), "falta {m}");
+    fn grafite() -> Dataset {
+        fixtures_grafite().for_book(Book::Personal)
+    }
+
+    /// Dataset com nome-sentinela em todo campo que o envelope nao pode levar: pessoa viva e
+    /// apagada, forma de pagamento viva e apagada, categoria apagada (cujo gasto vira "Sem
+    /// categoria"), descricao de lancamento, de serie e de movimento de reserva. Renda de 1.000
+    /// em setembro e outubro e uma serie fixa de `series_amount` (com ou sem as ocorrencias
+    /// gravadas: com elas o peso do fixo dispara, sem elas dispara o comprometido do mes que
+    /// vem).
+    fn sentinel(series_amount: i64, occurrences: bool) -> Dataset {
+        let tx = |description: &str, kind: &str, amount: i64, on: &str, cat: Option<&str>| {
+            json!({
+                "kind": kind, "description": description, "amountMinor": amount,
+                "occurredOn": on, "categoryId": cat,
+                "userId": "U-VIVO", "paymentMethodId": "PM-CARTAO"
+            })
+        };
+        let mut rows: Vec<(&str, &str, bool, Value)> = vec![
+            (
+                USERS,
+                "U-VIVO",
+                false,
+                json!({ "name": "Zelda Sentinela", "color": "teal" }),
+            ),
+            (
+                USERS,
+                "U-APAGADO",
+                true,
+                json!({ "name": "Ex Sentinela", "color": "teal" }),
+            ),
+            (
+                CATEGORIES,
+                "CAT-MORADIA",
+                false,
+                json!({ "name": "Moradia", "icon": "tag", "color": "sky", "kind": "expense", "mergedInto": null }),
+            ),
+            (
+                CATEGORIES,
+                "CAT-APAGADA",
+                true,
+                json!({ "name": "Antiga Sentinela", "icon": "tag", "color": "sky", "kind": "expense", "mergedInto": null }),
+            ),
+            (
+                PAYMENT_METHODS,
+                "PM-CARTAO",
+                false,
+                json!({ "name": "Cartão Sentinela", "icon": "credit-card" }),
+            ),
+            (
+                PAYMENT_METHODS,
+                "PM-APAGADA",
+                true,
+                json!({ "name": "Forma Apagada Sentinela", "icon": "zap" }),
+            ),
+            (
+                RECURRENCES,
+                "REC-ALUGUEL",
+                false,
+                json!({
+                    "frequency": "monthly", "kind": "expense", "description": "Aluguel Sentinela",
+                    "amountMinor": series_amount, "currency": "BRL", "categoryId": null,
+                    "paymentMethodId": "PM-CARTAO", "cashbackMinor": null,
+                    "scheduleType": "dayOfMonth", "scheduleN": 5,
+                    "startOn": "2026-09-05", "endOn": null, "active": true, "userId": "U-VIVO"
+                }),
+            ),
+            (
+                TRANSACTIONS,
+                "TX-RENDA-9",
+                false,
+                tx("Salário Sentinela", "income", 100_000, "2026-09-05", None),
+            ),
+            (
+                TRANSACTIONS,
+                "TX-RENDA-10",
+                false,
+                tx("Salário Sentinela", "income", 100_000, "2026-10-05", None),
+            ),
+            (
+                TRANSACTIONS,
+                "TX-GASTO-9",
+                false,
+                json!({
+                    "kind": "expense", "description": "Gasto Sentinela apagado", "amountMinor": 5_000,
+                    "occurredOn": "2026-09-12", "categoryId": "CAT-APAGADA",
+                    "userId": "U-APAGADO", "paymentMethodId": "PM-APAGADA"
+                }),
+            ),
+            (
+                TRANSACTIONS,
+                "TX-GASTO-10",
+                false,
+                tx(
+                    "Gasto Sentinela solto",
+                    "expense",
+                    5_000,
+                    "2026-10-12",
+                    None,
+                ),
+            ),
+            (
+                RESERVES,
+                "RES-EMERG",
+                false,
+                json!({
+                    "kind": "emergency", "name": "Reserva de emergência", "icon": "lifebuoy",
+                    "color": "violet", "targetMinor": null, "multiple": 6,
+                    "essentialCategoryIds": null, "essentialOverrideMinor": 100_000,
+                    "deadline": null, "recurring": null
+                }),
+            ),
+            (
+                RESERVE_MOVEMENTS,
+                "MOV-DEPOSITO",
+                false,
+                json!({
+                    "reserveId": "RES-EMERG", "amountMinor": 50_000, "occurredOn": "2026-10-06",
+                    "userId": "U-VIVO", "description": "Depósito Sentinela", "reason": null,
+                    "recurring": false
+                }),
+            ),
+        ];
+        if occurrences {
+            for (id, on) in [
+                ("TX-ALUGUEL-9", "2026-09-05"),
+                ("TX-ALUGUEL-10", "2026-10-05"),
+            ] {
+                rows.push((
+                    TRANSACTIONS,
+                    id,
+                    false,
+                    json!({
+                        "kind": "expense", "description": "Aluguel Sentinela",
+                        "amountMinor": series_amount, "occurredOn": on,
+                        "categoryId": "CAT-MORADIA", "recurrenceId": "REC-ALUGUEL",
+                        "occurrenceKey": format!("REC-ALUGUEL:{}", &on[..7]),
+                        "userId": "U-VIVO", "paymentMethodId": "PM-CARTAO"
+                    }),
+                ));
+            }
         }
-        assert!(s.contains("## Achados"));
+        let ds = dataset_of(rows);
+        assert_eq!(
+            ds.ignored_total(),
+            0,
+            "linha fora do contrato: {:?}",
+            ds.ignored
+        );
+        ds.for_book(Book::Personal)
     }
 
-    #[test]
-    fn nunca_leva_descricao_pessoa_forma_de_pagamento_id_nem_data_exata() {
-        let (s, ds) = rendered();
+    /// Gasta mais do que ganha e deixa a reserva de emergencia no negativo: os numeros que
+    /// o modelo precisa ler COM sinal.
+    fn overspent() -> Dataset {
+        let tx = |kind: &str, amount: i64, on: &str| json!({ "kind": kind, "description": "Lançamento Sentinela", "amountMinor": amount, "occurredOn": on });
+        let ds = dataset_of(vec![
+            (
+                TRANSACTIONS,
+                "TX-R9",
+                false,
+                tx("income", 100_000, "2026-09-05"),
+            ),
+            (
+                TRANSACTIONS,
+                "TX-R10",
+                false,
+                tx("income", 100_000, "2026-10-05"),
+            ),
+            (
+                TRANSACTIONS,
+                "TX-D9",
+                false,
+                tx("expense", 150_000, "2026-09-10"),
+            ),
+            (
+                TRANSACTIONS,
+                "TX-D10",
+                false,
+                tx("expense", 150_000, "2026-10-10"),
+            ),
+            (
+                RESERVES,
+                "RES-EMERG",
+                false,
+                json!({
+                    "kind": "emergency", "name": "Reserva de emergência", "icon": "lifebuoy",
+                    "color": "violet", "targetMinor": null, "multiple": 6,
+                    "essentialCategoryIds": null, "essentialOverrideMinor": 100_000,
+                    "deadline": null, "recurring": null
+                }),
+            ),
+            (
+                RESERVE_MOVEMENTS,
+                "MOV-SAQUE",
+                false,
+                json!({
+                    "reserveId": "RES-EMERG", "amountMinor": -20_000, "occurredOn": "2026-10-06",
+                    "userId": null, "description": null, "reason": null, "recurring": false
+                }),
+            ),
+        ]);
+        assert_eq!(
+            ds.ignored_total(),
+            0,
+            "linha fora do contrato: {:?}",
+            ds.ignored
+        );
+        ds.for_book(Book::Personal)
+    }
 
-        // Nomes que PODEM aparecer (categorias, reservas e os rotulos de "sem ..."). Uma
-        // ocorrencia que cai inteira dentro de um desses nomes nao e vazamento ("Mercado" dentro
-        // da categoria "Mercado e feira"); qualquer outra e. Nao se apaga o nome do texto antes
-        // de procurar: "Mercado Pago" (forma de pagamento) perderia o "Mercado" e vazaria sem
-        // ser visto.
-        let allowed: Vec<String> = ds
+    /// Cada execucao do sentinela: nome, dataset e "hoje". Juntas tem de acender os nove
+    /// tipos de achado e levar "Sem categoria" a um envelope.
+    fn runs() -> Vec<(&'static str, Dataset, &'static str)> {
+        vec![
+            ("grafite", grafite(), GRAFITE_TODAY),
+            ("grafite com fatura a vencer", grafite(), "2026-11-28"),
+            (
+                "exemplo no meio de setembro",
+                fixtures().for_book(Book::Personal),
+                "2026-09-24",
+            ),
+            (
+                "exemplo com setembro fechado",
+                fixtures().for_book(Book::Personal),
+                "2026-10-03",
+            ),
+            ("fixo acima de 60%", sentinel(70_000, true), "2026-11-19"),
+            (
+                "comprometido acima de 70%",
+                sentinel(80_000, false),
+                "2026-11-19",
+            ),
+            ("saiu mais do que entrou", overspent(), "2026-11-19"),
+        ]
+    }
+
+    #[derive(Default, Debug)]
+    struct Checked {
+        descriptions: usize,
+        methods: usize,
+        people: usize,
+        ids: usize,
+        deleted_names: usize,
+    }
+
+    /// Tudo que e dado pessoal no dataset e nao pode estar em `s`, em TODAS as linhas (vivas
+    /// e apagadas), nao so nas que o envelope usa. Devolve os vazamentos e o que foi conferido.
+    fn check(s: &str, ds: &Dataset) -> (Vec<String>, Checked) {
+        // Nomes que PODEM aparecer. Uma ocorrencia que cai inteira dentro de um deles nao e
+        // vazamento ("Mercado" dentro de "Mercado e feira"); qualquer outra e. O nome nao e
+        // apagado do texto antes de procurar: "Mercado Pago" (forma de pagamento) perderia o
+        // "Mercado" e vazaria sem ser visto. Categoria apagada nao esta aqui: o gasto dela
+        // sai como "Sem categoria".
+        let allowed: Vec<&str> = ds
             .categories
             .values()
-            .map(|c| c.name.clone())
-            .chain(ds.reserves.values().map(|r| r.name.clone()))
-            .chain([
-                NO_CATEGORY_NAME.to_string(),
-                "Categoria removida".to_string(),
-            ])
-            .filter(|n| !n.is_empty())
+            .filter(|c| !c.deleted)
+            .map(|c| c.name.as_str())
+            .chain(
+                ds.reserves
+                    .values()
+                    .filter(|r| !r.deleted)
+                    .map(|r| r.name.as_str()),
+            )
+            .chain([NO_CATEGORY_NAME, "Categoria removida"])
             .collect();
         let covered: Vec<(usize, usize)> = allowed
             .iter()
-            .flat_map(|n| s.match_indices(n.as_str()).map(|(i, m)| (i, i + m.len())))
+            .filter(|n| !n.is_empty())
+            .flat_map(|n| s.match_indices(*n).map(|(i, m)| (i, i + m.len())))
             .collect();
         // Um nome que e ele mesmo permitido (descricao igual a categoria) nao se distingue.
         let leaks = |needle: &str| {
-            !allowed.iter().any(|n| n == needle)
+            !allowed.contains(&needle)
                 && s.match_indices(needle)
                     .any(|(i, m)| !covered.iter().any(|&(a, b)| a <= i && i + m.len() <= b))
         };
-        // Rotulos neutros do dataset para forma de pagamento ausente: nao identificam ninguem.
-        let neutral = [ds.payment_method_name(None), "Forma removida".to_string()];
 
-        // Nao-vacuo: o exemplo tem de ter o que o teste procura, senao ele passa por vazio.
-        let descriptions: Vec<&str> = ds
-            .alive_transactions()
-            .map(|t| t.description.trim())
-            .filter(|d| d.len() >= 3)
-            .collect();
-        let methods: Vec<String> = ds
-            .alive_transactions()
-            .map(|t| ds.payment_method_name(t.payment_method_id.as_deref()))
-            .filter(|p| p.len() >= 3 && !neutral.contains(p))
-            .collect();
-        let people: Vec<&str> = ds.alive_users().iter().map(|u| u.name.as_str()).collect();
-        assert!(descriptions.len() >= 5, "poucas descricoes no exemplo");
-        assert!(
-            !methods.is_empty(),
-            "o exemplo nao tem forma de pagamento nomeada"
-        );
-        assert!(!people.is_empty(), "o exemplo nao tem pessoa");
-        assert!(
-            ds.alive_reserves().count() > 0 && !ds.categories.is_empty(),
-            "o exemplo precisa de reservas e categorias (permitidas) no envelope"
-        );
-        assert!(
-            !covered.is_empty(),
-            "nomes de categoria/reserva deveriam estar no envelope"
-        );
-        // O teste enxerga o caso "Mercado Pago": sensivel que contem nome permitido.
-        assert!(!covered.is_empty() && leaks("Mercado Pago") == s.contains("Mercado Pago"));
-
-        for d in descriptions {
-            assert!(!leaks(d), "descricao vazou: {d}");
+        let mut out = Vec::new();
+        let mut seen = Checked::default();
+        let mut look = |what: &str, needle: &str, counter: &mut usize| {
+            let needle = needle.trim();
+            if needle.len() < 3 {
+                return;
+            }
+            *counter += 1;
+            if leaks(needle) {
+                out.push(format!("{what} vazou: {needle}"));
+            }
+        };
+        for t in ds.transactions.values() {
+            look("descricao", &t.description, &mut seen.descriptions);
         }
-        for pm in &methods {
-            assert!(!leaks(pm), "forma de pagamento vazou: {pm}");
+        for r in ds.recurrences.values() {
+            look(
+                "serie",
+                r.description.as_deref().unwrap_or(""),
+                &mut seen.descriptions,
+            );
         }
-        for u in &people {
-            assert!(!leaks(u), "pessoa vazou: {u}");
+        for m in ds.reserve_movements.values() {
+            look(
+                "descricao de movimento",
+                m.description.as_deref().unwrap_or(""),
+                &mut seen.descriptions,
+            );
         }
-        for n in &neutral {
-            assert!(!leaks(n), "rotulo interno vazou: {n}");
+        for p in ds.payment_methods.values() {
+            look("forma de pagamento", &p.name, &mut seen.methods);
+            if let Some(card) = &p.card {
+                look("banco", &card.bank, &mut seen.methods);
+            }
+            if p.deleted {
+                seen.deleted_names += 1;
+            }
         }
-
+        for u in ds.users.values() {
+            look("pessoa", &u.name, &mut seen.people);
+            if u.deleted {
+                seen.deleted_names += 1;
+            }
+        }
+        for c in ds.categories.values().filter(|c| c.deleted) {
+            look("categoria apagada", &c.name, &mut seen.deleted_names);
+        }
+        for b in ds.books.values() {
+            look("conta", &b.name, &mut seen.people);
+        }
+        // Rotulos internos de campo ausente nao identificam ninguem, mas nao sao para o modelo.
+        for label in [ds.payment_method_name(None), "Forma removida".to_string()] {
+            let mut ignored = 0;
+            look("rotulo interno", &label, &mut ignored);
+        }
         // Ids de qualquer tabela (>= 4 chars: "U1" e "C1" casariam com texto comum).
         let ids = ds
             .transactions
@@ -287,29 +559,119 @@ mod tests {
             .chain(ds.budgets.keys())
             .filter(|id| id.len() >= 4);
         for id in ids {
-            assert!(!s.contains(id.as_str()), "id vazou: {id}");
+            seen.ids += 1;
+            if s.contains(id.as_str()) {
+                out.push(format!("id vazou: {id}"));
+            }
         }
-
         // Nenhuma data exata AAAA-MM-DD (AAAA-MM, de mes, pode).
-        let is_date = |w: &[u8]| {
-            w.len() == 10
-                && w[..4].iter().all(u8::is_ascii_digit)
-                && w[4] == b'-'
-                && w[5..7].iter().all(u8::is_ascii_digit)
-                && w[7] == b'-'
-                && w[8..10].iter().all(u8::is_ascii_digit)
-        };
         for (i, w) in s.as_bytes().windows(10).enumerate() {
-            assert!(!is_date(w), "data exata vazou perto do byte {i}");
+            if is_exact_date(w) {
+                out.push(format!("data exata vazou perto do byte {i}"));
+            }
         }
-        // O detector enxerga uma data de verdade (senao o laco acima nao prova nada).
-        assert!(is_date(b"2026-11-19"));
-        assert!(!is_date(b"2026-11 R$"));
+        (out, seen)
+    }
+
+    fn is_exact_date(w: &[u8]) -> bool {
+        w.len() == 10
+            && w[..4].iter().all(u8::is_ascii_digit)
+            && w[4] == b'-'
+            && w[5..7].iter().all(u8::is_ascii_digit)
+            && w[7] == b'-'
+            && w[8..10].iter().all(u8::is_ascii_digit)
+    }
+
+    #[test]
+    fn tem_os_seis_meses_e_os_achados() {
+        let (s, _) = envelope_of(&grafite(), GRAFITE_TODAY);
+        assert!(s.contains("Conta: pessoal"));
+        assert!(s.contains("Mês de referência: 2026-11"));
+        for m in [
+            "2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10",
+        ] {
+            assert!(s.contains(m), "falta {m}");
+        }
+        assert!(s.contains("## Achados"));
+    }
+
+    #[test]
+    fn nunca_leva_descricao_pessoa_forma_de_pagamento_id_nem_data_exata() {
+        let mut kinds = std::collections::HashSet::new();
+        let mut total = Checked::default();
+        let mut sem_categoria = false;
+        for (name, ds, today) in runs() {
+            let (s, k) = envelope_of(&ds, today);
+            kinds.extend(k);
+            let (leaks, seen) = check(&s, &ds);
+            assert!(leaks.is_empty(), "{name}: {leaks:?}\n{s}");
+            // Nao-vacuo por execucao: ha o que procurar.
+            assert!(seen.descriptions > 0, "{name}: {seen:?}");
+            total.descriptions += seen.descriptions;
+            total.methods += seen.methods;
+            total.people += seen.people;
+            total.ids += seen.ids;
+            total.deleted_names += seen.deleted_names;
+            sem_categoria |= s.contains(NO_CATEGORY_NAME);
+            assert!(
+                !s.contains(&ds.payment_method_name(None)),
+                "{name}: rotulo de forma ausente no envelope"
+            );
+        }
+        // ... e no conjunto: tudo que o teste diz procurar existe nos exemplos.
+        assert!(total.methods >= 3 && total.people >= 4, "{total:?}");
+        assert!(total.ids >= 20, "{total:?}");
+        assert!(total.deleted_names >= 3, "{total:?}");
+        assert!(sem_categoria, "'Sem categoria' nunca chegou a um envelope");
+        for kind in ALL_KINDS {
+            assert!(kinds.contains(&kind), "nenhuma execucao gera {kind:?}");
+        }
+    }
+
+    /// O detector tem de gritar quando o texto leva um dos sentinelas: sem isto, um `check`
+    /// que nunca acha nada passaria em tudo. "Mercado Pago" e o caso dificil (contem o nome da
+    /// categoria "Mercado").
+    #[test]
+    fn o_detector_pega_cada_tipo_de_vazamento() {
+        let ds = grafite();
+        let (s, _) = envelope_of(&ds, GRAFITE_TODAY);
+        assert!(check(&s, &ds).0.is_empty());
+        for extra in [
+            "Mercado Pago",
+            "Gigi",
+            "Meli+",
+            "Amazon prime",
+            "Sem forma de pagamento",
+            "CAT-COMPRAS",
+            "vence em 2026-11-18",
+        ] {
+            let leaked = format!("{s}\n{extra}");
+            assert!(!check(&leaked, &ds).0.is_empty(), "nao pegou: {extra}");
+        }
+        let ds = sentinel(70_000, true);
+        let (s, _) = envelope_of(&ds, "2026-11-19");
+        assert!(check(&s, &ds).0.is_empty());
+        for extra in [
+            "Cartão Sentinela",
+            "Forma Apagada Sentinela",
+            "Zelda Sentinela",
+            "Ex Sentinela",
+            "Aluguel Sentinela",
+            "Depósito Sentinela",
+            "Salário Sentinela",
+            "Antiga Sentinela",
+            "TX-ALUGUEL-9",
+        ] {
+            let leaked = format!("{s}\n{extra}");
+            assert!(!check(&leaked, &ds).0.is_empty(), "nao pegou: {extra}");
+        }
+        assert!(is_exact_date(b"2026-11-19"));
+        assert!(!is_exact_date(b"2026-11 R$"));
     }
 
     #[test]
     fn categorias_do_envelope_sao_nomes_nunca_ids() {
-        let ds = fixtures_grafite().for_book(Book::Personal);
+        let ds = grafite();
         let a = analyze(&ds, GRAFITE_TODAY);
         let e = build(&a, &ds, GRAFITE_TODAY, Book::Personal);
         let names: Vec<&str> = e
@@ -327,6 +689,43 @@ mod tests {
         for n in names {
             assert!(known.contains(&n), "{n} nao e nome de categoria");
         }
+        // Gasto de categoria apagada ou sem categoria: "Sem categoria", nunca o id nem o nome.
+        let ds = sentinel(70_000, true);
+        let (s, _) = envelope_of(&ds, "2026-11-19");
+        assert!(s.contains("Sem categoria R$ 50,00"), "{s}");
+    }
+
+    #[test]
+    fn dinheiro_negativo_leva_sinal() {
+        // A falta prevista do grafite: o titulo diz "faltar" e a figura tem de ser negativa.
+        let (s, _) = envelope_of(&grafite(), GRAFITE_TODAY);
+        assert!(
+            s.contains(&format!("Sobra prevista: {MINUS}R$ 960,00")),
+            "{s}"
+        );
+
+        let (s, kinds) = envelope_of(&overspent(), "2026-11-19");
+        assert!(kinds.contains(&FindingKind::SavingsRate));
+        assert!(s.contains(&format!("sobra {MINUS}R$ 500,00")), "{s}");
+        assert!(s.contains(&format!("Sobra média: {MINUS}R$ 500,00")), "{s}");
+        assert!(kinds.contains(&FindingKind::Emergency));
+        assert!(s.contains(&format!("Saldo {MINUS}R$ 200,00")), "{s}");
+        assert!(
+            s.contains(&format!("Saldo da reserva: {MINUS}R$ 200,00")),
+            "{s}"
+        );
+        assert!(
+            s.contains(&format!("Reserva de emergência: saldo {MINUS}R$ 200,00")),
+            "{s}"
+        );
+    }
+
+    #[test]
+    fn mes_sem_lancamento_nao_vira_zero_de_verdade() {
+        let (s, _) = envelope_of(&grafite(), GRAFITE_TODAY);
+        assert!(s.contains("- 2026-05: sem lançamentos"), "{s}");
+        assert!(!s.contains("2026-05: receita"), "{s}");
+        assert!(s.contains("- 2026-10: receita R$ 5.072,29"), "{s}");
     }
 
     #[test]
@@ -341,6 +740,7 @@ mod tests {
 
     #[test]
     fn render_e_deterministico() {
-        assert_eq!(rendered().0, rendered().0);
+        let a = envelope_of(&grafite(), GRAFITE_TODAY).0;
+        assert_eq!(a, envelope_of(&grafite(), GRAFITE_TODAY).0);
     }
 }

@@ -356,9 +356,12 @@ impl Hub {
     }
 
     fn spawn_chat(&mut self) {
-        let Some(job) = self.assistant.prepare_send() else {
-            return;
-        };
+        if let Some(job) = self.assistant.prepare_send() {
+            self.spawn_job(job);
+        }
+    }
+
+    fn spawn_job(&self, job: Job) {
         let tx = self.assistant_tx.clone();
         tokio::task::spawn_blocking(move || run_job(job, &tx));
     }
@@ -366,7 +369,11 @@ impl Hub {
     fn on_worker(&mut self, ev: WorkerEvent) {
         match ev {
             WorkerEvent::Delta(d) => self.assistant.delta(&d),
-            WorkerEvent::Done { reply_id, result } => self.assistant.finish(reply_id, result),
+            WorkerEvent::Done { reply_id, result } => {
+                if let Some(next) = self.assistant.finish(reply_id, result) {
+                    self.spawn_job(next);
+                }
+            }
             WorkerEvent::Models(d, r) => self.assistant.set_models(&d, r),
         }
         self.snap.assistant = self.assistant.view().clone();

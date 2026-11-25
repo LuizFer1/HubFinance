@@ -37,6 +37,11 @@ pub struct AssistantService {
     secrets: Box<dyn SecretStore>,
     view: AssistantView,
     inflight: Option<Inflight>,
+    /// Conversa que pediu um envio enquanto outra resposta ainda estava a caminho (iniciar uma
+    /// conversa com outra em andamento cancela a anterior, mas o cancelamento so vale quando
+    /// o trabalhador termina). Sem isto o pedido de abertura da conversa nova era descartado e
+    /// ela ficava sem resposta. `finish` o retoma se a conversa ainda for a aberta.
+    pending_send: Option<String>,
     /// Conversas fechadas desta sessao (Issue 06 troca por `history`).
     stash: Vec<OpenConversation>,
 }
@@ -58,6 +63,7 @@ impl AssistantService {
                 ..AssistantView::default()
             },
             inflight: None,
+            pending_send: None,
             stash: Vec::new(),
         }
     }
@@ -189,6 +195,13 @@ impl AssistantService {
     /// conversa aberta, ou se ja ha resposta em andamento.
     pub fn prepare_send(&mut self) -> Option<Job> {
         if self.view.busy {
+            // Lembra para quem era, mas so se for outra conversa: um reenvio para a que ja esta
+            // sendo respondida a mandaria duas vezes.
+            self.pending_send = self.view.open.as_ref().map(|o| o.id.clone()).filter(|id| {
+                self.inflight
+                    .as_ref()
+                    .is_none_or(|f| f.conversation_id != *id)
+            });
             return None;
         }
         let to_cloud = self
@@ -257,7 +270,25 @@ impl AssistantService {
         }
     }
 
-    pub fn finish(&mut self, reply_id: String, result: Result<ChatOutcome, AssistantError>) {
+    /// Grava o resultado e, se outra conversa ficou esperando a vez (`pending_send`), devolve o
+    /// proximo trabalho: quem chama (o nucleo) precisa dispara-lo.
+    pub fn finish(
+        &mut self,
+        reply_id: String,
+        result: Result<ChatOutcome, AssistantError>,
+    ) -> Option<Job> {
+        self.record(reply_id, result);
+        let waiting = self.pending_send.take()?;
+        let open = self.view.open.as_ref().filter(|o| o.id == waiting)?;
+        // So ha o que enviar se a ultima fala for do usuario; senao o pedido ja foi atendido.
+        if open.messages.last().map(|m| m.role) != Some(MessageRole::User) {
+            return None;
+        }
+        // O consentimento da nuvem e as demais regras valem como em qualquer envio.
+        self.prepare_send()
+    }
+
+    fn record(&mut self, reply_id: String, result: Result<ChatOutcome, AssistantError>) {
         self.view.busy = false;
         self.view.streaming = None;
         let Some(inflight) = self.inflight.take() else {
@@ -553,6 +584,85 @@ mod tests {
         s.save_settings(st);
         s.save_key("sk-or-x");
         s
+    }
+
+    /// Abre A, deixa a resposta dela a caminho e abre B por cima (o que cancela A).
+    fn a_respondendo_e_b_aberta(s: &mut AssistantService) -> (Job, String) {
+        s.new_conversation(Book::Personal, "a".into(), "ENV-A".into());
+        let job_a = s.prepare_send().expect("job de A");
+        s.new_conversation(Book::Personal, "b".into(), "ENV-B".into());
+        let b = s.view().open.as_ref().unwrap().id.clone();
+        // O pedido de abertura de B chega com A ainda ocupada.
+        assert!(s.prepare_send().is_none());
+        (job_a, b)
+    }
+
+    #[test]
+    fn conversa_nova_com_outra_respondendo_envia_a_abertura_quando_a_outra_termina() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = svc(dir.path());
+        let (job_a, b) = a_respondendo_e_b_aberta(&mut s);
+        let next = s
+            .finish(job_a.reply_id, Ok(ChatOutcome::default()))
+            .expect("B recebe a vez");
+        assert!(s.view().busy);
+        assert!(next.request.messages[0].content.contains("ENV-B"));
+        assert_eq!(s.view().open.as_ref().unwrap().id, b);
+        // A resposta da B cai na B.
+        s.finish(next.reply_id, Ok(ChatOutcome::default()));
+        assert_eq!(s.view().open.as_ref().unwrap().messages.len(), 2);
+        // E nada fica pendente depois.
+        assert!(s.pending_send.is_none());
+    }
+
+    #[test]
+    fn pedido_pendente_de_conversa_apagada_ou_fechada_nao_envia_nada() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let mut s = svc(dir.path());
+        let (job_a, b) = a_respondendo_e_b_aberta(&mut s);
+        s.delete_conversation(&b);
+        assert!(
+            s.finish(job_a.reply_id, Ok(ChatOutcome::default()))
+                .is_none()
+        );
+        assert!(!s.view().busy);
+
+        let mut s = svc(dir.path());
+        let (job_a, _b) = a_respondendo_e_b_aberta(&mut s);
+        s.close_conversation();
+        assert!(
+            s.finish(job_a.reply_id, Ok(ChatOutcome::default()))
+                .is_none()
+        );
+        assert!(!s.view().busy);
+    }
+
+    #[test]
+    fn reenvio_para_a_conversa_que_ja_responde_nao_manda_duas_vezes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = svc(dir.path());
+        s.new_conversation(Book::Personal, "a".into(), "E".into());
+        let job = s.prepare_send().expect("job");
+        assert!(s.prepare_send().is_none());
+        assert!(s.finish(job.reply_id, Ok(ChatOutcome::default())).is_none());
+    }
+
+    #[test]
+    fn pedido_pendente_da_nuvem_sem_consentimento_nao_gera_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = cloud_svc(dir.path());
+        s.new_conversation(Book::Personal, "a".into(), "ENV-A".into());
+        let id_a = s.view().open.as_ref().unwrap().id.clone();
+        assert!(s.grant_cloud_consent(&id_a));
+        let job_a = s.prepare_send().expect("job de A");
+        s.new_conversation(Book::Personal, "b".into(), "ENV-B".into());
+        assert!(s.prepare_send().is_none());
+        assert!(
+            s.finish(job_a.reply_id, Ok(ChatOutcome::default()))
+                .is_none()
+        );
+        assert!(!s.view().busy);
     }
 
     #[test]

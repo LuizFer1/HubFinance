@@ -75,16 +75,12 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
     .size(13)
     .line_height(1.5)
     .color(t.text_soft());
-    // Monoespaçada do sistema: o app não embute uma; é só para o texto cru alinhar.
+    // Fonte padrão do app (Inter Hub, com `tnum`: os dígitos alinham). O app não embute uma
+    // monoespaçada, e a do sistema teria cobertura incerta para "—" e "−".
     let content = container(scrollable(
-        container(
-            text(preview)
-                .size(12)
-                .font(iced::Font::MONOSPACE)
-                .color(t.text),
-        )
-        .padding(12)
-        .width(Length::Fill),
+        container(text(preview).size(12).font(fonts::INTER).color(t.text))
+            .padding(12)
+            .width(Length::Fill),
     ))
     .height(Length::Fill)
     .style(theme::card(t));

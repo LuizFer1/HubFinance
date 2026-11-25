@@ -2851,6 +2851,26 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn previa_aberta_monta_pela_raiz_em_janelas_grandes_e_pequenas() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        let _ = update(&mut app, Message::ShowEnvelope);
+        for hidden in [false, true] {
+            app.hide_values = hidden;
+            for (w, h) in [
+                (1400.0, 900.0),
+                (900.0, 600.0),
+                (420.0, 300.0),
+                (120.0, 80.0),
+            ] {
+                app.window_size = Size::new(w, h);
+                let _ = super::super::shell::root(&app);
+            }
+        }
+    }
+
+    #[test]
     fn previa_aberta_acompanha_a_troca_de_conta_e_os_dados() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _tx) = app_with_business(dir.path(), true, false);

@@ -213,10 +213,11 @@ pub struct App {
     /// O que esta no campo "Porta": so digitos, ate 5. Pode estar invalido (vazio, 0, 70000)
     /// sem que nada seja gravado; a porta gravada continua a do `assistant.json`.
     pub(super) port_input: String,
-    /// O `Arc` do dataset do snapshot quando a conversa comecou, comparado por ponteiro com o
-    /// atual para o aviso "os dados mudaram" (spec 3). `None` = conversa reaberta do
-    /// historico: nao se sabe de quando eram os dados, entao nao ha o que comparar.
-    pub(super) chat_dataset: Option<std::sync::Arc<Dataset>>,
+    /// O envelope desta conta agora (nunca mascarado), recalculado so em `rebuild`: a previa, o
+    /// envio e o aviso "os dados mudaram" (spec 3) leem o mesmo texto sem refazer as agregacoes
+    /// a cada quadro. O aviso compara com o envelope guardado na conversa, entao vale tambem
+    /// para conversa reaberta do historico e nao dispara com sync de outra conta.
+    pub(super) envelope_now: String,
     /// "Apagar todas" armado: o segundo clique antes do prazo apaga. Expira no `Tick`, para um
     /// clique esquecido nao deixar o botao perigoso armado para sempre.
     pub(super) confirm_delete_all: Option<Instant>,
@@ -311,6 +312,8 @@ pub enum Message {
     ToggleAssistantSettings,
     SettingsProvider(ProviderChoice),
     SettingsPort(String),
+    /// Enter no campo da porta: grava se for valida.
+    SettingsPortSubmit,
     SettingsLocalModel(String),
     RefreshModels,
     Noop,
@@ -377,7 +380,7 @@ impl App {
             chat_input: String::new(),
             assistant_settings_open: false,
             port_input: snapshot_port,
-            chat_dataset: None,
+            envelope_now: String::new(),
             confirm_delete_all: None,
             desktop,
             tooltip: String::new(),
@@ -445,6 +448,7 @@ impl App {
         self.transactions = build_transactions(dataset, &self.today, &month, &self.filters);
         self.reserves = build_reserves(dataset, &self.today);
         self.analysis = crate::advisor::analyze(dataset, &self.today);
+        self.envelope_now = self.compute_envelope();
         if self.envelope_preview.is_some() {
             self.envelope_preview = Some(self.current_envelope());
         }
@@ -469,6 +473,10 @@ impl App {
 
     /// O texto que o assistente recebe nesta conta agora; a prévia e o envio usam este mesmo.
     pub(super) fn current_envelope(&self) -> String {
+        self.envelope_now.clone()
+    }
+
+    fn compute_envelope(&self) -> String {
         crate::assistant::envelope::render(&crate::assistant::envelope::build(
             &self.analysis,
             &self.scope,
@@ -493,6 +501,19 @@ impl App {
     fn select_book(&mut self, book: Book) {
         if self.book == book {
             return;
+        }
+        // A conversa aberta e de uma conta so; ficar aberta na outra deixaria uma resposta
+        // chegando para numeros que sumiram da tela. Fechar cancela o que estiver em andamento
+        // e a guarda na lista. Aqui (e nao no clique) porque `rebuild` tambem troca de conta
+        // quando a comercial some do hub.
+        if self
+            .snapshot
+            .assistant
+            .open
+            .as_ref()
+            .is_some_and(|c| c.book != book)
+        {
+            send_assistant(self, AssistantCommand::Close);
         }
         self.book = book;
         self.filters = Filters::default();
@@ -1151,7 +1172,6 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 app.open_assistant_settings();
                 return Task::none();
             };
-            app.chat_dataset = Some(std::sync::Arc::clone(&app.snapshot.dashboard));
             app.chat_input.clear();
             let title = format!("Análise de {}", month_label(&app.analysis.month));
             // O envelope sai inteiro, nunca o mascarado: "Ocultar valores" e so de quem olha.
@@ -1195,13 +1215,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::OpenConversation(id) => {
-            // Conversa do historico: nao se sabe de quando eram os dados.
-            app.chat_dataset = None;
             send_assistant(app, AssistantCommand::Open(id));
             Task::none()
         }
         Message::CloseConversation => {
-            app.chat_dataset = None;
             send_assistant(app, AssistantCommand::Close);
             Task::none()
         }
@@ -1215,7 +1232,6 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 .take()
                 .is_some_and(|deadline| Instant::now() < deadline);
             if armed {
-                app.chat_dataset = None;
                 send_assistant(app, AssistantCommand::DeleteAll);
             } else {
                 app.confirm_delete_all = Some(Instant::now() + DELETE_ALL_ARMED_FOR);
@@ -1242,11 +1258,15 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SettingsPort(text) => {
+            // So filtra: gravar a cada tecla salvaria "1", "11", "114"... como portas validas.
             app.port_input = text
                 .chars()
                 .filter(char::is_ascii_digit)
                 .take(PORT_DIGITS)
                 .collect();
+            Task::none()
+        }
+        Message::SettingsPortSubmit => {
             let settings = &app.snapshot.assistant.settings;
             if let Ok(port) = app.port_input.parse::<u16>()
                 && port > 0
@@ -3188,11 +3208,6 @@ pub(super) mod tests {
             ]
         );
         assert!(!app.assistant_settings_open);
-        assert!(
-            app.chat_dataset
-                .as_ref()
-                .is_some_and(|d| std::sync::Arc::ptr_eq(d, &app.snapshot.dashboard))
-        );
     }
 
     #[test]
@@ -3219,7 +3234,6 @@ pub(super) mod tests {
             assert!(!app.assistant_settings_open);
             let _ = update(&mut app, Message::StartConversation);
             assert!(app.assistant_settings_open);
-            assert!(app.chat_dataset.is_none());
             assert!(drain(&mut rx).is_empty());
         }
     }
@@ -3343,31 +3357,35 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn porta_aceita_so_digitos_ate_cinco_e_so_grava_porta_valida() {
+    fn porta_filtra_ao_digitar_e_so_grava_porta_valida_no_enter() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        // Digitar so filtra: nenhuma tecla grava.
         let _ = update(&mut app, Message::SettingsPort("11a5b00".into()));
         assert_eq!(app.port_input, "11500");
+        assert!(drain(&mut rx).is_empty());
+        let _ = update(&mut app, Message::SettingsPortSubmit);
         let mut expected = local_settings(Some("m"));
         expected.local.port = 11500;
         assert_eq!(
             drain(&mut rx),
             vec![Command::Assistant(AssistantCommand::SaveSettings(expected))]
         );
-        // Invalidas: o campo mostra o que foi digitado e nada e gravado.
-        for (typed, shown) in [
-            ("", ""),
-            ("0", "0"),
-            ("70000", "70000"),
-            ("1234567", "12345"),
-        ] {
+        // Invalidas: o campo mostra o que foi digitado e o Enter nao grava nada.
+        for (typed, shown) in [("", ""), ("0", "0"), ("70000", "70000")] {
             let _ = update(&mut app, Message::SettingsPort(typed.into()));
             assert_eq!(app.port_input, shown);
+            let _ = update(&mut app, Message::SettingsPortSubmit);
         }
-        let sent = drain(&mut rx);
-        // So "12345" (digitado como 1234567, cortado em 5) e uma porta valida.
-        assert_eq!(sent.len(), 1);
+        assert!(drain(&mut rx).is_empty());
+        // No maximo 5 digitos; a porta ja gravada nao e regravada.
+        let _ = update(&mut app, Message::SettingsPort("1234567".into()));
+        assert_eq!(app.port_input, "12345");
+        let _ = update(&mut app, Message::SettingsPort("11434".into()));
+        let _ = update(&mut app, Message::SettingsPortSubmit);
+        assert!(drain(&mut rx).is_empty());
         // Abrir o painel de novo mostra a porta gravada, nao o rascunho.
+        let _ = update(&mut app, Message::SettingsPort("9".into()));
         let _ = update(&mut app, Message::ToggleAssistantSettings);
         assert!(app.assistant_settings_open);
         assert_eq!(app.port_input, "11434");
@@ -3415,22 +3433,85 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn aviso_de_dados_mudados_compara_o_ponteiro_do_dataset() {
+    fn aviso_de_dados_mudados_compara_o_envelope_da_conversa_com_o_de_agora() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
         let changed = super::super::analysis_view::data_changed;
-        assert!(
-            !changed(&app),
-            "sem conversa iniciada aqui nao ha o que comparar"
+        assert!(!changed(&app), "sem conversa aberta nao ha aviso");
+
+        // O nucleo publica a conversa com o envelope que a UI mandou.
+        let mut open = open_conv(app.book, vec![]);
+        open.envelope = app.current_envelope();
+        app.snapshot.assistant.open = Some(open);
+        assert!(!changed(&app));
+
+        // Sync que nao mexe nos numeros desta conta (outro `Arc`, mesmo conteudo): sem aviso.
+        let mut snap = app.snapshot.clone();
+        snap.dashboard = std::sync::Arc::new(crate::dashboard::fixtures());
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert!(!changed(&app));
+
+        // Dados que mudam o envelope: aviso.
+        let before = app.current_envelope();
+        let mut snap = app.snapshot.clone();
+        snap.dashboard = std::sync::Arc::new(crate::dashboard::fixtures_grafite());
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert_ne!(
+            app.current_envelope(),
+            before,
+            "o teste precisa de dados que mudem o envelope"
         );
-        let _ = update(&mut app, Message::StartConversation);
-        assert!(!changed(&app));
-        // Mesmo conteudo, outro `Arc`: o hub publicou um dataset novo.
-        app.snapshot.dashboard = std::sync::Arc::new(crate::dashboard::fixtures());
         assert!(changed(&app));
-        // Conversa reaberta do historico: sem referencia, sem aviso.
-        let _ = update(&mut app, Message::OpenConversation("C1".into()));
+
+        // Conversa antiga reaberta, de quando os dados eram outros: aviso tambem.
+        let mut old = open_conv(app.book, vec![]);
+        old.envelope = "envelope antigo".into();
+        app.snapshot.assistant.open = Some(old);
+        assert!(changed(&app));
+
+        // Conversa da outra conta nao e mostrada, entao nao avisa.
+        let mut other = open_conv(Book::Business, vec![]);
+        other.envelope = "envelope antigo".into();
+        app.snapshot.assistant.open = Some(other);
         assert!(!changed(&app));
+    }
+
+    #[test]
+    fn pergunta_sem_resposta_e_sem_nada_em_andamento_monta_com_tentar_de_novo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        app.snapshot.assistant.open =
+            Some(open_conv(app.book, vec![msg(MessageRole::User, "Resuma")]));
+        let _ = super::super::analysis_view::view(&app);
+        // O botao manda `ChatRetry`, que reenvia a pergunta que ficou sem resposta.
+        let _ = update(&mut app, Message::ChatRetry);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::Resend)]
+        );
+    }
+
+    #[test]
+    fn trocar_de_conta_fecha_a_conversa_aberta_da_outra() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), true, false);
+        // `app_with_business` descarta o receptor; troca por um canal nosso.
+        let (cmd_tx, mut rx) = mpsc::unbounded_channel();
+        app.handle.commands = cmd_tx;
+        app.snapshot.assistant.open = Some(open_conv(Book::Personal, vec![]));
+        // Conversa da conta que fica: nada a fechar.
+        let _ = update(&mut app, Message::SelectBook(Book::Personal));
+        assert!(drain(&mut rx).is_empty());
+        let _ = update(&mut app, Message::SelectBook(Book::Business));
+        assert_eq!(app.book, Book::Business);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::Close)]
+        );
+        // Sem conversa aberta, trocar de conta nao manda nada.
+        app.snapshot.assistant.open = None;
+        let _ = update(&mut app, Message::SelectBook(Book::Personal));
+        assert!(drain(&mut rx).is_empty());
     }
 
     #[test]
@@ -3464,8 +3545,7 @@ pub(super) mod tests {
         app.assistant_settings_open = true;
         app.confirm_delete_all = Some(Instant::now() + DELETE_ALL_ARMED_FOR);
         app.chat_input = "e depois?".into();
-        // Dados mudaram: a faixa aparece.
-        app.snapshot.dashboard = std::sync::Arc::new(crate::dashboard::fixtures());
+        // Envelope da conversa diferente do de agora: a faixa aparece.
 
         let models = [
             None,

@@ -117,6 +117,7 @@ fn local_section(app: &App) -> Element<'_, Message> {
         text("Porta").size(13).color(t.text_soft()),
         text_input("11434", &app.port_input)
             .on_input(Message::SettingsPort)
+            .on_submit(Message::SettingsPortSubmit)
             .size(13)
             .width(90)
             .padding([8, 10])

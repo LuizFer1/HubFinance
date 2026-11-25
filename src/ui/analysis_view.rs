@@ -1,6 +1,8 @@
 //! Tela Analise: os achados de `advisor` como cartoes (sempre, sem rede); o chat entra depois.
 //! Tudo vem de `app.analysis` (calculado em `App::rebuild`); aqui so se monta a arvore.
 
+use std::borrow::Cow;
+
 use iced::widget::{
     Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text, text_input,
 };
@@ -104,12 +106,11 @@ pub(super) fn open_conversation(app: &App) -> Option<&OpenConversation> {
         .filter(|c| c.book == app.book)
 }
 
-/// Os dados do hub mudaram desde que a conversa comecou (comparacao por ponteiro do `Arc`,
-/// spec 3). Conversa reaberta do historico (`chat_dataset == None`) nao tem de onde comparar.
+/// Os dados da conta mudaram desde que a conversa comecou (spec 3): o envelope guardado nela
+/// difere do de agora. Comparar o texto (e nao o ponteiro do `Arc` do dataset) faz valer
+/// tambem para conversa reaberta do historico e ignora sync que nao mexeu nesta conta.
 pub(super) fn data_changed(app: &App) -> bool {
-    app.chat_dataset
-        .as_ref()
-        .is_some_and(|started| !std::sync::Arc::ptr_eq(started, &app.snapshot.dashboard))
+    open_conversation(app).is_some_and(|c| c.envelope != app.envelope_now)
 }
 
 /// Conversas da conta que a tela mostra (cada uma e presa a uma conta).
@@ -211,14 +212,19 @@ fn message_bubble<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Elemen
     let t = app.tokens;
     let content = mask(app, &m.content);
     match m.role {
-        MessageRole::User => row![
-            Space::new().width(Length::Fill),
-            container(text(content).size(14).color(t.text))
+        MessageRole::User => {
+            let bubble = container(text(content).size(14).color(t.text))
                 .padding([8, 12])
                 .max_width(520)
-                .style(theme::fill(t.surface_2, 10.0)),
-        ]
-        .into(),
+                .style(theme::fill(t.surface_2, 10.0));
+            // Pergunta sem resposta e sem nada em andamento (a abertura nao saiu, ou o envio
+            // morreu antes do erro virar mensagem): sem este botao a conversa ficaria parada.
+            let mut side = column![bubble].spacing(6).align_x(Alignment::End);
+            if is_last {
+                side = side.push(retry_button(t));
+            }
+            row![Space::new().width(Length::Fill), side].into()
+        }
         MessageRole::Assistant => {
             let mut notes = vec![match (m.tokens_in, m.tokens_out) {
                 (Some(i), Some(o)) => tokens_label((i, o)),
@@ -246,12 +252,7 @@ fn message_bubble<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Elemen
         MessageRole::Error => {
             let mut body = column![text(content).size(14).color(t.expense_fg)].spacing(8);
             if is_last {
-                body = body.push(
-                    button(text("Tentar de novo").size(13).font(fonts::INTER_MEDIUM))
-                        .padding([4, 10])
-                        .style(theme::danger_outline(t))
-                        .on_press(Message::ChatRetry),
-                );
+                body = body.push(retry_button(t));
             }
             row![
                 container(body)
@@ -265,10 +266,18 @@ fn message_bubble<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Elemen
     }
 }
 
-fn streaming_bubble<'a>(app: &'a App, partial: &str) -> Element<'a, Message> {
+fn retry_button(t: &'static Tokens) -> Element<'static, Message> {
+    button(text("Tentar de novo").size(13).font(fonts::INTER_MEDIUM))
+        .padding([4, 10])
+        .style(theme::danger_outline(t))
+        .on_press(Message::ChatRetry)
+        .into()
+}
+
+fn streaming_bubble<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> {
     let t = app.tokens;
     let shown = if partial.is_empty() {
-        "…".to_string()
+        Cow::Borrowed("…")
     } else {
         mask(app, partial)
     };
@@ -361,7 +370,7 @@ fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
 /// O texto da prévia como aparece na tela: com "Ocultar valores" ligado cada R$ vira a máscara
 /// (quem esconde os valores não os quer à vista nem aqui). O que SAI para o assistente é
 /// sempre `App::current_envelope`, sem máscara; a máscara é só de quem olha.
-pub(super) fn preview_text(app: &App) -> Option<String> {
+pub(super) fn preview_text(app: &App) -> Option<Cow<'_, str>> {
     app.envelope_preview.as_deref().map(|s| mask(app, s))
 }
 
@@ -460,11 +469,11 @@ fn finding_card<'a>(app: &'a App, f: &'a Finding) -> Element<'a, Message> {
 /// "Ocultar valores": os textos dos achados trazem o dinheiro ja formatado ("R$ 1.234,56"),
 /// entao a tela troca cada valor pela mascara em vez de formatar de novo. Sem isto o numero
 /// vazaria por cima do botao de ocultar.
-fn mask(app: &App, s: &str) -> String {
+fn mask<'a>(app: &App, s: &'a str) -> Cow<'a, str> {
     if app.hide_values {
-        mask_str(s)
+        Cow::Owned(mask_str(s))
     } else {
-        s.to_string()
+        Cow::Borrowed(s)
     }
 }
 

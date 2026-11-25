@@ -7,8 +7,6 @@ pub mod destination;
 pub mod envelope;
 #[cfg(test)]
 pub mod fake;
-// Ligado ao servico na proxima etapa; ate la nada o chama fora dos testes.
-#[allow(dead_code)]
 pub mod history;
 pub mod prompt;
 pub mod provider;

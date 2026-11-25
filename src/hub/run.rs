@@ -185,7 +185,7 @@ async fn boot(
         snap: snap.clone(),
         dashboard: DashboardState::default(),
         refresh_due: None,
-        assistant: AssistantService::open(&config.data_dir, secrets),
+        assistant: AssistantService::open(&config.data_dir, secrets, Box::new(history_clock)),
         assistant_tx,
         assistant_rx,
     };
@@ -198,6 +198,15 @@ async fn boot(
         hub.snap.log(ActivityKind::Warning, "Sem rede local");
     }
     Ok(hub)
+}
+
+/// Hora (UTC, com milissegundos) que o historico do assistente grava para exibir; o relogio de
+/// parede entra aqui e so aqui, o servico o recebe injetado.
+fn history_clock() -> String {
+    const FMT: &[time::format_description::FormatItem<'static>] = time::macros::format_description!(
+        "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
+    );
+    OffsetDateTime::now_utc().format(FMT).unwrap_or_default()
 }
 
 fn network_status(ips: &[Ipv4Addr]) -> Status {
@@ -732,6 +741,14 @@ impl Hub {
 mod tests {
     use super::*;
     use crate::assistant::provider::{CancelFlag, ChatRequest, Provider};
+
+    #[test]
+    fn relogio_do_historico_tem_milissegundos_em_utc() {
+        let t = history_clock();
+        // AAAA-MM-DDTHH:MM:SS.mmmZ: largura fixa, para o texto tambem ordenar por hora.
+        assert_eq!(t.len(), 24, "{t}");
+        assert!(t.ends_with('Z') && t.as_bytes()[10] == b'T' && t.as_bytes()[19] == b'.');
+    }
 
     struct Panicking;
 

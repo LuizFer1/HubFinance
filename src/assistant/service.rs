@@ -54,12 +54,14 @@ impl AssistantService {
     pub fn open(dir: &Path, secrets: Box<dyn SecretStore>) -> Self {
         let settings = Settings::load(dir);
         let has_key = secrets.load().ok().flatten().is_some();
+        let key_encrypted = secrets.encrypted();
         AssistantService {
             dir: dir.to_path_buf(),
             secrets,
             view: AssistantView {
                 settings,
                 has_key,
+                key_encrypted,
                 ..AssistantView::default()
             },
             inflight: None,
@@ -796,6 +798,30 @@ mod tests {
         fn encrypted(&self) -> bool {
             true
         }
+    }
+
+    #[test]
+    fn view_diz_se_a_chave_fica_cifrada() {
+        struct Plain;
+        impl SecretStore for Plain {
+            fn load(&self) -> std::io::Result<Option<String>> {
+                Ok(None)
+            }
+            fn save(&self, _: &str) -> std::io::Result<()> {
+                Ok(())
+            }
+            fn clear(&self) -> std::io::Result<()> {
+                Ok(())
+            }
+            fn encrypted(&self) -> bool {
+                false
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let s = AssistantService::open(dir.path(), Box::new(Plain));
+        assert!(!s.view().key_encrypted);
+        let s = AssistantService::open(dir.path(), Box::new(FakeSecretStore::default()));
+        assert!(s.view().key_encrypted);
     }
 
     #[test]

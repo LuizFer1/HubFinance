@@ -4,3 +4,4 @@
 
 pub mod envelope;
 pub mod prompt;
+pub mod sse;

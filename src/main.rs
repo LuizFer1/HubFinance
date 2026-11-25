@@ -3,6 +3,7 @@
 // continua recebendo a mesma coisa.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod advisor;
 mod config;
 mod dashboard;
 mod desktop;

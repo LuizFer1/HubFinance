@@ -546,7 +546,7 @@ fn about_card(app: &App) -> Element<'_, Message> {
     });
     let footer = row![
         icons::icon(icons::HOUSE_SIMPLE, 12.0, t.text_muted),
-        text("Este programa nunca consulta a internet")
+        text(network_note(&app.snapshot.assistant.settings))
             .size(12)
             .color(t.text_muted),
     ]
@@ -899,6 +899,17 @@ fn activity_card(app: &App) -> Element<'_, Message> {
         .into()
 }
 
+/// Rodape do "Sobre o hub". Com a nuvem do assistente como destino, "nunca consulta a internet"
+/// deixaria de ser verdade; o criterio e o mesmo do envio (`Settings::destination`), entao o
+/// texto muda exatamente quando algo pode sair.
+pub(super) fn network_note(settings: &crate::assistant::settings::Settings) -> &'static str {
+    if settings.destination().is_some_and(|d| d.is_cloud()) {
+        "Só o assistente na nuvem sai da rede, e só quando você envia."
+    } else {
+        "Este programa nunca consulta a internet"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -947,6 +958,24 @@ mod tests {
         // Tirando o espaco de largura zero volta o caminho exato.
         let path = r"C:\x\HubFinance\data\logs";
         assert_eq!(breakable_path(path).replace('\u{200B}', ""), path);
+    }
+
+    #[test]
+    fn rodape_diz_que_so_a_nuvem_sai_da_rede() {
+        use crate::assistant::settings::{ProviderChoice, Settings};
+        let mut s = Settings::default();
+        assert_eq!(network_note(&s), "Este programa nunca consulta a internet");
+        s.provider = ProviderChoice::Local;
+        s.cloud.enabled = true;
+        assert_eq!(network_note(&s), "Este programa nunca consulta a internet");
+        s.provider = ProviderChoice::Cloud;
+        s.cloud.enabled = false;
+        assert_eq!(network_note(&s), "Este programa nunca consulta a internet");
+        s.cloud.enabled = true;
+        assert_eq!(
+            network_note(&s),
+            "Só o assistente na nuvem sai da rede, e só quando você envia."
+        );
     }
 
     #[test]

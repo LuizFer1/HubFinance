@@ -7,6 +7,7 @@ mod rules;
 pub mod thresholds;
 
 use crate::dashboard::dataset::Dataset;
+use crate::dashboard::money::MINUS;
 use crate::dashboard::periods::month_of;
 
 /// Ordem das variantes = ordem na tela (derive `Ord`): alerta primeiro.
@@ -96,6 +97,16 @@ pub struct Analysis {
     pub findings: Vec<Finding>,
 }
 
+/// "0,1 mês", "−0,2 mês", "3,5 meses": o sinal vai antes e o resto e do modulo (a divisao de
+/// inteiros negativos daria "0,-2"); singular abaixo de 2, como no pt-BR. Unica fonte do rotulo: o
+/// titulo do achado e a cifra do envelope precisam concordar, inclusive com saldo negativo.
+pub fn months_label(tenths: i64) -> String {
+    let sign = if tenths < 0 { MINUS } else { "" };
+    let abs = tenths.unsigned_abs();
+    let unit = if abs < 20 { "mês" } else { "meses" };
+    format!("{sign}{},{} {unit}", abs / 10, abs % 10)
+}
+
 /// Todos os achados da conta, ordenados por severidade e depois impacto. Achado sem dado
 /// suficiente nao e emitido: zerado pareceria "esta tudo bem".
 pub fn analyze(ds: &Dataset, today: &str) -> Analysis {
@@ -125,6 +136,18 @@ pub fn analyze(ds: &Dataset, today: &str) -> Analysis {
 mod tests {
     use super::*;
     use crate::dashboard::{GRAFITE_TODAY, fixtures_grafite};
+
+    #[test]
+    fn meses_cobertos_seguem_o_plural_do_pt_br() {
+        assert_eq!(months_label(0), "0,0 mês");
+        assert_eq!(months_label(1), "0,1 mês");
+        assert_eq!(months_label(19), "1,9 mês");
+        assert_eq!(months_label(20), "2,0 meses");
+        assert_eq!(months_label(35), "3,5 meses");
+        assert_eq!(months_label(-2), format!("{MINUS}0,2 mês"));
+        assert_eq!(months_label(-15), format!("{MINUS}1,5 mês"));
+        assert_eq!(months_label(-35), format!("{MINUS}3,5 meses"));
+    }
 
     #[test]
     fn dataset_vazio_nao_gera_achado() {

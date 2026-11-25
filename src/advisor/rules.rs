@@ -6,7 +6,7 @@ use super::thresholds::{
     TOP_CATEGORIES, classify_committed, classify_emergency_tenths, classify_fixed_weight,
     classify_savings, percent_of,
 };
-use super::{Figure, FigureValue, Finding, FindingKind, Severity};
+use super::{Figure, FigureValue, Finding, FindingKind, Severity, months_label};
 use crate::dashboard::aggregate::{MonthTotals, NO_CATEGORY_KEY, NO_CATEGORY_NAME, monthly_totals};
 use crate::dashboard::budgets::{BudgetLevel, budget_report};
 use crate::dashboard::cards::upcoming_invoices;
@@ -312,14 +312,12 @@ pub(super) fn emergency(ds: &Dataset, today: &str) -> Option<Finding> {
     // Decimos de mes por inteiros: o `coverage` f64 da view e so exibicao.
     let tenths = view.balance_minor.saturating_mul(10) / cost.total_minor;
     let severity = classify_emergency_tenths(tenths)?;
-    // Plural do pt-BR comeca em 2: "0,1 mês", "1,5 mês", "2,0 meses".
-    let unit = if tenths < 20 { "mês" } else { "meses" };
+    // O mesmo `months_label` da cifra do envelope: com `coverage_label` (que trava em 0,0) o
+    // card diria "0,0 mês" e o envelope "−1,2 mês" para o mesmo saldo negativo.
+    let months = months_label(tenths);
     let title = match severity {
-        Severity::GoodSign => format!("Reserva de emergência cobre {} {unit}", view.coverage_label),
-        _ => format!(
-            "Reserva de emergência cobre só {} {unit}",
-            view.coverage_label
-        ),
+        Severity::GoodSign => format!("Reserva de emergência cobre {months}"),
+        _ => format!("Reserva de emergência cobre só {months}"),
     };
     Some(Finding {
         kind: FindingKind::Emergency,
@@ -391,6 +389,7 @@ mod tests {
     use crate::dashboard::dataset::{
         BUDGETS, CATEGORIES, RECURRENCES, RESERVE_MOVEMENTS, RESERVES, TRANSACTIONS,
     };
+    use crate::dashboard::money::MINUS;
     use crate::dashboard::{GRAFITE_TODAY, dataset_of, fixtures_grafite};
     use serde_json::{Value, json};
 
@@ -930,6 +929,27 @@ mod tests {
         let dois = emergency(&Build::default().emergency(100_000, 200_000).build(), TODAY)
             .expect("2,0 meses");
         assert_eq!(dois.title, "Reserva de emergência cobre só 2,0 meses");
+    }
+
+    #[test]
+    fn emergencia_com_saldo_negativo_mostra_o_sinal_igual_ao_da_cifra() {
+        let ds = Build::default().emergency(100_000, -150_000).build();
+        let f = emergency(&ds, TODAY).expect("saldo negativo e atencao");
+        assert_eq!(f.severity, Severity::Attention);
+        assert_eq!(
+            f.title,
+            format!("Reserva de emergência cobre só {MINUS}1,5 mês")
+        );
+        // A cifra que vai ao envelope usa a mesma funcao, entao os dois textos concordam.
+        let tenths = f
+            .figures
+            .iter()
+            .find_map(|g| match g.value {
+                FigureValue::MonthsTenths(t) => Some(t),
+                _ => None,
+            })
+            .expect("cifra de meses");
+        assert!(f.title.ends_with(&months_label(tenths)), "{}", f.title);
     }
 
     #[test]

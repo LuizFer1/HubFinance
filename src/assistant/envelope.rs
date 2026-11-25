@@ -6,7 +6,7 @@
 
 use std::fmt::Write as _;
 
-use crate::advisor::{Analysis, FigureValue};
+use crate::advisor::{Analysis, FigureValue, months_label};
 use crate::dashboard::aggregate::{
     NO_CATEGORY_KEY, NO_CATEGORY_NAME, expense_by_category, monthly_totals,
 };
@@ -35,15 +35,6 @@ pub struct Envelope {
     /// (nome da reserva, saldo).
     pub reserves: Vec<(String, i64)>,
     pub emergency_goal_minor: Option<i64>,
-}
-
-/// "0,1 mês", "−0,2 mês", "3,5 meses": o sinal vai antes e o resto e do modulo (a divisao de
-/// inteiros negativos daria "0,-2"); singular abaixo de 2, como o titulo da regra da reserva.
-fn months_label(tenths: i64) -> String {
-    let sign = if tenths < 0 { MINUS } else { "" };
-    let abs = tenths.unsigned_abs();
-    let unit = if abs < 20 { "mês" } else { "meses" };
-    format!("{sign}{},{} {unit}", abs / 10, abs % 10)
 }
 
 pub fn build(analysis: &Analysis, ds: &Dataset, today: &str, book: Book) -> Envelope {
@@ -913,18 +904,6 @@ mod tests {
             s.contains(&format!("Reserva de emergência: saldo {MINUS}R$ 200,00")),
             "{s}"
         );
-    }
-
-    #[test]
-    fn meses_cobertos_seguem_o_plural_do_pt_br() {
-        assert_eq!(months_label(0), "0,0 mês");
-        assert_eq!(months_label(1), "0,1 mês");
-        assert_eq!(months_label(19), "1,9 mês");
-        assert_eq!(months_label(20), "2,0 meses");
-        assert_eq!(months_label(35), "3,5 meses");
-        assert_eq!(months_label(-2), format!("{MINUS}0,2 mês"));
-        assert_eq!(months_label(-15), format!("{MINUS}1,5 mês"));
-        assert_eq!(months_label(-35), format!("{MINUS}3,5 meses"));
     }
 
     #[test]

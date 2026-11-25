@@ -3327,6 +3327,8 @@ pub(super) mod tests {
             content: content.into(),
             sent_to_cloud: false,
             deny_data_collection: None,
+            provider: None,
+            model: None,
             tokens_in: None,
             tokens_out: None,
             interrupted: false,
@@ -4099,6 +4101,8 @@ pub(super) mod tests {
         answered.tokens_out = Some(30);
         answered.sent_to_cloud = true;
         answered.deny_data_collection = Some(true);
+        answered.provider = Some("cloud".into());
+        answered.model = Some("openai/gpt-4o".into());
         let mut cut = msg(MessageRole::Assistant, "parcial");
         cut.interrupted = true;
         app.snapshot.assistant.open = Some(open_conv(

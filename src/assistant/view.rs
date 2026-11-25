@@ -21,6 +21,11 @@ pub struct MessageView {
     /// nao guardar nem treinar). `None` = nao foi para a nuvem. Fica na mensagem e nao na
     /// configuracao: trocar o interruptor depois nao pode reescrever o que ja aconteceu.
     pub deny_data_collection: Option<bool>,
+    /// "local" ou "cloud" e o modelo que **de fato respondeu**, so nas respostas do assistente.
+    /// Ficam na mensagem pelo mesmo motivo da politica: trocar a configuracao depois nao pode
+    /// reescrever quem respondeu. Texto, e nao enum: valor de versao futura degrada, nao quebra.
+    pub provider: Option<String>,
+    pub model: Option<String>,
     pub tokens_in: Option<u32>,
     pub tokens_out: Option<u32>,
     pub interrupted: bool,
@@ -108,6 +113,8 @@ mod tests {
             content: String::new(),
             sent_to_cloud: false,
             deny_data_collection: None,
+            provider: None,
+            model: None,
             tokens_in: i,
             tokens_out: o,
             interrupted: false,

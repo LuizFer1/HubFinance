@@ -34,6 +34,8 @@ CREATE TABLE messages (
   content TEXT NOT NULL,
   sent_to_cloud INTEGER NOT NULL DEFAULT 0,
   deny_data_collection INTEGER,
+  provider TEXT,
+  model TEXT,
   tokens_in INTEGER,
   tokens_out INTEGER,
   interrupted INTEGER NOT NULL DEFAULT 0,
@@ -99,6 +101,61 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+fn insert_conversation(
+    c: &Connection,
+    id: &str,
+    book: Book,
+    at: &str,
+    envelope: &str,
+    title: &str,
+) -> rusqlite::Result<()> {
+    c.execute(
+        "INSERT INTO conversations (id, book, created_at, envelope, title)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![id, book_str(book), at, envelope, title],
+    )
+    .map(|_| ())
+}
+
+fn insert_message(
+    c: &Connection,
+    conversation: &str,
+    m: &MessageView,
+    at: &str,
+) -> rusqlite::Result<()> {
+    c.execute(
+        "INSERT INTO messages (id, conversation_id, role, content, sent_to_cloud,
+           deny_data_collection, provider, model, tokens_in, tokens_out, interrupted, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            m.id,
+            conversation,
+            role_str(m.role),
+            m.content,
+            m.sent_to_cloud,
+            m.deny_data_collection,
+            m.provider,
+            m.model,
+            m.tokens_in,
+            m.tokens_out,
+            m.interrupted,
+            at
+        ],
+    )
+    .map(|_| ())
+}
+
+/// Depois de apagar: no WAL o texto apagado ainda estaria nos quadros antigos (e `secure_delete`
+/// so zera o arquivo principal). O checkpoint com TRUNCATE leva tudo para o arquivo principal e
+/// esvazia o `-wal`. Se algum leitor impedir (`busy`), o texto ainda pode estar no WAL: avisa.
+fn purge(c: &Connection) -> rusqlite::Result<()> {
+    let busy: i64 = c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))?;
+    if busy != 0 {
+        tracing::warn!("o historico do assistente nao pode ser compactado agora (banco ocupado)");
+    }
+    Ok(())
+}
+
 impl History {
     pub fn open(dir: &Path) -> Result<History, HistoryError> {
         std::fs::create_dir_all(dir)?;
@@ -108,6 +165,12 @@ impl History {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let _mode: String =
             conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
+        // O usuario apaga conversa sobre dinheiro esperando que ela suma. Sem `secure_delete` o
+        // SQLite so marca as paginas como livres e o texto continua no arquivo.
+        conn.pragma_update(None, "secure_delete", "ON")?;
+        // NORMAL e seguro sob WAL (so uma queda de energia pode perder o ultimo commit, nunca
+        // corromper) e evita um fsync por mensagem; o historico nao justifica o custo do FULL.
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.busy_timeout(Duration::from_secs(5))?;
         migrate(&conn)?;
         Ok(History {
@@ -124,6 +187,26 @@ impl History {
         Ok(f(&conn)?)
     }
 
+    /// A conversa e a pergunta de abertura entram juntas ou nenhuma entra: uma conversa sem a
+    /// abertura apareceria na lista, vazia, depois de reabrir o hub.
+    pub fn create_with_opening(
+        &self,
+        id: &str,
+        book: Book,
+        at: &str,
+        envelope: &str,
+        title: &str,
+        opening: &MessageView,
+    ) -> Result<(), HistoryError> {
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            insert_conversation(&tx, id, book, at, envelope, title)?;
+            insert_message(&tx, id, opening, at)?;
+            tx.commit()
+        })
+    }
+
+    #[cfg(test)]
     pub fn create(
         &self,
         id: &str,
@@ -132,14 +215,7 @@ impl History {
         envelope: &str,
         title: &str,
     ) -> Result<(), HistoryError> {
-        self.with(|c| {
-            c.execute(
-                "INSERT INTO conversations (id, book, created_at, envelope, title)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![id, book_str(book), at, envelope, title],
-            )
-            .map(|_| ())
-        })
+        self.with(|c| insert_conversation(c, id, book, at, envelope, title))
     }
 
     pub fn append(
@@ -148,33 +224,14 @@ impl History {
         m: &MessageView,
         at: &str,
     ) -> Result<(), HistoryError> {
-        self.with(|c| {
-            c.execute(
-                "INSERT INTO messages (id, conversation_id, role, content, sent_to_cloud,
-                   deny_data_collection, tokens_in, tokens_out, interrupted, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![
-                    m.id,
-                    conversation,
-                    role_str(m.role),
-                    m.content,
-                    m.sent_to_cloud,
-                    m.deny_data_collection,
-                    m.tokens_in,
-                    m.tokens_out,
-                    m.interrupted,
-                    at
-                ],
-            )
-            .map(|_| ())
-        })
+        self.with(|c| insert_message(c, conversation, m, at))
     }
 
     /// Remove uma mensagem (a de erro, em "Tentar de novo").
     pub fn delete_message(&self, id: &str) -> Result<(), HistoryError> {
         self.with(|c| {
-            c.execute("DELETE FROM messages WHERE id = ?1", params![id])
-                .map(|_| ())
+            c.execute("DELETE FROM messages WHERE id = ?1", params![id])?;
+            purge(c)
         })
     }
 
@@ -212,8 +269,8 @@ impl History {
                 return Ok(None);
             };
             let mut st = c.prepare(
-                "SELECT id, role, content, sent_to_cloud, deny_data_collection, tokens_in,
-                        tokens_out, interrupted
+                "SELECT id, role, content, sent_to_cloud, deny_data_collection, provider, model,
+                        tokens_in, tokens_out, interrupted
                  FROM messages WHERE conversation_id = ?1 ORDER BY seq",
             )?;
             let messages = st
@@ -224,9 +281,11 @@ impl History {
                         content: r.get(2)?,
                         sent_to_cloud: r.get(3)?,
                         deny_data_collection: r.get(4)?,
-                        tokens_in: r.get(5)?,
-                        tokens_out: r.get(6)?,
-                        interrupted: r.get(7)?,
+                        provider: r.get(5)?,
+                        model: r.get(6)?,
+                        tokens_in: r.get(7)?,
+                        tokens_out: r.get(8)?,
+                        interrupted: r.get(9)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -243,13 +302,16 @@ impl History {
 
     pub fn delete(&self, id: &str) -> Result<(), HistoryError> {
         self.with(|c| {
-            c.execute("DELETE FROM conversations WHERE id = ?1", params![id])
-                .map(|_| ())
+            c.execute("DELETE FROM conversations WHERE id = ?1", params![id])?;
+            purge(c)
         })
     }
 
     pub fn delete_all(&self) -> Result<(), HistoryError> {
-        self.with(|c| c.execute_batch("DELETE FROM conversations;"))
+        self.with(|c| {
+            c.execute_batch("DELETE FROM conversations;")?;
+            purge(c)
+        })
     }
 
     #[cfg(test)]
@@ -269,6 +331,8 @@ mod tests {
             content: s.into(),
             sent_to_cloud: false,
             deny_data_collection: None,
+            provider: None,
+            model: None,
             tokens_in: Some(10),
             tokens_out: Some(2),
             interrupted: false,
@@ -399,6 +463,8 @@ mod tests {
         let mut m = msg("M1", MessageRole::Assistant, "ok");
         m.sent_to_cloud = true;
         m.deny_data_collection = Some(true);
+        m.provider = Some("cloud".into());
+        m.model = Some("openai/gpt-4o".into());
         m.interrupted = true;
         h.append("C1", &m, "t").unwrap();
         let c = h.load("C1").unwrap().unwrap();
@@ -443,5 +509,89 @@ mod tests {
         let file = dir.path().join("arquivo");
         std::fs::write(&file, "x").unwrap();
         assert!(matches!(History::open(&file), Err(HistoryError::Io(_))));
+    }
+
+    #[test]
+    fn conversa_e_abertura_entram_juntas_ou_nenhuma_entra() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = History::open(dir.path()).unwrap();
+        h.create_with_opening(
+            "C0",
+            Book::Personal,
+            "t",
+            "E",
+            "a",
+            &msg("M1", MessageRole::User, "abertura"),
+        )
+        .unwrap();
+        assert_eq!(h.load("C0").unwrap().unwrap().messages.len(), 1);
+        // Id de mensagem repetido: a insercao da abertura falha depois de a conversa entrar.
+        let err = h.create_with_opening(
+            "C1",
+            Book::Personal,
+            "t",
+            "E",
+            "b",
+            &msg("M1", MessageRole::User, "abertura"),
+        );
+        assert!(err.is_err());
+        assert!(
+            h.load("C1").unwrap().is_none(),
+            "a conversa nao ficou sem abertura"
+        );
+        assert_eq!(h.list().unwrap().len(), 1);
+        assert_eq!(h.message_count().unwrap(), 1);
+    }
+
+    /// Texto bruto de `assistant.db` e do `-wal` (se existir).
+    fn raw_bytes(dir: &Path) -> Vec<u8> {
+        let mut all = std::fs::read(dir.join(DB_FILE)).unwrap();
+        if let Ok(wal) = std::fs::read(dir.join(format!("{DB_FILE}-wal"))) {
+            all.extend(wal);
+        }
+        all
+    }
+
+    fn contains(hay: &[u8], needle: &str) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle.as_bytes())
+    }
+
+    #[test]
+    fn apagar_apaga_de_verdade_do_db_e_do_wal() {
+        let secret = "SENTINELA-UNICA-7f3a9c";
+        for how in ["uma", "todas", "mensagem"] {
+            let dir = tempfile::tempdir().unwrap();
+            let h = History::open(dir.path()).unwrap();
+            h.create_with_opening(
+                "C1",
+                Book::Personal,
+                "t",
+                &format!("envelope {secret}"),
+                &format!("titulo {secret}"),
+                &msg("M1", MessageRole::User, &format!("pergunta {secret}")),
+            )
+            .unwrap();
+            h.append(
+                "C1",
+                &msg("M2", MessageRole::Error, &format!("erro {secret}")),
+                "t",
+            )
+            .unwrap();
+            // Controle: antes de apagar, o texto esta mesmo no arquivo (senao o teste nao prova nada).
+            assert!(contains(&raw_bytes(dir.path()), secret));
+            match how {
+                "uma" => h.delete("C1").unwrap(),
+                "todas" => h.delete_all().unwrap(),
+                _ => {
+                    h.delete_message("M2").unwrap();
+                    h.delete_message("M1").unwrap();
+                    h.delete("C1").unwrap();
+                }
+            }
+            assert!(
+                !contains(&raw_bytes(dir.path()), secret),
+                "{how}: o texto apagado continua no arquivo"
+            );
+        }
     }
 }

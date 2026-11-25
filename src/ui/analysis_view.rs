@@ -234,16 +234,7 @@ fn message_bubble<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Elemen
             row![Space::new().width(Length::Fill), side].into()
         }
         MessageRole::Assistant => {
-            let mut notes = vec![match (m.tokens_in, m.tokens_out) {
-                (Some(i), Some(o)) => tokens_label((i, o)),
-                _ => "—".to_string(),
-            }];
-            if m.interrupted {
-                notes.push("interrompida".to_string());
-            }
-            if m.sent_to_cloud {
-                notes.push(cloud_badge(m.deny_data_collection).to_string());
-            }
+            let notes = reply_notes(m);
             row![
                 column![
                     container(text(content).size(14).color(t.text))
@@ -272,6 +263,33 @@ fn message_bubble<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Elemen
             .into()
         }
     }
+}
+
+/// Rodape da resposta: local = "modelo · tokens"; nuvem = "tokens · selo e retencao · modelo",
+/// com o modelo por ultimo para o selo de privacidade ficar junto do que ele qualifica.
+/// Registro antigo, sem modelo, simplesmente nao o mostra.
+pub(super) fn reply_notes(m: &MessageView) -> Vec<String> {
+    let mut notes = Vec::new();
+    let model = m.model.as_deref().filter(|s| !s.is_empty());
+    if let Some(model) = model
+        && !m.sent_to_cloud
+    {
+        notes.push(model.to_string());
+    }
+    notes.push(match (m.tokens_in, m.tokens_out) {
+        (Some(i), Some(o)) => tokens_label((i, o)),
+        _ => "—".to_string(),
+    });
+    if m.interrupted {
+        notes.push("interrompida".to_string());
+    }
+    if m.sent_to_cloud {
+        notes.push(cloud_badge(m.deny_data_collection).to_string());
+        if let Some(model) = model {
+            notes.push(model.to_string());
+        }
+    }
+    notes
 }
 
 /// Selo da resposta que passou pela nuvem, com a politica de retencao valendo no envio (spec 7).
@@ -746,6 +764,43 @@ mod tests {
             "enviado à nuvem · retenção permitida"
         );
         assert_eq!(cloud_badge(None), "enviado à nuvem");
+    }
+
+    #[test]
+    fn rodape_da_resposta_mostra_o_modelo_local_antes_e_o_da_nuvem_depois() {
+        let mut m = MessageView {
+            id: "m".into(),
+            role: MessageRole::Assistant,
+            content: String::new(),
+            sent_to_cloud: false,
+            deny_data_collection: None,
+            provider: Some("local".into()),
+            model: Some("llama3.1:8b".into()),
+            tokens_in: Some(1240),
+            tokens_out: Some(380),
+            interrupted: false,
+        };
+        assert_eq!(
+            reply_notes(&m).join(" · "),
+            "llama3.1:8b · 1240 → 380 tokens"
+        );
+        m.sent_to_cloud = true;
+        m.provider = Some("cloud".into());
+        m.model = Some("openai/gpt-4o".into());
+        m.deny_data_collection = Some(true);
+        assert_eq!(
+            reply_notes(&m).join(" · "),
+            "1240 → 380 tokens · enviado à nuvem · sem retenção · openai/gpt-4o"
+        );
+        m.interrupted = true;
+        assert!(reply_notes(&m).contains(&"interrompida".to_string()));
+        // Registro antigo, sem modelo: nada de "None" na tela.
+        m.model = None;
+        m.provider = None;
+        assert_eq!(
+            reply_notes(&m).join(" · "),
+            "1240 → 380 tokens · interrompida · enviado à nuvem · sem retenção"
+        );
     }
 
     #[test]

@@ -36,6 +36,9 @@ struct Inflight {
     /// aqui, junto do `to_cloud`: reler a configuracao em `record` registraria a politica de
     /// depois, nao a que de fato valeu.
     deny_data_collection: Option<bool>,
+    /// Modelo que recebeu o pedido. Capturado no envio pelo mesmo motivo da politica: trocar o
+    /// modelo na configuracao enquanto a resposta vem nao pode mudar quem consta como autor.
+    model: String,
     /// A conversa foi apagada enquanto a resposta vinha: o resultado nao tem para onde ir. Nao
     /// da para deduzir isso de "a conversa nao esta na tela": fechada tambem nao esta, e a
     /// resposta dela precisa ser gravada.
@@ -245,14 +248,11 @@ impl AssistantService {
         let id = new_id();
         let created_at = (self.now)();
         let opening = user_message(OPENING_REQUEST);
-        if let Some(h) = self.history.as_ref() {
-            // Sem a conversa gravada a mensagem nao tem a quem se prender (chave estrangeira).
-            let saved = h
-                .create(&id, book, &created_at, &envelope, &title)
-                .and_then(|()| h.append(&id, &opening, &created_at));
-            if let Err(e) = saved {
-                self.write_failed(&id, &e);
-            }
+        if let Some(h) = self.history.as_ref()
+            && let Err(e) =
+                h.create_with_opening(&id, book, &created_at, &envelope, &title, &opening)
+        {
+            self.write_failed(&id, &e);
         }
         self.view.conversations.insert(
             0,
@@ -313,7 +313,7 @@ impl AssistantService {
         let provider = self.provider()?;
         let model = self.view.settings.model()?;
         let request = ChatRequest {
-            model,
+            model: model.clone(),
             messages: open.payload(),
             max_tokens: MAX_OUTPUT_TOKENS,
         };
@@ -323,6 +323,7 @@ impl AssistantService {
             cancel: cancel.clone(),
             to_cloud,
             deny_data_collection: to_cloud.then_some(self.view.settings.cloud.deny_data_collection),
+            model: model.clone(),
             discarded: false,
         });
         self.view.busy = true;
@@ -384,6 +385,8 @@ impl AssistantService {
                 content: o.text,
                 sent_to_cloud: inflight.to_cloud,
                 deny_data_collection: inflight.deny_data_collection,
+                provider: Some(if inflight.to_cloud { "cloud" } else { "local" }.to_string()),
+                model: Some(inflight.model.clone()),
                 tokens_in: o.tokens_in,
                 tokens_out: o.tokens_out,
                 interrupted: o.interrupted,
@@ -394,6 +397,8 @@ impl AssistantService {
                 content: e.to_string(),
                 sent_to_cloud: false,
                 deny_data_collection: None,
+                provider: None,
+                model: None,
                 tokens_in: None,
                 tokens_out: None,
                 interrupted: false,
@@ -463,24 +468,27 @@ impl AssistantService {
     }
 
     pub fn delete_conversation(&mut self, id: &str) {
-        if self
+        let responding = self
             .inflight
             .as_ref()
-            .is_some_and(|f| f.conversation_id == id)
-        {
+            .is_some_and(|f| f.conversation_id == id);
+        if responding {
             self.cancel();
-            if let Some(f) = self.inflight.as_mut() {
-                f.discarded = true;
-            }
         }
-        self.stash.retain(|c| c.id != id);
-        self.unsaved.remove(id);
+        // Se o disco nao apagou, a conversa continua la e volta no proximo inicio: some-la da
+        // lista faria a pessoa acreditar que foi embora. Fica na tela, com o aviso.
         if let Some(h) = self.history.as_ref()
             && let Err(e) = h.delete(id)
         {
             tracing::warn!("nao foi possivel apagar do historico do assistente: {e}");
             self.view.last_error = Some(DELETE_ERROR.into());
+            return;
         }
+        if responding && let Some(f) = self.inflight.as_mut() {
+            f.discarded = true;
+        }
+        self.stash.retain(|c| c.id != id);
+        self.unsaved.remove(id);
         self.view.conversations.retain(|c| c.id != id);
         if self.view.open.as_ref().is_some_and(|o| o.id == id) {
             self.view.open = None;
@@ -489,17 +497,18 @@ impl AssistantService {
 
     pub fn delete_all(&mut self) {
         self.cancel();
-        if let Some(f) = self.inflight.as_mut() {
-            f.discarded = true;
-        }
-        self.stash.clear();
-        self.unsaved.clear();
         if let Some(h) = self.history.as_ref()
             && let Err(e) = h.delete_all()
         {
             tracing::warn!("nao foi possivel apagar do historico do assistente: {e}");
             self.view.last_error = Some(DELETE_ERROR.into());
+            return;
         }
+        if let Some(f) = self.inflight.as_mut() {
+            f.discarded = true;
+        }
+        self.stash.clear();
+        self.unsaved.clear();
         self.view.conversations.clear();
         self.view.open = None;
     }
@@ -542,6 +551,8 @@ fn user_message(text: &str) -> MessageView {
         content: text.to_string(),
         sent_to_cloud: false,
         deny_data_collection: None,
+        provider: None,
+        model: None,
         tokens_in: None,
         tokens_out: None,
         interrupted: false,
@@ -1283,7 +1294,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // Um diretorio no lugar do arquivo: o SQLite nao abre, mas a configuracao grava normal.
         std::fs::create_dir(dir.path().join(crate::assistant::history::DB_FILE)).unwrap();
-        // Avisa ao abrir; a primeira gravacao que da certo limpa o aviso.
+        // Avisa ao abrir. Gravar no historico nao limpa o aviso: quem o limpa sao as acoes da
+        // configuracao e a conversa nova (`save_settings`, `new_conversation`).
         let fresh = open_with(dir.path(), Box::new(FakeSecretStore::default()));
         assert!(
             fresh
@@ -1357,5 +1369,71 @@ mod tests {
                 .all(|n| n.starts_with(crate::assistant::history::DB_FILE)),
             "{names:?}"
         );
+    }
+
+    #[test]
+    fn resposta_grava_provedor_e_modelo_do_envio_e_so_ela() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = {
+            let mut s = svc(dir.path());
+            s.new_conversation(Book::Personal, "t".into(), "E".into());
+            let id = s.view().open.as_ref().unwrap().id.clone();
+            let job = s.prepare_send().expect("job");
+            // Trocar o modelo com a resposta a caminho nao muda quem consta como autor.
+            let mut st = s.view().settings.clone();
+            st.local.model = Some("outro".into());
+            s.save_settings(st);
+            s.finish(job.reply_id, Ok(ChatOutcome::default()));
+            let mut p = FakeProvider::answering(&[]);
+            p.fail = Some(AssistantError::Offline);
+            s.push_user("de novo");
+            run(&mut s, &p);
+            id
+        };
+        let mut s = svc(dir.path());
+        s.open_conversation(&id);
+        let m = s.view().open.as_ref().unwrap().messages.clone();
+        assert_eq!((m[0].provider.clone(), m[0].model.clone()), (None, None));
+        assert_eq!(m[1].provider.as_deref(), Some("local"));
+        assert_eq!(m[1].model.as_deref(), Some("m"));
+        assert_eq!(m[2].role, MessageRole::User);
+        assert_eq!((m[3].provider.clone(), m[3].model.clone()), (None, None));
+    }
+
+    #[test]
+    fn resposta_da_nuvem_grava_provedor_cloud_e_o_modelo_da_nuvem() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = cloud_svc(dir.path());
+        s.new_conversation(Book::Personal, "t".into(), "E".into());
+        let id = s.view().open.as_ref().unwrap().id.clone();
+        assert!(s.grant_cloud_consent(&id));
+        run(&mut s, &FakeProvider::answering(&["ok"]));
+        let a = s.view().open.as_ref().unwrap().messages[1].clone();
+        assert_eq!(a.provider.as_deref(), Some("cloud"));
+        assert_eq!(
+            a.model.as_deref(),
+            Some(crate::assistant::settings::SUGGESTED_CLOUD_MODEL)
+        );
+    }
+
+    #[test]
+    fn falha_ao_apagar_do_disco_mantem_a_conversa_na_lista_e_avisa() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = svc(dir.path());
+        s.new_conversation(Book::Personal, "a".into(), "E".into());
+        let a = s.view().open.as_ref().unwrap().id.clone();
+        s.new_conversation(Book::Personal, "b".into(), "E".into());
+        let other = rusqlite::Connection::open(dir.path().join(crate::assistant::history::DB_FILE))
+            .unwrap();
+        other.execute_batch("DROP TABLE conversations;").unwrap();
+        s.delete_conversation(&a);
+        assert_eq!(s.view().conversations.len(), 2, "continua listada");
+        assert_eq!(
+            s.view().last_error.as_deref(),
+            Some("Não foi possível apagar do histórico do assistente.")
+        );
+        s.delete_all();
+        assert_eq!(s.view().conversations.len(), 2);
+        assert!(s.view().open.is_some(), "a aberta tambem fica");
     }
 }

@@ -82,12 +82,12 @@ iced): contrato de campos, dataset e agregações; a UI deriva as telas dele. `a
 abre o `assistant.db` (nunca o banco de sync; `store/` nunca abre o dele); é o único com `ureq`.
 `ui/` comanda o assistente só por `Command::Assistant` e lê o estado só de `Snapshot.assistant`;
 pode usar os tipos e as funções puras de `assistant/` (envelope, prompt, settings, view). `hub/`
-liga tudo numa thread com runtime tokio e publica `Snapshot` por `watch`; a UI só renderiza o snapshot e envia
-`Command`. `desktop/` é o único com `tray-icon`, `image` e `windows-sys` (bandeja, instância única,
-chave `Run`), sem iced, rusqlite, axum nem tokio; fala com `ui/` por um trait (`Desktop`, com `Fake`
-nos testes) e por um canal de `DesktopEvent`. Tudo que é Win32 fica em `cfg(windows)` com um caminho
-`not(windows)` que compila (o CI roda clippy nos três sistemas); nenhum teste cria bandeja, mutex
-nem valor no registro. `logging.rs` e `main.rs` são os únicos com
+liga tudo numa thread com runtime tokio e publica `Snapshot` por `watch`; a UI só renderiza o
+snapshot e envia `Command`. `desktop/` é o único com `tray-icon`, `image` e `windows-sys` (bandeja,
+instância única, chave `Run`), sem iced, rusqlite, axum nem tokio; fala com `ui/` por um trait
+(`Desktop`, com `Fake` nos testes) e por um canal de `DesktopEvent`. Tudo que é Win32 fica em
+`cfg(windows)` com um caminho `not(windows)` que compila (o CI roda clippy nos três sistemas);
+nenhum teste cria bandeja, mutex nem valor no registro. `logging.rs` e `main.rs` são os únicos com
 `tracing-subscriber`/`tracing-appender`; `ui/` abre o navegador só por `open::that_detached` com URL
 constante de `config.rs`.
 

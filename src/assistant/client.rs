@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use super::AssistantError;
 use super::destination::Destination;
 use super::provider::{CancelFlag, ChatOutcome, ChatRequest, Provider};
+use super::secret::Secret;
 use super::sse::{Event, SseParser};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -30,14 +31,14 @@ const APP_TITLE: &str = "HubFinance";
 #[allow(dead_code)] // usado pelo servico (Task 4.6)
 pub struct OpenAiCompatible {
     destination: Destination,
-    api_key: Option<String>,
+    api_key: Option<Secret>,
     deny_data_collection: bool,
     agent: ureq::Agent,
 }
 
 #[allow(dead_code)] // usado pelo servico (Task 4.6)
 impl OpenAiCompatible {
-    pub fn new(destination: Destination, api_key: Option<String>, deny: bool) -> Self {
+    pub fn new(destination: Destination, api_key: Option<Secret>, deny: bool) -> Self {
         let mut builder = ureq::Agent::config_builder()
             .timeout_connect(Some(CONNECT_TIMEOUT))
             .timeout_recv_response(Some(RESPONSE_TIMEOUT))
@@ -65,7 +66,7 @@ impl OpenAiCompatible {
     fn auth(&self) -> Result<Option<String>, AssistantError> {
         match (&self.destination, &self.api_key) {
             (Destination::Cloud, None) => Err(AssistantError::MissingKey),
-            (Destination::Cloud, Some(k)) => Ok(Some(format!("Bearer {k}"))),
+            (Destination::Cloud, Some(k)) => Ok(Some(format!("Bearer {}", k.expose()))),
             (Destination::Local { .. }, _) => Ok(None),
         }
     }
@@ -546,7 +547,7 @@ mod tests {
 
     #[test]
     fn nuvem_nao_lista_modelos_sem_rede() {
-        let c = OpenAiCompatible::new(Destination::cloud(), Some("k".into()), true);
+        let c = OpenAiCompatible::new(Destination::cloud(), Some(Secret::new("k".into())), true);
         assert_eq!(c.list_models().unwrap(), Vec::<String>::new());
     }
 }

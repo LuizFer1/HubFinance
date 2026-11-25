@@ -9,6 +9,7 @@ pub mod envelope;
 pub mod fake;
 pub mod prompt;
 pub mod provider;
+pub mod secret;
 pub mod settings;
 pub mod sse;
 

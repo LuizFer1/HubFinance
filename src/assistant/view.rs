@@ -1,5 +1,6 @@
 //! Estado do assistente publicado no `Snapshot`. A UI so le isto e manda `Command::Assistant`.
 
+use super::prompt::{self, Role, Turn};
 use super::settings::Settings;
 use crate::dashboard::contract::Book;
 
@@ -46,6 +47,28 @@ pub struct OpenConversation {
 }
 
 impl OpenConversation {
+    /// O que o modelo recebe: sistema (regras + envelope) e a janela do historico. E a unica
+    /// montagem do pedido: o envio e a previa da nuvem leem daqui, entao o que a pessoa
+    /// aprova e exatamente o que sai (erros nunca vao ao modelo).
+    pub fn payload(&self) -> Vec<Turn> {
+        let history: Vec<Turn> = self
+            .messages
+            .iter()
+            .filter_map(|m| match m.role {
+                MessageRole::User => Some(Turn {
+                    role: Role::User,
+                    content: m.content.clone(),
+                }),
+                MessageRole::Assistant => Some(Turn {
+                    role: Role::Assistant,
+                    content: m.content.clone(),
+                }),
+                MessageRole::Error => None,
+            })
+            .collect();
+        prompt::messages(&self.envelope, &history)
+    }
+
     pub fn tokens_total(&self) -> (u32, u32) {
         self.messages.iter().fold((0, 0), |(i, o), m| {
             (

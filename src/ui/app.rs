@@ -3663,13 +3663,62 @@ pub(super) mod tests {
         app.snapshot.assistant.open = Some(awaiting_conv(app.book, env));
         app.hide_values = false;
         let open = super::awaiting_cloud_consent(&app).unwrap();
-        assert_eq!(super::super::analysis_view::preview_shown(&app, open), env);
+        let shown = super::super::analysis_view::preview_shown(&app, open);
+        assert!(shown.starts_with(env), "{shown}");
         assert_eq!(open.envelope, env, "o que sai nunca e mascarado");
         app.hide_values = true;
         let open = super::awaiting_cloud_consent(&app).unwrap();
         let shown = super::super::analysis_view::preview_shown(&app, open);
         assert!(!shown.contains("1.234"), "{shown}");
         assert_eq!(open.envelope, env);
+        let _ = super::super::analysis_view::view(&app);
+    }
+
+    #[test]
+    fn previa_mostra_o_mesmo_que_vai_no_pedido_incluindo_as_mensagens_anteriores() {
+        use crate::assistant::prompt::{MAX_TURNS, Role};
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = cloud_app(dir.path());
+        // Conversa respondida no modelo local e agora na nuvem: 12 pares e a pergunta pendente.
+        let mut conv = awaiting_conv(app.book, "ENV DA CONVERSA");
+        conv.messages.clear();
+        for i in 0..12 {
+            conv.messages
+                .push(msg(MessageRole::User, &format!("pergunta-{i}")));
+            conv.messages
+                .push(msg(MessageRole::Assistant, &format!("resposta-{i}")));
+        }
+        conv.messages
+            .push(msg(MessageRole::Error, "falha-que-nao-vai"));
+        conv.messages
+            .push(msg(MessageRole::User, "pergunta-pendente"));
+        app.snapshot.assistant.open = Some(conv);
+        let open = super::awaiting_cloud_consent(&app).unwrap();
+        let body = super::super::analysis_view::preview_body(open);
+        let payload = open.payload();
+        // A janela corta o comeco (e avanca ate uma pergunta): nem tudo cabe.
+        assert!(payload.len() > 2 && payload.len() <= 1 + MAX_TURNS * 2);
+        assert!(body.starts_with("ENV DA CONVERSA"));
+        // Cada turno do pedido aparece na previa, na mesma ordem e com o mesmo texto.
+        let mut from = 0;
+        for turn in payload.iter().skip(1) {
+            let who = if turn.role == Role::Assistant {
+                "Assistente"
+            } else {
+                "Você"
+            };
+            let line = format!("{who}: {}", turn.content);
+            let at = body[from..].find(&line).unwrap_or_else(|| panic!("{line}"));
+            from += at + line.len();
+        }
+        // O que a janela corta e o erro (que nunca vai ao modelo) tambem nao aparecem.
+        assert!(!body.contains("pergunta-0\n") && !body.contains("pergunta-0:"));
+        assert!(!body.contains("falha-que-nao-vai"));
+        assert!(body.ends_with("Você: pergunta-pendente"));
+        // Com mensagens anteriores a introducao deixa de falar so da pergunta de abertura.
+        assert!(
+            !super::super::analysis_view::PREVIEW_INTRO_EARLIER.contains("pergunta de abertura")
+        );
         let _ = super::super::analysis_view::view(&app);
     }
 

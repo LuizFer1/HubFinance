@@ -13,6 +13,7 @@ use super::assistant_settings_view;
 use super::theme::{self, Tokens};
 use super::{fonts, widgets};
 use crate::advisor::{Finding, Severity};
+use crate::assistant::prompt::Role;
 use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
 use crate::dashboard::money::{MASK, MINUS};
 use crate::hub::snapshot::Status;
@@ -285,7 +286,11 @@ pub(super) fn cloud_badge(deny_data_collection: Option<bool>) -> &'static str {
 
 pub(super) const PREVIEW_TITLE: &str = "Prévia do que vai sair";
 
-pub(super) const PREVIEW_INTRO: &str = "Este é o texto exato que vai para o OpenRouter na primeira mensagem desta conversa. Só depois de você enviar é que algo sai do computador.";
+pub(super) const PREVIEW_INTRO: &str = "Este é o texto exato que vai para o OpenRouter: o resumo desta conta e a pergunta de abertura, além das instruções fixas do assistente. Só depois de você enviar é que algo sai do computador.";
+
+/// Conversa que ja tinha mensagens (por exemplo, respondidas pelo modelo local antes de trocar
+/// para a nuvem): elas vao junto, e a previa diz isso.
+pub(super) const PREVIEW_INTRO_EARLIER: &str = "Este é o texto exato que vai para o OpenRouter: o resumo desta conta e as mensagens anteriores desta conversa (só as últimas que cabem no pedido), além das instruções fixas do assistente. Só depois de você enviar é que algo sai do computador.";
 
 /// "Retencao: ..." da previa, a partir da politica configurada agora (e a que vale no envio).
 pub(super) fn retention_line(deny_data_collection: bool) -> &'static str {
@@ -298,8 +303,38 @@ pub(super) fn retention_line(deny_data_collection: bool) -> &'static str {
 
 /// O envelope da conversa como aparece na previa: o da propria conversa (e o que de fato vai),
 /// com a mascara de "Ocultar valores" so na tela.
-pub(super) fn preview_shown<'a>(app: &App, open: &'a OpenConversation) -> Cow<'a, str> {
-    mask(app, &open.envelope)
+pub(super) fn preview_shown(app: &App, open: &OpenConversation) -> String {
+    mask(app, &preview_body(open)).into_owned()
+}
+
+/// Tudo que o dono dos dados autoriza ao aprovar: o envelope e as mensagens que vao no pedido.
+/// Sai de `OpenConversation::payload`, a mesma montagem do envio (janela de turnos incluida),
+/// para a previa nao poder divergir do que de fato sai. As regras fixas do assistente (sem
+/// dado nenhum) so sao citadas na introducao.
+pub(super) fn preview_body(open: &OpenConversation) -> String {
+    let payload = open.payload();
+    let mut out = open.envelope.clone();
+    out.push_str("\n\n— Conversa —");
+    for turn in payload.iter().skip(1) {
+        let who = match turn.role {
+            Role::Assistant => "Assistente",
+            _ => "Você",
+        };
+        out.push('\n');
+        out.push_str(who);
+        out.push_str(": ");
+        out.push_str(&turn.content);
+    }
+    out
+}
+
+/// A introducao conforme haja mensagens anteriores alem da pergunta pendente.
+fn preview_intro(open: &OpenConversation) -> &'static str {
+    if open.payload().len() > 2 {
+        PREVIEW_INTRO_EARLIER
+    } else {
+        PREVIEW_INTRO
+    }
 }
 
 /// O card que toma o lugar do campo de pergunta enquanto a conversa de nuvem espera aprovacao:
@@ -339,7 +374,7 @@ fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, 
             .size(15)
             .font(fonts::INTER_SEMIBOLD)
             .color(t.text),
-        text(PREVIEW_INTRO)
+        text(preview_intro(open))
             .size(13)
             .line_height(1.4)
             .color(t.text_muted),
@@ -723,6 +758,7 @@ mod tests {
     fn textos_da_nuvem_nao_tem_espaco_duplo() {
         for text in [
             PREVIEW_INTRO,
+            PREVIEW_INTRO_EARLIER,
             assistant_settings_view::CLOUD_EXPLAIN,
             assistant_settings_view::DENY_LABEL,
             assistant_settings_view::DENY_WARNING,

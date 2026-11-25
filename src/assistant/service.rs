@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use super::AssistantError;
 use super::client::OpenAiCompatible;
 use super::destination::Destination;
-use super::prompt::{self, MAX_OUTPUT_TOKENS, OPENING_REQUEST, Role, Turn};
+use super::prompt::{MAX_OUTPUT_TOKENS, OPENING_REQUEST};
 use super::provider::{CancelFlag, ChatOutcome, ChatRequest, Provider};
 use super::secret::Secret;
 use super::settings::Settings;
@@ -234,24 +234,9 @@ impl AssistantService {
         }
         let provider = self.provider()?;
         let model = self.view.settings.model()?;
-        let history: Vec<Turn> = open
-            .messages
-            .iter()
-            .filter_map(|m| match m.role {
-                MessageRole::User => Some(Turn {
-                    role: Role::User,
-                    content: m.content.clone(),
-                }),
-                MessageRole::Assistant => Some(Turn {
-                    role: Role::Assistant,
-                    content: m.content.clone(),
-                }),
-                MessageRole::Error => None,
-            })
-            .collect();
         let request = ChatRequest {
             model,
-            messages: prompt::messages(&open.envelope, &history),
+            messages: open.payload(),
             max_tokens: MAX_OUTPUT_TOKENS,
         };
         let cancel = CancelFlag::default();

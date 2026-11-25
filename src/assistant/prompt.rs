@@ -62,7 +62,13 @@ RESUMO:\n{envelope}"
 #[allow(dead_code)] // usado pelo cliente (Issue 04)
 pub fn messages(envelope: &str, history: &[Turn]) -> Vec<Turn> {
     let keep = MAX_TURNS * 2;
-    let start = history.len().saturating_sub(keep);
+    let mut start = history.len().saturating_sub(keep);
+    // Com a pergunta pendente no fim o historico tem tamanho impar e a janela pode abrir numa
+    // resposta solta; alguns modelos locais rejeitam um `assistant` logo depois do `system`.
+    // Avanca ate a proxima pergunta (perde um turno, nunca a pergunta mais recente).
+    while history.get(start).is_some_and(|t| t.role != Role::User) {
+        start += 1;
+    }
     let mut out = Vec::with_capacity(1 + keep);
     out.push(Turn {
         role: Role::System,
@@ -98,6 +104,23 @@ mod tests {
         // O primeiro turno mantido e o inicio de um par (pergunta), nao uma resposta solta.
         assert_eq!(msgs[1].role, Role::User);
         assert_eq!(msgs[1].content, "p20");
+    }
+
+    #[test]
+    fn historico_impar_nao_abre_numa_resposta() {
+        // p0 r0 ... p14 r14 + a pergunta pendente p15: 31 turnos, a janela de 20 cairia em r5.
+        let mut history = Vec::new();
+        for i in 0..15 {
+            history.push(turn(Role::User, &format!("p{i}")));
+            history.push(turn(Role::Assistant, &format!("r{i}")));
+        }
+        history.push(turn(Role::User, "p15"));
+        let msgs = messages("E", &history);
+        assert_eq!(msgs[0].role, Role::System);
+        assert_eq!(msgs[1].role, Role::User);
+        assert_eq!(msgs[1].content, "p6");
+        assert_eq!(msgs.last().map(|m| m.content.as_str()), Some("p15"));
+        assert!(msgs.len() <= 1 + MAX_TURNS * 2);
     }
 
     #[test]

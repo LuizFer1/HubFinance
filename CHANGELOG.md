@@ -6,6 +6,37 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [1.4.0] - 2026-11-25
+
+Nenhuma mudança no protocolo `/v1` nem no banco de sync. O assistente guarda configuração e
+conversas em arquivos próprios (`assistant.json`, `assistant.key`, `assistant.db`) na pasta de
+dados.
+
+### Adicionado
+
+- **Tela Análise:** achados calculados no PC a partir do Dashboard (ritmo, previsão do mês,
+  categorias acima do normal, metas, taxa de poupança, peso do fixo, comprometimento do mês que
+  vem, reserva de emergência e faturas), por conta e respeitando "Ocultar valores".
+- **"Ver o que o assistente vê":** mostra o resumo exato que o modelo recebe, com agregados por
+  mês e por categoria, metas e reservas. Nunca vão descrições, pessoas, cartões nem datas com
+  dia.
+- **Assistente com Ollama local:** opcional e só fala com `127.0.0.1`. Tem resposta em
+  streaming, Parar, Tentar de novo, tokens por resposta e no total e o modelo no rodapé. Os
+  modelos "-cloud" do Ollama ficam de fora, porque rodam fora do PC.
+- **Nuvem via OpenRouter, desligada por padrão:** é o usuário quem decide ligar. Usa chave
+  própria, cifrada com DPAPI no Windows. Antes do primeiro envio de cada conversa há uma prévia
+  obrigatória do que vai sair, e "Não permitir retenção" vem ligado por padrão e é registrado em
+  cada mensagem. É a primeira exceção à regra "nada sai da rede local": só acontece com a nuvem
+  do assistente ligada pelo usuário.
+- **Histórico de conversas:** fica só no PC, separado do banco de sync, com os números da época.
+  Apagar uma conversa ou todas apaga de verdade do arquivo.
+
+### Corrigido
+
+- **Ocorrência gravada decidida pela chave.** O hub reconhece a ocorrência de uma recorrência por
+  `recurrenceId` + `occurrenceKey` (viva, apagada ou ignorada). A colisão do id v1 não esconde
+  mais a ocorrência em "O que vem" nem no comprometido, e o caso ambíguo é pulado, igual ao app.
+
 ## [1.3.1] - 2026-11-19
 
 Nenhuma mudança no protocolo `/v1` nem no banco.
@@ -339,7 +370,8 @@ campo da 0.0.2 acontece.
 - Scripts `scripts/e2e.sh` (roteiro curl de pareamento e sync) e `scripts/seed-dashboard.sh`
   (carga de exemplo do dashboard).
 
-[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.3.1...HEAD
+[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/LuizFer1/HubFinance/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/LuizFer1/HubFinance/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/LuizFer1/HubFinance/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/LuizFer1/HubFinance/compare/v1.1.0...v1.2.0

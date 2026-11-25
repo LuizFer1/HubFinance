@@ -377,10 +377,12 @@ fn area_row<'a>(
         icons::icon(icons::CIRCLE_DASHED, 18.0, t.text_muted)
     };
     let mut info = column![
+        // Desabilitada, o titulo apaga como o texto dos botoes desabilitados (`theme::disabled`):
+        // a cor fixa aqui passaria por cima do estilo do botao.
         text(area_title(area))
             .size(14)
             .font(fonts::INTER_MEDIUM)
-            .color(t.text),
+            .color(if enabled { t.text } else { t.idle() }),
     ]
     .spacing(2);
     if enabled {

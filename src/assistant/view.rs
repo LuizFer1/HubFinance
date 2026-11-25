@@ -35,7 +35,9 @@ pub struct OpenConversation {
     pub book: Book,
     pub envelope: String,
     pub messages: Vec<MessageView>,
-    /// Ainda nao saiu nada desta conversa para a nuvem: o proximo envio pede a previa (Q5).
+    /// Ainda nao saiu nada desta conversa para a nuvem: enquanto for `true` o nucleo **nao**
+    /// envia a conversa para a nuvem (`prepare_send` devolve `None`) ate o usuario ver a previa
+    /// e aprovar (`grant_cloud_consent`). Local nunca precisa (Q5).
     pub needs_cloud_consent: bool,
 }
 
@@ -62,6 +64,9 @@ pub struct AssistantView {
     /// Texto chegando agora; vira `MessageView` no fim.
     pub streaming: Option<String>,
     pub busy: bool,
+    /// Falha de gravacao (configuracao ou chave) em pt-BR, para a tela mostrar em vez de a
+    /// escolha do usuario parecer salva. Some na proxima acao que der certo.
+    pub last_error: Option<String>,
 }
 
 #[cfg(test)]

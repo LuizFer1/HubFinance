@@ -1,5 +1,7 @@
 //! Nucleo do hub: thread com runtime tokio, loop de comandos e snapshot para a UI.
 
+use std::time::Duration;
+
 use tokio::sync::{mpsc, watch};
 
 use crate::config::Config;
@@ -52,6 +54,8 @@ pub enum AssistantCommand {
     Send(String),
     /// Envia o que ja esta na conversa (abertura, ou "Tentar de novo").
     Resend,
+    /// O usuario viu a previa: libera o envio desta conversa para a nuvem e envia.
+    ApproveCloudSend,
     Cancel,
     Delete(String),
     DeleteAll,
@@ -84,7 +88,12 @@ pub fn start(
             .thread_name("nucleo")
             .build()
         {
-            Ok(runtime) => runtime.block_on(run::run(config, secrets, cmd_rx, snap_tx)),
+            Ok(runtime) => {
+                runtime.block_on(run::run(config, secrets, cmd_rx, snap_tx));
+                // Descartar o runtime espera todo `spawn_blocking`; um `ListModels` preso numa
+                // conexao nao pode segurar a thread do nucleo depois do `Stopped`.
+                runtime.shutdown_timeout(Duration::from_secs(2));
+            }
             Err(e) => {
                 snap_tx.send_modify(|s| {
                     s.status = Status::Failed(format!("nao foi possivel iniciar o runtime: {e}"));
@@ -508,6 +517,40 @@ mod tests {
         // O dataset nao foi recriado: a UI so reconstroi as telas quando o `Arc` muda.
         assert!(std::sync::Arc::ptr_eq(&before.dashboard, &snap.dashboard));
         assert_eq!(Settings::load(dir.path()), settings);
+        stop(handle, join);
+    }
+
+    #[test]
+    fn nuvem_sem_aprovar_a_previa_nao_envia_nada() {
+        use crate::assistant::settings::{ProviderChoice, Settings};
+        use crate::dashboard::contract::Book;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, join, _) = run_hub(dir.path());
+        let mut settings = Settings {
+            provider: ProviderChoice::Cloud,
+            ..Settings::default()
+        };
+        settings.cloud.enabled = true;
+        let send = |c| handle.commands.send(Command::Assistant(c)).unwrap();
+        send(AssistantCommand::SaveSettings(settings));
+        send(AssistantCommand::SaveKey("sk-or-teste".into()));
+        send(AssistantCommand::NewConversation {
+            book: Book::Personal,
+            title: "t".into(),
+            envelope: "ENV".into(),
+        });
+        send(AssistantCommand::Resend);
+        send(AssistantCommand::Send("e agora?".into()));
+        // As duas perguntas ficam na conversa, mas nenhum job saiu: sem rede e sem `busy`.
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+            s.assistant
+                .open
+                .as_ref()
+                .is_some_and(|o| o.messages.len() == 2)
+        });
+        assert!(!snap.assistant.busy);
+        assert!(snap.assistant.open.as_ref().unwrap().needs_cloud_consent);
         stop(handle, join);
     }
 

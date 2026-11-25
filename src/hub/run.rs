@@ -14,8 +14,9 @@ use super::dashboard::{DashboardState, REFRESH_DEBOUNCE};
 use super::snapshot::{ActivityKind, DeviceView, PairingView, Snapshot, Status};
 use super::{AssistantCommand, Command};
 use crate::assistant::AssistantError;
+use crate::assistant::destination::Destination;
 use crate::assistant::provider::ChatOutcome;
-use crate::assistant::service::AssistantService;
+use crate::assistant::service::{AssistantService, Job};
 use crate::config::Config;
 use crate::desktop::secret::SecretStore;
 use crate::pairing::token::TokenBook;
@@ -59,7 +60,34 @@ enum WorkerEvent {
         reply_id: String,
         result: Result<ChatOutcome, AssistantError>,
     },
-    Models(Result<Vec<String>, AssistantError>),
+    /// Com o destino que foi listado: se o usuario mudou de provedor no meio, a lista e velha.
+    Models(Destination, Result<Vec<String>, AssistantError>),
+}
+
+/// Roda o modelo fora do laco e devolve cada pedaco e o fim. Um panico do provedor vira erro
+/// na conversa: sem isso o `Done` nunca chegaria e `busy` ficaria ligado para sempre, com o
+/// botao "Parar" no lugar de "Enviar".
+fn run_job(job: Job, tx: &mpsc::UnboundedSender<WorkerEvent>) {
+    let result = guarded(|| {
+        job.provider.chat(
+            &job.request,
+            &mut |d| {
+                let _ = tx.send(WorkerEvent::Delta(d.to_string()));
+            },
+            &job.cancel,
+        )
+    });
+    let _ = tx.send(WorkerEvent::Done {
+        reply_id: job.reply_id,
+        result,
+    });
+}
+
+fn guarded<T>(f: impl FnOnce() -> Result<T, AssistantError>) -> Result<T, AssistantError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|_| {
+        tracing::error!("o provedor do assistente entrou em panico");
+        Err(AssistantError::Other("Falha interna do assistente.".into()))
+    })
 }
 
 pub(super) async fn run(
@@ -290,10 +318,13 @@ impl Hub {
             A::SaveSettings(s) => self.assistant.save_settings(s),
             A::SaveKey(k) => self.assistant.save_key(&k),
             A::ListModels => {
-                if let Some(p) = self.assistant.provider() {
+                if let (Some(p), Some(d)) =
+                    (self.assistant.provider(), self.assistant.destination())
+                {
                     let tx = self.assistant_tx.clone();
                     tokio::task::spawn_blocking(move || {
-                        let _ = tx.send(WorkerEvent::Models(p.list_models()));
+                        let r = guarded(|| p.list_models());
+                        let _ = tx.send(WorkerEvent::Models(d, r));
                     });
                 }
             }
@@ -312,6 +343,10 @@ impl Hub {
                 self.assistant.drop_last_error();
                 self.spawn_chat();
             }
+            A::ApproveCloudSend => {
+                self.assistant.grant_cloud_consent();
+                self.spawn_chat();
+            }
             A::Cancel => self.assistant.cancel(),
             A::Delete(id) => self.assistant.delete_conversation(&id),
             A::DeleteAll => self.assistant.delete_all(),
@@ -324,27 +359,14 @@ impl Hub {
             return;
         };
         let tx = self.assistant_tx.clone();
-        tokio::task::spawn_blocking(move || {
-            let delta_tx = tx.clone();
-            let result = job.provider.chat(
-                &job.request,
-                &mut |d| {
-                    let _ = delta_tx.send(WorkerEvent::Delta(d.to_string()));
-                },
-                &job.cancel,
-            );
-            let _ = tx.send(WorkerEvent::Done {
-                reply_id: job.reply_id,
-                result,
-            });
-        });
+        tokio::task::spawn_blocking(move || run_job(job, &tx));
     }
 
     fn on_worker(&mut self, ev: WorkerEvent) {
         match ev {
             WorkerEvent::Delta(d) => self.assistant.delta(&d),
             WorkerEvent::Done { reply_id, result } => self.assistant.finish(reply_id, result),
-            WorkerEvent::Models(r) => self.assistant.set_models(r),
+            WorkerEvent::Models(d, r) => self.assistant.set_models(&d, r),
         }
         self.snap.assistant = self.assistant.view().clone();
     }
@@ -699,6 +721,53 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assistant::provider::{CancelFlag, ChatRequest, Provider};
+
+    struct Panicking;
+
+    impl Provider for Panicking {
+        fn list_models(&self) -> Result<Vec<String>, AssistantError> {
+            panic!("de proposito");
+        }
+        fn chat(
+            &self,
+            _: &ChatRequest,
+            _: &mut dyn FnMut(&str),
+            _: &CancelFlag,
+        ) -> Result<ChatOutcome, AssistantError> {
+            panic!("de proposito");
+        }
+    }
+
+    #[test]
+    fn panico_do_provedor_vira_erro_e_o_fim_sempre_chega() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let job = Job {
+            request: ChatRequest {
+                model: "m".into(),
+                messages: Vec::new(),
+                max_tokens: 1,
+            },
+            provider: Box::new(Panicking),
+            cancel: CancelFlag::default(),
+            reply_id: "r".into(),
+        };
+        run_job(job, &tx);
+        match rx.try_recv() {
+            Ok(WorkerEvent::Done { reply_id, result }) => {
+                assert_eq!(reply_id, "r");
+                assert_eq!(
+                    result,
+                    Err(AssistantError::Other("Falha interna do assistente.".into()))
+                );
+            }
+            _ => panic!("faltou o Done"),
+        }
+        assert_eq!(
+            guarded(|| Panicking.list_models()),
+            Err(AssistantError::Other("Falha interna do assistente.".into()))
+        );
+    }
 
     #[test]
     fn resumo_do_que_foi_apagado_so_tem_contagens() {

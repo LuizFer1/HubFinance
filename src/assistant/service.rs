@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use super::AssistantError;
 use super::client::OpenAiCompatible;
+use super::destination::Destination;
 use super::prompt::{self, MAX_OUTPUT_TOKENS, OPENING_REQUEST, Role, Turn};
 use super::provider::{CancelFlag, ChatOutcome, ChatRequest, Provider};
 use super::secret::Secret;
@@ -65,10 +66,22 @@ impl AssistantService {
         &self.view
     }
 
+    /// Destino atual (`None` = sem assistente utilizavel).
+    pub fn destination(&self) -> Option<Destination> {
+        self.view.settings.destination()
+    }
+
+    /// Se a gravacao falha, a view segue com a configuracao antiga: mostrar a nova como valida
+    /// faria o usuario acreditar que a nuvem esta ligada (ou desligada) quando, depois de
+    /// reabrir o hub, nao estaria.
     pub fn save_settings(&mut self, s: Settings) {
         if let Err(e) = s.save(&self.dir) {
             tracing::warn!("nao foi possivel gravar assistant.json: {e}");
+            self.view.last_error =
+                Some("Não foi possível salvar a configuração do assistente.".into());
+            return;
         }
+        self.view.last_error = None;
         if s.provider != self.view.settings.provider
             || s.local.port != self.view.settings.local.port
         {
@@ -84,14 +97,35 @@ impl AssistantService {
         } else {
             self.secrets.save(key)
         };
-        if let Err(e) = r {
-            tracing::warn!("nao foi possivel gravar a chave: {e}");
-        }
+        self.view.last_error = match r {
+            Ok(()) => None,
+            Err(e) => {
+                // So o erro do sistema, nunca o valor da chave.
+                tracing::warn!("nao foi possivel gravar a chave: {e}");
+                Some(if key.is_empty() {
+                    "Não foi possível apagar a chave.".into()
+                } else {
+                    "Não foi possível salvar a chave.".into()
+                })
+            }
+        };
         self.view.has_key = self.secrets.load().ok().flatten().is_some();
     }
 
-    pub fn set_models(&mut self, r: Result<Vec<String>, AssistantError>) {
+    /// `listed` e o destino que foi consultado. Se o usuario trocou de provedor ou de porta
+    /// enquanto a lista vinha, ela e de outro lugar e nao pode aparecer como a do atual.
+    pub fn set_models(&mut self, listed: &Destination, r: Result<Vec<String>, AssistantError>) {
+        if self.destination().as_ref() != Some(listed) {
+            return;
+        }
         self.view.models = Some(r.map_err(|e| e.to_string()));
+    }
+
+    /// O usuario viu a previa e aprovou o envio desta conversa para a nuvem.
+    pub fn grant_cloud_consent(&mut self) {
+        if let Some(o) = self.view.open.as_mut() {
+            o.needs_cloud_consent = false;
+        }
     }
 
     /// Provedor real para o destino atual; `None` sem assistente utilizavel.
@@ -111,6 +145,7 @@ impl AssistantService {
 
     pub fn new_conversation(&mut self, book: Book, title: String, envelope: String) {
         self.leave_open();
+        self.view.last_error = None;
         let id = new_id();
         self.view.conversations.insert(
             0,
@@ -147,14 +182,18 @@ impl AssistantService {
         if self.view.busy {
             return None;
         }
-        let provider = self.provider()?;
-        let model = self.view.settings.model()?;
         let to_cloud = self
             .view
             .settings
             .destination()
             .is_some_and(|d| d.is_cloud());
         let open = self.view.open.as_ref()?;
+        // A porta da nuvem: sem a aprovacao da previa nada e montado, quanto mais enviado.
+        if to_cloud && open.needs_cloud_consent {
+            return None;
+        }
+        let provider = self.provider()?;
+        let model = self.view.settings.model()?;
         let history: Vec<Turn> = open
             .messages
             .iter()
@@ -239,9 +278,6 @@ impl AssistantService {
         let Some(target) = self.conversation_mut(&inflight.conversation_id) else {
             return;
         };
-        if inflight.to_cloud && msg.role == MessageRole::Assistant {
-            target.needs_cloud_consent = false;
-        }
         target.messages.push(msg);
     }
 
@@ -500,18 +536,26 @@ mod tests {
         assert_eq!(s.view().streaming, None);
     }
 
-    #[test]
-    fn nuvem_so_marca_consentimento_dado_apos_resposta_da_nuvem() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut s = AssistantService::open(dir.path(), Box::new(FakeSecretStore::default()));
+    fn cloud_svc(dir: &std::path::Path) -> AssistantService {
+        let mut s = AssistantService::open(dir, Box::new(FakeSecretStore::default()));
         let mut st = s.view().settings.clone();
         st.provider = ProviderChoice::Cloud;
         st.cloud.enabled = true;
         s.save_settings(st);
         s.save_key("sk-or-x");
+        s
+    }
+
+    #[test]
+    fn nuvem_sem_consentimento_nao_gera_job_e_com_ele_gera() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = cloud_svc(dir.path());
         assert!(s.view().has_key);
         s.new_conversation(Book::Personal, "t".into(), "E".into());
         assert!(s.view().open.as_ref().unwrap().needs_cloud_consent);
+        assert!(s.prepare_send().is_none(), "sem a previa aprovada nada sai");
+        assert!(!s.view().busy);
+        s.grant_cloud_consent();
         let p = FakeProvider::answering(&["ok"]);
         run(&mut s, &p);
         let open = s.view().open.as_ref().unwrap();
@@ -519,6 +563,96 @@ mod tests {
         assert!(open.messages[1].sent_to_cloud);
         s.save_key("  ");
         assert!(!s.view().has_key);
+    }
+
+    #[test]
+    fn consentimento_vale_so_para_a_conversa_aprovada() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = cloud_svc(dir.path());
+        s.new_conversation(Book::Personal, "a".into(), "E".into());
+        s.grant_cloud_consent();
+        s.new_conversation(Book::Personal, "b".into(), "E".into());
+        assert!(s.prepare_send().is_none());
+    }
+
+    #[test]
+    fn local_nunca_precisa_de_consentimento() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = svc(dir.path());
+        s.new_conversation(Book::Personal, "t".into(), "E".into());
+        assert!(s.view().open.as_ref().unwrap().needs_cloud_consent);
+        assert!(s.prepare_send().is_some());
+    }
+
+    #[test]
+    fn lista_de_modelos_de_outro_destino_e_descartada() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = svc(dir.path());
+        let listed = Destination::local(11434);
+        // O usuario trocou a porta enquanto a lista vinha.
+        let mut st = s.view().settings.clone();
+        st.local.port = 11500;
+        s.save_settings(st);
+        s.set_models(&listed, Ok(vec!["velho".into()]));
+        assert_eq!(s.view().models, None);
+        s.set_models(&Destination::local(11500), Ok(vec!["novo".into()]));
+        assert_eq!(s.view().models, Some(Ok(vec!["novo".into()])));
+        s.set_models(
+            &Destination::local(11500),
+            Err(AssistantError::LocalUnreachable(11500)),
+        );
+        assert!(matches!(s.view().models, Some(Err(_))));
+    }
+
+    #[test]
+    fn falha_ao_gravar_configuracao_mantem_a_antiga_e_avisa() {
+        let dir = tempfile::tempdir().unwrap();
+        // `data_dir` aponta para um arquivo: nao ha como criar `assistant.json` dentro dele.
+        let file = dir.path().join("arquivo");
+        std::fs::write(&file, "x").unwrap();
+        let mut s = AssistantService::open(&file, Box::new(FakeSecretStore::default()));
+        let mut st = s.view().settings.clone();
+        st.provider = ProviderChoice::Local;
+        s.save_settings(st);
+        assert_eq!(s.view().settings, Settings::default());
+        assert_eq!(
+            s.view().last_error.as_deref(),
+            Some("Não foi possível salvar a configuração do assistente.")
+        );
+        // Dar certo limpa o aviso.
+        s.new_conversation(Book::Personal, "t".into(), "E".into());
+        assert_eq!(s.view().last_error, None);
+    }
+
+    #[test]
+    fn gravar_com_sucesso_limpa_o_aviso() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = AssistantService::open(dir.path(), Box::new(FailingStore));
+        s.save_key("sk-or-x");
+        assert_eq!(
+            s.view().last_error.as_deref(),
+            Some("Não foi possível salvar a chave.")
+        );
+        assert!(!s.view().has_key);
+        s.save_settings(Settings::default());
+        assert_eq!(s.view().last_error, None);
+    }
+
+    struct FailingStore;
+
+    impl SecretStore for FailingStore {
+        fn load(&self) -> std::io::Result<Option<String>> {
+            Ok(None)
+        }
+        fn save(&self, _: &str) -> std::io::Result<()> {
+            Err(std::io::Error::other("negado"))
+        }
+        fn clear(&self) -> std::io::Result<()> {
+            Err(std::io::Error::other("negado"))
+        }
+        fn encrypted(&self) -> bool {
+            true
+        }
     }
 
     #[test]

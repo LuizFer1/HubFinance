@@ -13,7 +13,7 @@ use crate::dashboard::aggregate::{
 use crate::dashboard::budgets::budget_report;
 use crate::dashboard::contract::Book;
 use crate::dashboard::dataset::Dataset;
-use crate::dashboard::money::{format_brl, signed_brl};
+use crate::dashboard::money::{MINUS, format_brl, signed_brl};
 use crate::dashboard::periods::{last_months, month_of, shift_month};
 use crate::dashboard::reserves::{balance_until, emergency_view, ordered};
 
@@ -37,6 +37,15 @@ pub struct Envelope {
     pub emergency_goal_minor: Option<i64>,
 }
 
+/// "0,1 mês", "−0,2 mês", "3,5 meses": o sinal vai antes e o resto e do modulo (a divisao de
+/// inteiros negativos daria "0,-2"); singular abaixo de 2, como o titulo da regra da reserva.
+fn months_label(tenths: i64) -> String {
+    let sign = if tenths < 0 { MINUS } else { "" };
+    let abs = tenths.unsigned_abs();
+    let unit = if abs < 20 { "mês" } else { "meses" };
+    format!("{sign}{},{} {unit}", abs / 10, abs % 10)
+}
+
 pub fn build(analysis: &Analysis, ds: &Dataset, today: &str, book: Book) -> Envelope {
     let current = month_of(today);
     let last_closed = shift_month(&current, -1);
@@ -55,7 +64,7 @@ pub fn build(analysis: &Analysis, ds: &Dataset, today: &str, book: Book) -> Enve
                     // absoluto o modelo leria uma sobra.
                     FigureValue::Money(m) => signed_brl(*m),
                     FigureValue::Percent(p) => format!("{p}%"),
-                    FigureValue::MonthsTenths(t) => format!("{},{} meses", t / 10, t % 10),
+                    FigureValue::MonthsTenths(t) => months_label(*t),
                     FigureValue::Count(n) => n.to_string(),
                 };
                 let _ = write!(line, " | {}: {v}", fig.label);
@@ -190,7 +199,6 @@ mod tests {
     use crate::dashboard::dataset::{
         CATEGORIES, PAYMENT_METHODS, RECURRENCES, RESERVE_MOVEMENTS, RESERVES, TRANSACTIONS, USERS,
     };
-    use crate::dashboard::money::MINUS;
     use crate::dashboard::{GRAFITE_TODAY, dataset_of, fixtures, fixtures_grafite};
     use serde_json::{Value, json};
 
@@ -709,6 +717,12 @@ mod tests {
         assert!(s.contains(&format!("sobra {MINUS}R$ 500,00")), "{s}");
         assert!(s.contains(&format!("Sobra média: {MINUS}R$ 500,00")), "{s}");
         assert!(kinds.contains(&FindingKind::Emergency));
+        // Meses cobertos negativos: sinal antes, sem "0,-2", e singular abaixo de 2.
+        assert!(
+            s.contains(&format!("Meses cobertos: {MINUS}0,2 mês")),
+            "{s}"
+        );
+        assert!(!s.contains(",-"), "{s}");
         assert!(s.contains(&format!("Saldo {MINUS}R$ 200,00")), "{s}");
         assert!(
             s.contains(&format!("Saldo da reserva: {MINUS}R$ 200,00")),
@@ -718,6 +732,18 @@ mod tests {
             s.contains(&format!("Reserva de emergência: saldo {MINUS}R$ 200,00")),
             "{s}"
         );
+    }
+
+    #[test]
+    fn meses_cobertos_seguem_o_plural_do_pt_br() {
+        assert_eq!(months_label(0), "0,0 mês");
+        assert_eq!(months_label(1), "0,1 mês");
+        assert_eq!(months_label(19), "1,9 mês");
+        assert_eq!(months_label(20), "2,0 meses");
+        assert_eq!(months_label(35), "3,5 meses");
+        assert_eq!(months_label(-2), format!("{MINUS}0,2 mês"));
+        assert_eq!(months_label(-15), format!("{MINUS}1,5 mês"));
+        assert_eq!(months_label(-35), format!("{MINUS}3,5 meses"));
     }
 
     #[test]

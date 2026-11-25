@@ -372,6 +372,11 @@ pub enum Message {
     /// "Enviar" da previa: a pessoa viu o que sai e libera o primeiro envio desta conversa.
     ApproveCloudSend,
     RefreshModels,
+    /// Tecla que nenhum widget consumiu; `keys::shortcut` decide o que ela faz.
+    KeyPressed(super::keys::KeyPress),
+    /// Tab e Shift+Tab entre os campos de texto.
+    FocusNext,
+    FocusPrevious,
     Noop,
 }
 
@@ -1471,6 +1476,12 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             send_assistant(app, AssistantCommand::ListModels);
             Task::none()
         }
+        Message::KeyPressed(press) => match super::keys::shortcut(app, &press) {
+            Some(message) => update(app, message),
+            None => Task::none(),
+        },
+        Message::FocusNext => super::keys::focus(true),
+        Message::FocusPrevious => super::keys::focus(false),
         Message::Noop => Task::none(),
     }
 }
@@ -1620,6 +1631,7 @@ pub fn subscription(_app: &App) -> Subscription<Message> {
         window::close_events().map(Message::WindowClosed),
         window::resize_events().map(|(_, size)| Message::Resized(size)),
         Subscription::run(ticks).map(|()| Message::Tick),
+        super::keys::subscription(),
     ])
 }
 

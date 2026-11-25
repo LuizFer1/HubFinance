@@ -8,6 +8,7 @@ mod connection_view;
 mod dashboard_view;
 mod fonts;
 mod icons;
+mod keys;
 mod measure;
 mod remove_view;
 mod reserves_view;

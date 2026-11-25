@@ -346,7 +346,8 @@ pub fn month_picker<'a, M: Clone + 'a>(
         let color = if message.is_some() {
             t.text_soft()
         } else {
-            t.neutral_600
+            // O mesmo apagado dos botoes desabilitados (`theme::disabled`).
+            t.idle()
         };
         button(container(icons::icon(glyph, 16.0, color)).center(Length::Fill))
             .width(44)

@@ -336,6 +336,43 @@ fn hovered(status: button::Status) -> bool {
     matches!(status, button::Status::Hovered | button::Status::Pressed)
 }
 
+/// Cara de botao desabilitado, igual para todos: texto `idle()`, sem tinta, e o contorno (se o
+/// estilo tem um) no divisor. Sem isto o iced entrega `Disabled` com o estilo de repouso, e
+/// "Gerar codigo" com o hub parado ou "Salvar" com o campo vazio pareciam clicaveis. Estilos
+/// sem contorno (link, fantasma, item da lateral) continuam sem: so o texto apaga.
+fn disabled(t: &Tokens, style: button::Style) -> button::Style {
+    let border = if style.border.width > 0.0 {
+        Border {
+            color: t.divider(),
+            ..style.border
+        }
+    } else {
+        style.border
+    };
+    button::Style {
+        background: None,
+        text_color: t.idle(),
+        border,
+        shadow: Shadow::default(),
+        ..style
+    }
+}
+
+/// Envolve um estilo de botao para tratar `Disabled` com `disabled`.
+fn disabled_aware(
+    t: &'static Tokens,
+    style: impl Fn(&Theme, button::Status) -> button::Style,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let base = style(theme, status);
+        if status == button::Status::Disabled {
+            disabled(t, base)
+        } else {
+            base
+        }
+    }
+}
+
 // ---- containers ----
 
 /// Card: superficie solida, raio 8.
@@ -436,7 +473,7 @@ pub fn nav_item(
     t: &'static Tokens,
     active: bool,
 ) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| {
+    disabled_aware(t, move |_, status| {
         let background = if active {
             bg(t.surface)
         } else if hovered(status) {
@@ -450,7 +487,7 @@ pub fn nav_item(
             border: rounded(8.0),
             ..button::Style::default()
         }
-    }
+    })
 }
 
 /// Opcao do segmentado Grafite (tema, Pessoal | Comercial): raio 6, ativo no #333333 do
@@ -459,7 +496,7 @@ pub fn segment(
     t: &'static Tokens,
     active: bool,
 ) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| button::Style {
+    disabled_aware(t, move |_, status| button::Style {
         background: if active {
             bg(t.divider())
         } else if hovered(status) {
@@ -470,17 +507,17 @@ pub fn segment(
         text_color: if active { t.text } else { t.text_soft() },
         border: rounded(6.0),
         ..button::Style::default()
-    }
+    })
 }
 
 /// Botao so de icone (olho do cabecalho): 44 px, raio 8, transparente; hover texto a 6 %.
 pub fn icon_button(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| button::Style {
+    disabled_aware(t, move |_, status| button::Style {
         background: hovered(status).then(|| Background::Color(t.text_alpha(0.06))),
         text_color: t.text_soft(),
         border: rounded(8.0),
         ..button::Style::default()
-    }
+    })
 }
 
 /// Opcao de segmentado (tipo): raio 6, ativo `accent_900` + `accent_200`, inativo no texto de
@@ -489,7 +526,7 @@ pub fn seg_option(
     t: &'static Tokens,
     active: bool,
 ) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| button::Style {
+    disabled_aware(t, move |_, status| button::Style {
         background: if active {
             bg(t.accent_900)
         } else if hovered(status) {
@@ -500,22 +537,22 @@ pub fn seg_option(
         text_color: if active { t.accent_200 } else { t.text_soft() },
         border: rounded(6.0),
         ..button::Style::default()
-    }
+    })
 }
 
 /// Botao fantasma no acento ("Copiar", "Desfazer", "Gerar outro codigo").
 pub fn ghost(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| button::Style {
+    disabled_aware(t, move |_, status| button::Style {
         background: hovered(status).then(|| Background::Color(alpha(t.accent, 0.12))),
         text_color: t.accent_300,
         border: rounded(6.0),
         ..button::Style::default()
-    }
+    })
 }
 
 /// Link de texto: `accent_300`, hover `accent_200` ("Ver todos", "Limpar filtros", "Ver como").
 pub fn link(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| button::Style {
+    disabled_aware(t, move |_, status| button::Style {
         background: None,
         text_color: if hovered(status) {
             t.accent_200
@@ -523,48 +560,48 @@ pub fn link(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::St
             t.accent_300
         },
         ..button::Style::default()
-    }
+    })
 }
 
 /// Contorno no acento, fundo a 8 % e hover a 16 % ("Gerar codigo", "Limpar filtros" do vazio).
 pub fn outline_accent(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| button::Style {
+    disabled_aware(t, move |_, status| button::Style {
         background: bg(alpha(t.accent, if hovered(status) { 0.16 } else { 0.08 })),
         text_color: t.accent_300,
         border: outline(t.accent, 8.0),
         ..button::Style::default()
-    }
+    })
 }
 
 /// "Cancelar": contorno no divisor, hover texto a 7 %.
 pub fn outline_divider(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| button::Style {
+    disabled_aware(t, move |_, status| button::Style {
         background: hovered(status).then(|| Background::Color(t.text_alpha(0.07))),
         text_color: t.text,
         border: outline(t.divider(), 8.0),
         ..button::Style::default()
-    }
+    })
 }
 
 /// "Remover" da lista: texto de despesa, contorno da despesa a 45 %, hover a 12 %.
 pub fn danger_outline(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| button::Style {
+    disabled_aware(t, move |_, status| button::Style {
         background: hovered(status).then(|| Background::Color(alpha(t.expense, 0.12))),
         text_color: t.expense_fg,
         border: outline(alpha(t.expense, 0.45), 8.0),
         ..button::Style::default()
-    }
+    })
 }
 
 /// "Remover" do dialogo: fundo da despesa a 14 % (hover 20 %), contorno a 55 %. O hover para
 /// em 20 % porque a 24 % o `expense_fg` do claro cai para 4,3:1.
 pub fn danger_filled(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| button::Style {
+    disabled_aware(t, move |_, status| button::Style {
         background: bg(alpha(t.expense, if hovered(status) { 0.20 } else { 0.14 })),
         text_color: t.expense_fg,
         border: outline(alpha(t.expense, 0.55), 8.0),
         ..button::Style::default()
-    }
+    })
 }
 
 /// Botoes da barra de titulo: icone no texto de apoio, hover texto a 8 %; o fechar fica vermelho
@@ -573,7 +610,7 @@ pub fn titlebar_button(
     t: &'static Tokens,
     close: bool,
 ) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| {
+    disabled_aware(t, move |_, status| {
         let hover = hovered(status);
         button::Style {
             background: match (hover, close) {
@@ -589,13 +626,13 @@ pub fn titlebar_button(
             border: rounded(0.0),
             ..button::Style::default()
         }
-    }
+    })
 }
 
 /// Chip pilula (autor): ativo borda `accent` + `accent_900` + `accent_200`; inativo superficie
 /// com borda no divisor e hover texto a 5 % pre-misturado.
 pub fn chip(t: &'static Tokens, active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| {
+    disabled_aware(t, move |_, status| {
         let (background, border, text_color) = if active {
             (t.accent_900, t.accent, t.accent_200)
         } else if hovered(status) {
@@ -609,7 +646,7 @@ pub fn chip(t: &'static Tokens, active: bool) -> impl Fn(&Theme, button::Status)
             border: outline(border, 999.0),
             ..button::Style::default()
         }
-    }
+    })
 }
 
 /// Botao de categoria da barra de filtros: como o chip, mas com raio 8.
@@ -617,10 +654,10 @@ pub fn filter_button(
     t: &'static Tokens,
     active: bool,
 ) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |theme, status| button::Style {
+    disabled_aware(t, move |theme, status| button::Style {
         border: outline(if active { t.accent } else { t.divider() }, 8.0),
         ..chip(t, active)(theme, status)
-    }
+    })
 }
 
 /// Item do menu de categoria: raio 6, escolhido com o acento a 10 %, hover texto a 6 %.
@@ -628,7 +665,7 @@ pub fn menu_item(
     t: &'static Tokens,
     selected: bool,
 ) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| button::Style {
+    disabled_aware(t, move |_, status| button::Style {
         background: if hovered(status) {
             bg(t.text_alpha(0.06))
         } else if selected {
@@ -639,7 +676,7 @@ pub fn menu_item(
         text_color: t.text,
         border: rounded(6.0),
         ..button::Style::default()
-    }
+    })
 }
 
 /// Botao sem fundo nem hover (setas do seletor de mes, area clicavel generica).
@@ -1086,6 +1123,43 @@ mod tests {
     fn acento_e_tag_amber_quase_iguais() {
         assert!(contrast(DARK.accent, DARK.token("amber")) < 1.2);
         assert!(contrast(LIGHT.accent, LIGHT.token("amber")) < 1.6);
+    }
+
+    /// A3: todo estilo de botao apaga quando desabilitado, sem tinta e com contorno no divisor.
+    #[test]
+    fn todo_botao_desabilitado_apaga_sem_tinta() {
+        type Style = Box<dyn Fn(&Theme, button::Status) -> button::Style>;
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            let styles: Vec<(&str, Style)> = vec![
+                ("nav ativo", Box::new(nav_item(t, true))),
+                ("nav", Box::new(nav_item(t, false))),
+                ("segment ativo", Box::new(segment(t, true))),
+                ("icone", Box::new(icon_button(t))),
+                ("seg_option ativo", Box::new(seg_option(t, true))),
+                ("ghost", Box::new(ghost(t))),
+                ("link", Box::new(link(t))),
+                ("outline_accent", Box::new(outline_accent(t))),
+                ("outline_divider", Box::new(outline_divider(t))),
+                ("danger_outline", Box::new(danger_outline(t))),
+                ("danger_filled", Box::new(danger_filled(t))),
+                ("titlebar", Box::new(titlebar_button(t, true))),
+                ("chip ativo", Box::new(chip(t, true))),
+                ("filtro ativo", Box::new(filter_button(t, true))),
+                ("menu_item", Box::new(menu_item(t, true))),
+            ];
+            for (name, style) in styles {
+                let s = style(&theme, button::Status::Disabled);
+                assert_eq!(s.text_color, t.idle(), "{name} {:?}", t.mode);
+                assert!(s.background.is_none(), "{name} {:?}", t.mode);
+                if s.border.width > 0.0 {
+                    assert_eq!(s.border.color, t.divider(), "{name} {:?}", t.mode);
+                }
+                // Ativo continua com a cara de sempre.
+                let active = style(&theme, button::Status::Active);
+                assert_ne!(active.text_color, t.idle(), "{name} {:?}", t.mode);
+            }
+        }
     }
 
     #[test]

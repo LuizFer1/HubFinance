@@ -4,6 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod advisor;
+mod assistant;
 mod config;
 mod dashboard;
 mod desktop;

@@ -99,6 +99,7 @@ pub enum Screen {
     Dashboard,
     Transactions,
     Reserves,
+    Analysis,
     Connection,
 }
 
@@ -168,6 +169,8 @@ pub struct App {
     pub(super) transactions: TransactionsView,
     /// Tela Reservas: sem mes escolhido (saldos sao acumulados), so depende de dados e "hoje".
     pub(super) reserves: ReservesView,
+    /// Tela Analise: achados da conta aberta (`advisor`), recalculados com os dados e o "hoje".
+    pub(super) analysis: crate::advisor::Analysis,
     /// Menu de categoria da tela Lancamentos aberto.
     pub(super) cat_menu_open: bool,
     /// Geometria dos graficos; limpa quando dados, mes, tema ou "Ocultar valores" mudam (os
@@ -317,6 +320,7 @@ impl App {
             upcoming_expanded: false,
             transactions: TransactionsView::default(),
             reserves: ReservesView::default(),
+            analysis: crate::advisor::Analysis::default(),
             cat_menu_open: false,
             pace_cache: canvas::Cache::new(),
             history_cache: canvas::Cache::new(),
@@ -394,6 +398,7 @@ impl App {
         let month = self.month().to_string();
         self.transactions = build_transactions(dataset, &self.today, &month, &self.filters);
         self.reserves = build_reserves(dataset, &self.today);
+        self.analysis = crate::advisor::analyze(dataset, &self.today);
         self.rebuild_dashboard();
         // "N lançamentos sincronizados de K aparelhos": so aparelhos ativos que ja enviaram.
         self.transactions.synced_devices = self
@@ -2755,6 +2760,48 @@ pub(super) mod tests {
         let (mut app, _tx) = app_with_business(dir.path(), true, false);
         let _ = update(&mut app, Message::SelectBook(Book::Business));
         view_all_widths(&mut app);
+    }
+
+    #[test]
+    fn tela_analise_calcula_achados_da_conta_aberta() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        assert_eq!(app.screen, Screen::Analysis);
+        assert_eq!(
+            app.analysis,
+            crate::advisor::analyze(&app.scope, &app.today)
+        );
+        assert!(
+            !app.analysis.findings.is_empty(),
+            "o dataset de exemplo gera achados"
+        );
+    }
+
+    #[test]
+    fn tela_analise_monta_com_e_sem_achados_e_com_valores_ocultos() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        let _ = super::super::analysis_view::view(&app);
+        let _ = update(&mut app, Message::ToggleHideValues);
+        assert!(app.hide_values);
+        let _ = super::super::analysis_view::view(&app);
+        app.analysis = crate::advisor::Analysis::default();
+        let _ = super::super::analysis_view::view(&app);
+    }
+
+    #[test]
+    fn seletor_de_conta_aparece_na_analise_e_troca_os_achados() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), true, false);
+        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        assert!(super::super::shell::book_switch(&app).is_some());
+        let _ = update(&mut app, Message::SelectBook(Book::Business));
+        assert_eq!(
+            app.analysis,
+            crate::advisor::analyze(&app.scope, &app.today)
+        );
     }
 
     #[test]

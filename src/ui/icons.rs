@@ -39,6 +39,8 @@ pub const VAULT: &str = "\u{E76E}";
 /// Reserva de emergencia (sempre este, nao uma chave do app).
 pub const LIFEBUOY: &str = "\u{E63A}";
 pub const CALENDAR_CHECK: &str = "\u{E712}";
+/// Item "Análise" da lateral.
+pub const LIGHTBULB: &str = "\u{E2DC}";
 /// Deposito (guardar) e retirada nas reservas.
 pub const ARROW_DOWN: &str = "\u{E03E}";
 pub const ARROW_UP: &str = "\u{E08E}";
@@ -86,7 +88,7 @@ pub const EYE_SLASH: &str = "\u{E224}";
 
 /// Todas as constantes, para o teste garantir que nenhuma ficou vazia.
 #[cfg(test)]
-pub const ALL: [&str; 67] = [
+pub const ALL: [&str; 68] = [
     HOUSE_LINE,
     CHART_PIE_SLICE,
     LIST_BULLETS,
@@ -114,6 +116,7 @@ pub const ALL: [&str; 67] = [
     VAULT,
     LIFEBUOY,
     CALENDAR_CHECK,
+    LIGHTBULB,
     ARROW_DOWN,
     ARROW_UP,
     BABY,

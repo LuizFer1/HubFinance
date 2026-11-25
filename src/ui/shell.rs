@@ -11,7 +11,7 @@ use iced::{Alignment, Element, Length, Padding, mouse, window};
 use super::app::{App, Message, Screen};
 use super::theme::{self, Tokens};
 use super::{
-    connection_view, dashboard_view, fonts, icons, remove_view, reserves_view, time,
+    analysis_view, connection_view, dashboard_view, fonts, icons, remove_view, reserves_view, time,
     transactions_view, widgets,
 };
 use crate::config::ThemeMode;
@@ -278,8 +278,8 @@ pub(super) struct NavEntry {
     pub count: Option<usize>,
 }
 
-/// As quatro linhas na ordem do design; "Conexão" fica sob a secao "Hub".
-pub(super) fn nav_entries(app: &App) -> [NavEntry; 4] {
+/// As cinco linhas na ordem do design; "Conexão" fica sob a secao "Hub".
+pub(super) fn nav_entries(app: &App) -> [NavEntry; 5] {
     [
         NavEntry {
             screen: Screen::Dashboard,
@@ -298,6 +298,12 @@ pub(super) fn nav_entries(app: &App) -> [NavEntry; 4] {
             glyph: icons::VAULT,
             label: "Reservas",
             count: Some(reserves_count(app)),
+        },
+        NavEntry {
+            screen: Screen::Analysis,
+            glyph: icons::LIGHTBULB,
+            label: "Análise",
+            count: None,
         },
         NavEntry {
             screen: Screen::Connection,
@@ -524,6 +530,7 @@ fn content(app: &App) -> Element<'_, Message> {
             Screen::Dashboard => dashboard_view::view(app),
             Screen::Transactions => transactions_view::view(app),
             Screen::Reserves => reserves_view::view(app),
+            Screen::Analysis => analysis_view::view(app),
             Screen::Connection => connection_view::view(app),
         }
     };
@@ -598,7 +605,9 @@ fn header(app: &App) -> Element<'_, Message> {
             next,
         ));
     }
-    if app.screen == Screen::Dashboard {
+    // Na Analise o olho tambem aparece: os cartoes mascaram os valores, e sem ele quem ocultou
+    // no Dashboard nao teria como mostrar de novo sem voltar la.
+    if matches!(app.screen, Screen::Dashboard | Screen::Analysis) {
         controls = controls.push(hide_values_button(app));
     }
     let title = widgets::page_title(t, title, &subtitle);
@@ -694,6 +703,10 @@ pub(super) fn titles(app: &App) -> (&str, String) {
             } else {
                 "Dinheiro separado do saldo do mês · somente leitura".into()
             },
+        ),
+        Screen::Analysis => (
+            "Análise",
+            "Onde dá para melhorar · calculado no seu PC".into(),
         ),
         Screen::Connection => (
             "Conexão",
@@ -1002,17 +1015,23 @@ mod tests {
                 Screen::Dashboard,
                 Screen::Transactions,
                 Screen::Reserves,
+                Screen::Analysis,
                 Screen::Connection
             ]
         );
         let labels: Vec<&str> = entries.iter().map(|e| e.label).collect();
-        assert_eq!(labels, ["Dashboard", "Lançamentos", "Reservas", "Conexão"]);
+        assert_eq!(
+            labels,
+            ["Dashboard", "Lançamentos", "Reservas", "Análise", "Conexão"]
+        );
         assert_eq!(entries[0].count, None);
         assert_eq!(entries[1].count, Some(app.dashboard.sidebar.transactions));
         assert_eq!(entries[1].count, Some(13));
         assert_eq!(entries[2].count, Some(app.dashboard.sidebar.reserves));
+        // Analise nao tem contagem.
+        assert_eq!(entries[3].count, None);
         // D1 e D2 ativos; D3 revogado.
-        assert_eq!(entries[3].count, Some(2));
+        assert_eq!(entries[4].count, Some(2));
     }
 
     #[test]

@@ -3,10 +3,6 @@
 //! tokio nem iced. Cada numero vem de uma funcao do `dashboard/`, para o achado bater com o
 //! que o dashboard mostra; aqui so se decide o que vira achado e com que severidade.
 
-// Nada fora de `advisor/` chama `analyze` ate a tela Analise (Task 2.4); sem isto o clippy do
-// binario reclama de codigo morto. Sai junto com a primeira chamada de verdade.
-#![allow(dead_code)]
-
 mod rules;
 pub mod thresholds;
 

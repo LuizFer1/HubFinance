@@ -82,13 +82,12 @@ fn mask(app: &App, s: &str) -> String {
 /// como o `signed_brl` do dashboard); o "~" de estimativa e a pontuacao em volta ficam. O fim
 /// do numero e decidido por digitos: um ponto ou virgula so pertence ao valor quando vem um
 /// digito depois, senao "R$ 960,00." comeria o ponto final e "R$ 5 de R$ 9" comeria o " de".
+/// "R$" sem digito depois (parte do nome de uma categoria, por ex.) nao e valor: fica literal.
 fn mask_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     while let Some(i) = rest.find("R$") {
         let before = &rest[..i];
-        out.push_str(before.strip_suffix(MINUS).unwrap_or(before));
-        out.push_str(MASK);
         let after_sign = &rest[i + 2..];
         let number = after_sign.trim_start_matches([' ', '\u{a0}']);
         let chars: Vec<(usize, char)> = number.char_indices().collect();
@@ -101,14 +100,14 @@ fn mask_str(s: &str) -> String {
                 break;
             }
         }
-        // Sem digito depois do "R$" nao ha valor a engolir: o espaco fica onde estava.
-        rest = if end == 0 { after_sign } else { &number[end..] };
-        // Formato compacto do dashboard ("R$ 1,5 mil"): o "mil" e parte do valor.
-        if let Some(after) = rest.strip_prefix(" mil")
-            && !after.starts_with(|c: char| c.is_alphanumeric())
-        {
-            rest = after;
+        if end == 0 {
+            out.push_str(before);
+            out.push_str("R$");
+        } else {
+            out.push_str(before.strip_suffix(MINUS).unwrap_or(before));
+            out.push_str(MASK);
         }
+        rest = if end == 0 { after_sign } else { &number[end..] };
     }
     out.push_str(rest);
     out
@@ -147,13 +146,46 @@ mod tests {
     }
 
     #[test]
-    fn mascara_preserva_ponto_final_e_formato_compacto() {
+    fn mascara_preserva_ponto_final() {
         assert_eq!(mask_str("sobrou R$ 960,00."), format!("sobrou {MASK}."));
+    }
+
+    #[test]
+    fn mascara_deixa_r_cifrao_sem_digito_como_texto() {
+        assert_eq!(mask_str("Fundo R$ extra"), "Fundo R$ extra");
         assert_eq!(
-            mask_str("cerca de R$ 1,5 mil por mês"),
-            format!("cerca de {MASK} por mês")
+            mask_str("Fundo R$ extra: R$ 5,00"),
+            format!("Fundo R$ extra: {MASK}")
         );
-        assert_eq!(mask_str("R$ 1 milhão"), format!("{MASK} milhão"));
+    }
+
+    #[test]
+    fn mascara_nao_deixa_valor_nenhum_nos_achados_do_exemplo() {
+        use crate::dashboard::{GRAFITE_TODAY, fixtures_grafite};
+        let analysis = crate::advisor::analyze(&fixtures_grafite(), GRAFITE_TODAY);
+        let texts: Vec<&str> = analysis
+            .findings
+            .iter()
+            .flat_map(|f| {
+                [
+                    Some(f.title.as_str()),
+                    Some(f.detail.as_str()),
+                    f.action.as_deref(),
+                ]
+            })
+            .flatten()
+            .collect();
+        assert!(
+            texts.iter().any(|t| t.contains("R$ ")),
+            "o teste so vale se algum texto trouxer dinheiro"
+        );
+        for t in texts {
+            let masked = mask_str(t);
+            let leaked = masked
+                .match_indices("R$ ")
+                .any(|(i, _)| masked[i + 3..].starts_with(|c: char| c.is_ascii_digit()));
+            assert!(!leaked, "{t:?} -> {masked:?}");
+        }
     }
 
     #[test]

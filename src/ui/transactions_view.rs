@@ -13,7 +13,7 @@ use iced::{Alignment, Color, Element, Length, Padding};
 use super::app::{App, Message};
 use super::rows::{author_cell, category_tile, hover_row, value_cell};
 use super::theme::{self, Tokens, alpha, mix};
-use super::{fonts, icons, widgets};
+use super::{fonts, icons, shell, widgets};
 use crate::dashboard::list::{
     ALL_CATEGORIES_COLOR, CategoryOption, Filters, ListRow, NONE_KEY, TypeFilter,
 };
@@ -565,6 +565,12 @@ fn empty(app: &App) -> Element<'_, Message> {
     ]
     .spacing(8)
     .align_x(Alignment::Center);
+    // So no vazio do hub (nada sincronizado): o vazio por filtro ou por mes continua como esta.
+    if v.is_empty_hub
+        && let Some(connect) = shell::connect_phone_button(app)
+    {
+        col = col.push(Space::new().height(2)).push(connect);
+    }
     if show_clear {
         col = col.push(Space::new().height(2)).push(
             button(

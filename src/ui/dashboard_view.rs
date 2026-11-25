@@ -1669,7 +1669,7 @@ fn empty_card(app: &App) -> Element<'_, Message> {
     })
     .width(EMPTY_WIDTH)
     .height(EMPTY_HEIGHT);
-    let copy = column![
+    let mut copy = column![
         text("Nenhum dado por aqui ainda")
             .size(20)
             .font(fonts::INTER_MEDIUM)
@@ -1691,6 +1691,9 @@ fn empty_card(app: &App) -> Element<'_, Message> {
         .align_y(Alignment::Center),
     ]
     .max_width(460);
+    if let Some(connect) = shell::connect_phone_button(app) {
+        copy = copy.push(Space::new().height(20)).push(connect);
+    }
     container(row![sketch, copy].spacing(56).align_y(Alignment::Center))
         .padding([56, 32])
         .width(Length::Fill)

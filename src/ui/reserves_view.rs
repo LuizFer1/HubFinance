@@ -1015,7 +1015,7 @@ fn empty_card(app: &App) -> Element<'_, Message> {
     })
     .width(EMPTY_RESERVES_WIDTH)
     .height(EMPTY_RESERVES_HEIGHT);
-    let copy = column![
+    let mut copy = column![
         text("Nenhuma reserva sincronizada")
             .size(20)
             .font(fonts::INTER_MEDIUM)
@@ -1030,6 +1030,9 @@ fn empty_card(app: &App) -> Element<'_, Message> {
         .color(t.text_soft()),
     ]
     .max_width(460);
+    if let Some(connect) = shell::connect_phone_button(app) {
+        copy = copy.push(Space::new().height(20)).push(connect);
+    }
     let inner = shell::content_width(app) - 2.0 * EMPTY_PADDING_X;
     let body: Element<'_, Message> = if inner >= EMPTY_RESERVES_WIDTH + EMPTY_GAP_X + EMPTY_TEXT_MIN
     {

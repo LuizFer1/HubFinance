@@ -342,6 +342,28 @@ pub(super) fn active_devices(app: &App) -> usize {
         .count()
 }
 
+/// "Conectar um celular" dos estados vazios, so quando nenhum aparelho esta pareado: sem isso o
+/// primeiro uso caia no Dashboard sem caminho para a Conexao. So navega; o hub nunca cria dado.
+/// Com aparelho pareado o vazio e "aguardando sync" (ou filtro), e o botao nao ajudaria.
+pub(super) fn connect_phone_button(app: &App) -> Option<Element<'_, Message>> {
+    (active_devices(app) == 0).then(|| {
+        button(
+            container(
+                text("Conectar um celular")
+                    .size(13)
+                    .font(fonts::INTER_MEDIUM),
+            )
+            .height(Length::Fill)
+            .align_y(Alignment::Center),
+        )
+        .height(36)
+        .padding([0, 14])
+        .style(theme::outline_accent(app.tokens))
+        .on_press(Message::SelectScreen(Screen::Connection))
+        .into()
+    })
+}
+
 /// Item de 44 px, raio 8, icone 18 e rotulo 14 (Medium quando ativo). O icone ativo e o
 /// dourado `accent_400` do design; o inativo herda o texto de apoio do botao.
 fn nav_item(app: &App, entry: NavEntry) -> Element<'_, Message> {
@@ -1010,6 +1032,20 @@ mod tests {
         assert_eq!(lines.title, "Hub ligado · sem dados");
         assert_eq!(lines.dot, empty.tokens.warning);
         assert_ne!(lines.dot, empty.tokens.token("amber"));
+    }
+
+    #[test]
+    fn conectar_um_celular_so_sem_aparelho_pareado() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        assert!(connect_phone_button(&app).is_some());
+        // Os vazios montam com o botao nas tres telas.
+        for screen in [Screen::Dashboard, Screen::Transactions, Screen::Reserves] {
+            app.screen = screen;
+            let _ = root(&app);
+        }
+        let (app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        assert!(connect_phone_button(&app).is_none());
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! e o unico lugar com `ureq`; `history` o unico com rusqlite fora de `store/`, e so abre o
 //! `assistant.db`.
 
+pub mod client;
 pub mod destination;
 pub mod envelope;
 #[cfg(test)]
@@ -12,7 +13,6 @@ pub mod sse;
 
 /// Cada falha vira uma mensagem em pt-BR na conversa, com "Tentar de novo" (spec 6). Nenhuma
 /// derruba a janela nem o nucleo.
-#[allow(dead_code)] // usado pelo cliente (Task 4.4)
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AssistantError {
     #[error("Não encontrei o Ollama em 127.0.0.1:{0}. Ele está aberto?")]

@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use super::AssistantError;
 use super::prompt::Turn;
 
-#[allow(dead_code)] // usado pelo cliente (Task 4.4)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatRequest {
     pub model: String,
@@ -15,7 +14,6 @@ pub struct ChatRequest {
     pub max_tokens: u32,
 }
 
-#[allow(dead_code)] // usado pelo cliente (Task 4.4)
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ChatOutcome {
     pub text: String,
@@ -25,11 +23,10 @@ pub struct ChatOutcome {
 }
 
 /// "Parar": checado entre pedacos do stream.
-#[allow(dead_code)] // usado pelo cliente (Task 4.4)
 #[derive(Clone, Default)]
 pub struct CancelFlag(Arc<AtomicBool>);
 
-#[allow(dead_code)] // usado pelo cliente (Task 4.4)
+#[allow(dead_code)] // usado pelo servico (Task 4.6)
 impl CancelFlag {
     pub fn cancel(&self) {
         self.0.store(true, Ordering::Relaxed);
@@ -39,7 +36,7 @@ impl CancelFlag {
     }
 }
 
-#[allow(dead_code)] // usado pelo cliente (Task 4.4)
+#[allow(dead_code)] // usado pelo servico (Task 4.6)
 pub trait Provider: Send + Sync {
     fn list_models(&self) -> Result<Vec<String>, AssistantError>;
     /// Chama `on_delta` a cada pedaco. Cancelado: devolve `Ok` com `interrupted = true` e o

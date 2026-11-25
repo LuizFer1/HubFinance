@@ -4,7 +4,6 @@
 
 use serde_json::Value;
 
-#[allow(dead_code)] // usado pelo cliente (Task 4.4)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     Delta(String),
@@ -14,13 +13,11 @@ pub enum Event {
     Done,
 }
 
-#[allow(dead_code)] // usado pelo cliente (Task 4.4)
 #[derive(Default)]
 pub struct SseParser {
     buf: String,
 }
 
-#[allow(dead_code)] // usado pelo cliente (Task 4.4)
 impl SseParser {
     pub fn push(&mut self, chunk: &str) -> Vec<Event> {
         self.buf.push_str(chunk);
@@ -45,7 +42,6 @@ impl SseParser {
     }
 }
 
-#[allow(dead_code)] // usado pelo cliente (Task 4.4)
 fn parse_value(v: &Value, out: &mut Vec<Event>) {
     if let Some(e) = v.get("error") {
         out.push(Event::Error {

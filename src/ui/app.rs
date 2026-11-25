@@ -61,14 +61,14 @@ impl PendingRemoval {
     pub fn device_id(&self) -> Option<&str> {
         match self.action {
             PendingAction::Remove(_) | PendingAction::Erase(_) => Some(&self.target_id),
-            PendingAction::DeleteConversation { .. } => None,
+            PendingAction::DeleteConversation => None,
         }
     }
 
     /// A conversa que esta sendo apagada (some da lista na hora).
     pub fn conversation_id(&self) -> Option<&str> {
         match self.action {
-            PendingAction::DeleteConversation { .. } => Some(&self.target_id),
+            PendingAction::DeleteConversation => Some(&self.target_id),
             PendingAction::Remove(_) | PendingAction::Erase(_) => None,
         }
     }
@@ -82,9 +82,10 @@ pub enum PendingAction {
     Remove(AreaSet),
     /// Aparelho ja removido: so apaga as areas.
     Erase(AreaSet),
-    /// "Apagar" de uma conversa da Analise. `reopen`: era a conversa aberta, entao "Desfazer"
-    /// a abre de novo (ela fecha na hora para nao ficar na tela uma conversa "apagada").
-    DeleteConversation { reopen: bool },
+    /// "Apagar" de uma conversa da Analise. Se era a aberta, ela so some da tela
+    /// (`analysis_view::open_conversation`): nenhum `Close` sai antes do prazo, porque fechar
+    /// interromperia uma resposta chegando e "Desfazer" nao a traria de volta.
+    DeleteConversation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -717,7 +718,7 @@ impl App {
             let command = match pending.action {
                 PendingAction::Remove(erase) => Command::RemoveDevice { device_id, erase },
                 PendingAction::Erase(areas) => Command::EraseDeviceData { device_id, areas },
-                PendingAction::DeleteConversation { .. } => {
+                PendingAction::DeleteConversation => {
                     Command::Assistant(AssistantCommand::Delete(device_id))
                 }
             };
@@ -1258,14 +1259,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::UndoRemove => {
             // Nada foi enviado ao nucleo: desfazer e so esquecer. Vale para a remocao e para
             // o apagar, que saem juntos no mesmo comando, e para a conversa.
-            if let Some(PendingRemoval {
-                target_id,
-                action: PendingAction::DeleteConversation { reopen: true },
-                ..
-            }) = app.pending_removal.take()
-            {
-                send_assistant(app, AssistantCommand::Open(target_id));
-            }
+            app.pending_removal = None;
             Task::none()
         }
         Message::DecideOrphan => {
@@ -1361,16 +1355,11 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             // So um "Desfazer" por vez: o anterior vai agora.
             app.commit_pending();
-            let reopen =
-                app.snapshot.assistant.open.as_ref().map(|o| o.id.as_str()) == Some(id.as_str());
-            if reopen {
-                send_assistant(app, AssistantCommand::Close);
-            }
             app.pending_removal = Some(PendingRemoval {
                 target_id: id,
                 toast: "Conversa apagada".to_string(),
                 deadline: Instant::now() + UNDO_FOR,
-                action: PendingAction::DeleteConversation { reopen },
+                action: PendingAction::DeleteConversation,
             });
             Task::none()
         }
@@ -4136,23 +4125,20 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn apagar_a_conversa_aberta_fecha_e_desfazer_reabre() {
+    fn apagar_a_conversa_aberta_so_a_esconde_e_desfazer_a_mostra_de_novo() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
         let open = open_conv(Book::Personal, vec![]);
         let id = open.id.clone();
         app.snapshot.assistant.open = Some(open);
-        let _ = update(&mut app, Message::AskDeleteConversation(id.clone()));
+        let _ = update(&mut app, Message::AskDeleteConversation(id));
         assert!(super::super::analysis_view::open_conversation(&app).is_none());
-        assert_eq!(
-            drain(&mut rx),
-            [Command::Assistant(AssistantCommand::Close)]
-        );
+        let _ = super::super::analysis_view::view(&app);
+        // Nada sai antes do prazo: nem `Close`, que interromperia a resposta.
+        assert!(drain(&mut rx).is_empty());
         let _ = update(&mut app, Message::UndoRemove);
-        assert_eq!(
-            drain(&mut rx),
-            [Command::Assistant(AssistantCommand::Open(id))]
-        );
+        assert!(super::super::analysis_view::open_conversation(&app).is_some());
+        assert!(drain(&mut rx).is_empty());
     }
 
     #[test]

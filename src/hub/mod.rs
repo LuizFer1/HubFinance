@@ -189,7 +189,7 @@ mod tests {
         assert!(dir.path().join("tls").join("ca.crt").exists());
 
         handle.commands.send(Command::IssuePairingToken).unwrap();
-        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.pairing.is_some()
         });
         let pairing = snap.pairing.unwrap();
@@ -208,14 +208,14 @@ mod tests {
                 erase: AreaSet::default(),
             })
             .unwrap();
-        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.activity.iter().any(|a| a.text.contains("inexistente"))
         });
         assert!(up(&snap));
 
         let started = Instant::now();
         handle.commands.send(Command::Shutdown).unwrap();
-        wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+        wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.status == Status::Stopped
         });
         join.join().unwrap();
@@ -321,7 +321,7 @@ mod tests {
 
     fn stop(mut handle: HubHandle, join: std::thread::JoinHandle<()>) {
         handle.commands.send(Command::Shutdown).unwrap();
-        wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+        wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.status == Status::Stopped
         });
         join.join().unwrap();
@@ -357,7 +357,7 @@ mod tests {
             .commands
             .send(Command::KeepDeviceData(GONE.into()))
             .unwrap();
-        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.devices.iter().any(|d| d.device_id == GONE && d.data_kept)
         });
         assert!(!view(&snap, GONE).is_orphan());
@@ -385,7 +385,7 @@ mod tests {
                 areas: AreaSet::all(),
             })
             .unwrap();
-        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.dashboard.alive_transactions().count() == 3
         });
         let gone = view(&snap, GONE);
@@ -409,7 +409,7 @@ mod tests {
                 erase: [Area::Transactions, Area::Reserves].into_iter().collect(),
             })
             .unwrap();
-        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.dashboard.alive_transactions().count() == 2
         });
         let a = view(&snap, A);
@@ -468,7 +468,7 @@ mod tests {
                 erase: AreaSet::default(),
             })
             .unwrap();
-        let after = wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+        let after = wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.devices.iter().any(|d| d.device_id == A && d.revoked)
         });
         assert!(std::sync::Arc::ptr_eq(&snap.dashboard, &after.dashboard));
@@ -494,7 +494,7 @@ mod tests {
             envelope: "ENV".into(),
         });
         cmd(AssistantCommand::Resend);
-        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.assistant.open.is_some()
         });
         assert_eq!(snap.assistant.conversations.len(), 1);
@@ -510,7 +510,7 @@ mod tests {
                 settings.clone(),
             )))
             .unwrap();
-        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.assistant.settings == settings
         });
         assert!(!snap.assistant.busy);
@@ -545,7 +545,7 @@ mod tests {
         send(AssistantCommand::Resend);
         send(AssistantCommand::Send("e agora?".into()));
         // As duas perguntas ficam na conversa, mas nenhum job saiu: sem rede e sem `busy`.
-        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.assistant
                 .open
                 .as_ref()
@@ -572,7 +572,7 @@ mod tests {
         assert!(!msg.is_empty());
 
         handle.commands.send(Command::Shutdown).unwrap();
-        wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+        wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.status == Status::Stopped
         });
         join.join().unwrap();

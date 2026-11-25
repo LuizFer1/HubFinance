@@ -169,7 +169,12 @@ fn dpapi(data: &[u8], encrypt: bool) -> std::io::Result<Vec<u8>> {
     if ok == 0 {
         return Err(std::io::Error::last_os_error());
     }
-    // SAFETY: com sucesso a API devolve `cbData` bytes validos em `pbData`.
+    // Sucesso sem buffer (entrada vazia) seria `from_raw_parts` em ponteiro nulo: comportamento
+    // indefinido. Vazio vira `Vec` vazio e nao ha o que liberar.
+    if output.pbData.is_null() {
+        return Ok(Vec::new());
+    }
+    // SAFETY: com sucesso a API devolve `cbData` bytes validos em `pbData` (nao nulo, conferido).
     let out = unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec() };
     // SAFETY: memoria alocada pela DPAPI com `LocalAlloc`; nao ha mais referencia a ela.
     unsafe { LocalFree(output.pbData.cast()) };

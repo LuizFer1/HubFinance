@@ -43,6 +43,9 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 # Le a tabela `name` das fontes vendorizadas no teste; ja vem na arvore pelo iced (fontdb).
 ttf-parser = "0.25"
+# Teste do caminho `log` -> `tracing` do ureq; as duas ja vem na arvore (tracing-subscriber, ureq).
+log = "0.4"
+tracing-log = "0.2"
 
 # Bandeja, instancia unica e chave Run: so no Windows. A tray-icon no Linux exige GTK e
 # libayatana-appindicator em tempo de build (e no .deb/AppImage), e o release.yml compila os

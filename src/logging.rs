@@ -252,6 +252,54 @@ mod tests {
         String::from_utf8(bytes).unwrap_or_default()
     }
 
+    /// O vetor real: o ureq emite pelo crate `log` e o `tracing-log` repassa ao `tracing`.
+    /// `format_trace` e exatamente o que o `LogTracer` chama por registro (sem o estado global do
+    /// `log::set_logger`), com o subscriber do teste como padrao da thread.
+    #[test]
+    fn registros_log_do_ureq_passam_pela_ponte_e_continuam_filtrados() {
+        fn emit(target: &str, level: log::Level, msg: &str) {
+            let args = format_args!("{msg}");
+            let mut builder = log::Record::builder();
+            builder.target(target).level(level).args(args);
+            let _ = tracing_log::format_trace(&builder.build());
+        }
+
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(build_filter(Some(
+                "ureq_proto::client=trace,ureq=trace,rustls=trace,hub_finance=debug",
+            )))
+            .with(
+                fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(capture.clone())
+                    .with_filter(filter_fn(allowed_target)),
+            );
+        tracing::subscriber::with_default(subscriber, || {
+            emit(
+                "ureq_proto::client::flow",
+                log::Level::Trace,
+                "WIRE Authorization: Bearer segredo",
+            );
+            emit(
+                "ureq::unversioned::transport",
+                log::Level::Debug,
+                "WIRE-ureq",
+            );
+            emit("rustls::client::hs", log::Level::Debug, "WIRE-rustls");
+            emit("ureq", log::Level::Trace, "WIRE-ureq-raiz");
+            // Prova de que a ponte entrega registros (senao o teste seria vazio).
+            emit("ureq", log::Level::Info, "ok-ureq-info");
+            emit("hub_finance", log::Level::Debug, "ok-hub-debug");
+        });
+        let bytes = capture.0.lock().map(|b| b.clone()).unwrap_or_default();
+        let out = String::from_utf8(bytes).unwrap_or_default();
+        assert!(!out.contains("WIRE"), "{out}");
+        assert!(!out.contains("segredo"), "{out}");
+        assert!(out.contains("ok-ureq-info"), "{out}");
+        assert!(out.contains("ok-hub-debug"), "{out}");
+    }
+
     #[test]
     fn rust_log_nao_baixa_o_nivel_das_dependencias_de_rede() {
         for spec in [

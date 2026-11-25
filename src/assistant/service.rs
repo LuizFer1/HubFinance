@@ -121,10 +121,19 @@ impl AssistantService {
         self.view.models = Some(r.map_err(|e| e.to_string()));
     }
 
-    /// O usuario viu a previa e aprovou o envio desta conversa para a nuvem.
-    pub fn grant_cloud_consent(&mut self) {
-        if let Some(o) = self.view.open.as_mut() {
-            o.needs_cloud_consent = false;
+    /// O usuario viu a previa e aprovou o envio da conversa `id` para a nuvem. Vale so se `id`
+    /// ainda e a conversa aberta (o clique pode chegar depois de ela fechar ou de abrir outra)
+    /// e so enquanto o destino e a nuvem: a previa mostra o que sairia **para a nuvem**, e uma
+    /// aprovacao dada com o modelo local nao a cobre se o usuario trocar de provedor depois.
+    /// Devolve se a aprovacao foi registrada.
+    pub fn grant_cloud_consent(&mut self, id: &str) -> bool {
+        let cloud = self.destination().is_some_and(|d| d.is_cloud());
+        match self.view.open.as_mut() {
+            Some(o) if cloud && o.id == id => {
+                o.needs_cloud_consent = false;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -555,7 +564,8 @@ mod tests {
         assert!(s.view().open.as_ref().unwrap().needs_cloud_consent);
         assert!(s.prepare_send().is_none(), "sem a previa aprovada nada sai");
         assert!(!s.view().busy);
-        s.grant_cloud_consent();
+        let id = s.view().open.as_ref().unwrap().id.clone();
+        assert!(s.grant_cloud_consent(&id));
         let p = FakeProvider::answering(&["ok"]);
         run(&mut s, &p);
         let open = s.view().open.as_ref().unwrap();
@@ -570,9 +580,32 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut s = cloud_svc(dir.path());
         s.new_conversation(Book::Personal, "a".into(), "E".into());
-        s.grant_cloud_consent();
+        let a = s.view().open.as_ref().unwrap().id.clone();
+        assert!(s.grant_cloud_consent(&a));
         s.new_conversation(Book::Personal, "b".into(), "E".into());
         assert!(s.prepare_send().is_none());
+        // Aprovar a conversa que ja nao esta aberta nao libera a aberta.
+        assert!(!s.grant_cloud_consent(&a));
+        assert!(!s.grant_cloud_consent("inexistente"));
+        assert!(s.prepare_send().is_none());
+        assert!(s.view().open.as_ref().unwrap().needs_cloud_consent);
+    }
+
+    #[test]
+    fn aprovacao_dada_com_o_modelo_local_nao_vale_para_a_nuvem() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = svc(dir.path());
+        s.new_conversation(Book::Personal, "t".into(), "E".into());
+        let id = s.view().open.as_ref().unwrap().id.clone();
+        assert!(!s.grant_cloud_consent(&id));
+        let mut st = s.view().settings.clone();
+        st.provider = ProviderChoice::Cloud;
+        st.cloud.enabled = true;
+        s.save_settings(st);
+        s.save_key("sk-or-x");
+        assert!(s.prepare_send().is_none(), "precisa de aprovacao nova");
+        assert!(s.grant_cloud_consent(&id));
+        assert!(s.prepare_send().is_some());
     }
 
     #[test]

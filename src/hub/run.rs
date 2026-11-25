@@ -343,9 +343,10 @@ impl Hub {
                 self.assistant.drop_last_error();
                 self.spawn_chat();
             }
-            A::ApproveCloudSend => {
-                self.assistant.grant_cloud_consent();
-                self.spawn_chat();
+            A::ApproveCloudSend(id) => {
+                if self.assistant.grant_cloud_consent(&id) {
+                    self.spawn_chat();
+                }
             }
             A::Cancel => self.assistant.cancel(),
             A::Delete(id) => self.assistant.delete_conversation(&id),

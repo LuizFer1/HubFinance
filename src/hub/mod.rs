@@ -54,8 +54,9 @@ pub enum AssistantCommand {
     Send(String),
     /// Envia o que ja esta na conversa (abertura, ou "Tentar de novo").
     Resend,
-    /// O usuario viu a previa: libera o envio desta conversa para a nuvem e envia.
-    ApproveCloudSend,
+    /// O usuario viu a previa da conversa `id`: libera o envio dela para a nuvem e envia. Leva o
+    /// id porque a conversa aberta pode ter mudado entre o clique e o comando.
+    ApproveCloudSend(String),
     Cancel,
     Delete(String),
     DeleteAll,

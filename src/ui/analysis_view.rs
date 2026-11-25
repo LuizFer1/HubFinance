@@ -1,7 +1,9 @@
 //! Tela Analise: os achados de `advisor` como cartoes (sempre, sem rede); o chat entra depois.
 //! Tudo vem de `app.analysis` (calculado em `App::rebuild`); aqui so se monta a arvore.
 
-use iced::widget::{Space, column, container, row, text};
+use iced::widget::{
+    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text,
+};
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{App, Message};
@@ -14,8 +16,19 @@ const GAP: f32 = 14.0;
 
 pub fn view(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
-    if app.analysis.findings.is_empty() {
-        return card(
+    let preview = row![
+        Space::new().width(Length::Fill),
+        button(
+            text("Ver o que o assistente vê")
+                .size(13)
+                .font(fonts::INTER_MEDIUM)
+        )
+        .padding([6, 12])
+        .style(theme::outline_divider(t))
+        .on_press(Message::ShowEnvelope),
+    ];
+    let body: Element<'_, Message> = if app.analysis.findings.is_empty() {
+        card(
             t,
             column![
                 widgets::kicker(t, "Nada a apontar"),
@@ -26,12 +39,92 @@ pub fn view(app: &App) -> Element<'_, Message> {
                 .color(t.text_muted),
             ]
             .spacing(6),
-        );
-    }
-    column(app.analysis.findings.iter().map(|f| finding_card(app, f)))
+        )
+    } else {
+        column(app.analysis.findings.iter().map(|f| finding_card(app, f)))
+            .spacing(GAP)
+            .width(Length::Fill)
+            .into()
+    };
+    column![preview, body]
         .spacing(GAP)
         .width(Length::Fill)
         .into()
+}
+
+/// O texto da prévia como aparece na tela: com "Ocultar valores" ligado cada R$ vira a máscara
+/// (quem esconde os valores não os quer à vista nem aqui). O que SAI para o assistente é
+/// sempre `App::current_envelope`, sem máscara; a máscara é só de quem olha.
+pub(super) fn preview_text(app: &App) -> Option<String> {
+    app.envelope_preview.as_deref().map(|s| mask(app, s))
+}
+
+/// Sobreposição "O que o assistente vê": o envelope inteiro, rolável, com "Fechar". Mesmo
+/// padrão do modal de remoção: fundo escurecido que fecha ao clicar e a caixa por cima, que
+/// engole o clique.
+pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
+    let t = app.tokens;
+    let preview = preview_text(app)?;
+    let header = text("O que o assistente vê")
+        .size(18)
+        .font(fonts::INTER_MEDIUM)
+        .color(t.text);
+    let intro = text(
+        "Este é o texto exato que o assistente recebe: resumos e totais, sem lançamentos,          descrições, nomes de pessoas, aparelhos ou formas de pagamento, nem datas exatas.",
+    )
+    .size(13)
+    .line_height(1.5)
+    .color(t.text_soft());
+    // Monoespaçada do sistema: o app não embute uma; é só para o texto cru alinhar.
+    let content = container(scrollable(
+        container(
+            text(preview)
+                .size(12)
+                .font(iced::Font::MONOSPACE)
+                .color(t.text),
+        )
+        .padding(12)
+        .width(Length::Fill),
+    ))
+    .height(Length::Fill)
+    .style(theme::card(t));
+    let close = button(text("Fechar").size(13).font(fonts::INTER_MEDIUM))
+        .height(38)
+        .padding([0, 16])
+        .style(theme::outline_divider(t))
+        .on_press(Message::CloseEnvelope);
+    let width = (app.window_size.width - 48.0).clamp(280.0, 720.0);
+    let height = (app.window_size.height - 96.0).clamp(240.0, 640.0);
+    let dialog_box = container(
+        column![
+            header,
+            intro,
+            content,
+            row![Space::new().width(Length::Fill), close]
+        ]
+        .spacing(12)
+        .height(Length::Fill),
+    )
+    .width(width)
+    .height(height)
+    .padding(24)
+    .style(theme::dialog(t));
+    let dialog_box = opaque(mouse_area(dialog_box).on_press(Message::Noop));
+    let scrim = opaque(
+        mouse_area(
+            container(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(theme::scrim()),
+        )
+        .on_press(Message::CloseEnvelope),
+    );
+    Some(
+        stack![scrim, container(dialog_box).center(Length::Fill)]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into(),
+    )
 }
 
 fn severity_color(t: &'static Tokens, s: Severity) -> Color {
@@ -186,6 +279,31 @@ mod tests {
                 .any(|(i, _)| masked[i + 3..].starts_with(|c: char| c.is_ascii_digit()));
             assert!(!leaked, "{t:?} -> {masked:?}");
         }
+    }
+
+    #[test]
+    fn previa_mascara_valores_so_na_tela_e_o_envio_continua_inteiro() {
+        use crate::ui::app::tests::app_with_fixtures;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = crate::ui::app::update(&mut app, Message::ShowEnvelope);
+        let full = app.current_envelope();
+        assert!(full.contains("R$ "), "o envelope do exemplo traz dinheiro");
+
+        app.hide_values = false;
+        assert_eq!(preview_text(&app).as_deref(), Some(full.as_str()));
+
+        app.hide_values = true;
+        let shown = preview_text(&app).expect("previa aberta");
+        let leaked = shown
+            .match_indices("R$ ")
+            .any(|(i, _)| shown[i + 3..].starts_with(|c: char| c.is_ascii_digit()));
+        assert!(!leaked, "valor apareceu na previa com valores ocultos");
+        assert!(shown.contains(MASK));
+        // O texto que sai (e o guardado na previa) nunca e o mascarado.
+        assert_eq!(app.current_envelope(), full);
+        assert_eq!(app.envelope_preview.as_deref(), Some(full.as_str()));
+        assert!(envelope_dialog(&app).is_some());
     }
 
     #[test]

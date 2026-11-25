@@ -18,10 +18,8 @@ use crate::dashboard::periods::{last_months, month_of, shift_month};
 use crate::dashboard::reserves::{balance_until, emergency_view, ordered};
 
 /// Meses fechados que vao ao envelope (decisao Q7).
-#[allow(dead_code)] // usado pela tela Analise (Task 3.3)
 pub const ENVELOPE_MONTHS: usize = 6;
 
-#[allow(dead_code)] // usado pela tela Analise (Task 3.3)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Envelope {
     pub book: Book,
@@ -39,7 +37,6 @@ pub struct Envelope {
     pub emergency_goal_minor: Option<i64>,
 }
 
-#[allow(dead_code)] // usado pela tela Analise (Task 3.3)
 pub fn build(analysis: &Analysis, ds: &Dataset, today: &str, book: Book) -> Envelope {
     let current = month_of(today);
     let last_closed = shift_month(&current, -1);
@@ -112,7 +109,6 @@ pub fn build(analysis: &Analysis, ds: &Dataset, today: &str, book: Book) -> Enve
     }
 }
 
-#[allow(dead_code)] // usado pela tela Analise (Task 3.3)
 pub fn render(e: &Envelope) -> String {
     let mut s = String::new();
     let conta = match e.book {

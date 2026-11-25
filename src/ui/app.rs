@@ -171,6 +171,11 @@ pub struct App {
     pub(super) reserves: ReservesView,
     /// Tela Analise: achados da conta aberta (`advisor`), recalculados com os dados e o "hoje".
     pub(super) analysis: crate::advisor::Analysis,
+    /// Previa "Ver o que o assistente vê" aberta: o texto exato de `envelope::render`, sem
+    /// mascara (a tela mascara ao desenhar; o que sai é sempre o texto inteiro). Fica guardado
+    /// para `rebuild` poder refrescá-lo: dados novos com a prévia aberta não podem deixá-la
+    /// mostrando um envelope que já não é o que seria enviado.
+    pub(super) envelope_preview: Option<String>,
     /// Menu de categoria da tela Lancamentos aberto.
     pub(super) cat_menu_open: bool,
     /// Geometria dos graficos; limpa quando dados, mes, tema ou "Ocultar valores" mudam (os
@@ -274,6 +279,9 @@ pub enum Message {
     DecideOrphan,
     /// "Depois" do aviso.
     PostponeOrphans,
+    /// "Ver o que o assistente vê" (tela Análise).
+    ShowEnvelope,
+    CloseEnvelope,
     Noop,
 }
 
@@ -321,6 +329,7 @@ impl App {
             transactions: TransactionsView::default(),
             reserves: ReservesView::default(),
             analysis: crate::advisor::Analysis::default(),
+            envelope_preview: None,
             cat_menu_open: false,
             pace_cache: canvas::Cache::new(),
             history_cache: canvas::Cache::new(),
@@ -399,6 +408,9 @@ impl App {
         self.transactions = build_transactions(dataset, &self.today, &month, &self.filters);
         self.reserves = build_reserves(dataset, &self.today);
         self.analysis = crate::advisor::analyze(dataset, &self.today);
+        if self.envelope_preview.is_some() {
+            self.envelope_preview = Some(self.current_envelope());
+        }
         self.rebuild_dashboard();
         // "N lançamentos sincronizados de K aparelhos": so aparelhos ativos que ja enviaram.
         self.transactions.synced_devices = self
@@ -410,6 +422,16 @@ impl App {
         self.refresh_user_avatars();
         self.clear_charts();
         tracing::trace!("telas recalculadas para {month}");
+    }
+
+    /// O texto que o assistente recebe nesta conta agora; a prévia e o envio usam este mesmo.
+    pub(super) fn current_envelope(&self) -> String {
+        crate::assistant::envelope::render(&crate::assistant::envelope::build(
+            &self.analysis,
+            &self.scope,
+            &self.today,
+            self.book,
+        ))
     }
 
     /// So o Dashboard: ocultar valores muda o texto de cada R$, nada das outras telas.
@@ -994,6 +1016,14 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::CancelRemove => {
             app.confirm_remove = None;
+            Task::none()
+        }
+        Message::ShowEnvelope => {
+            app.envelope_preview = Some(app.current_envelope());
+            Task::none()
+        }
+        Message::CloseEnvelope => {
+            app.envelope_preview = None;
             Task::none()
         }
         Message::ConfirmRemove => {
@@ -2789,6 +2819,53 @@ pub(super) mod tests {
         let _ = super::super::analysis_view::view(&app);
         app.analysis = crate::advisor::Analysis::default();
         let _ = super::super::analysis_view::view(&app);
+    }
+
+    #[test]
+    fn previa_mostra_exatamente_o_render_do_envelope() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        assert!(app.envelope_preview.is_none());
+        let _ = update(&mut app, Message::ShowEnvelope);
+        let expected = crate::assistant::envelope::render(&crate::assistant::envelope::build(
+            &app.analysis,
+            &app.scope,
+            &app.today,
+            app.book,
+        ));
+        assert_eq!(app.envelope_preview.as_deref(), Some(expected.as_str()));
+        assert_eq!(
+            app.envelope_preview.as_deref(),
+            Some(app.current_envelope().as_str())
+        );
+        assert!(
+            expected.contains("R$ "),
+            "o exemplo traz dinheiro no envelope"
+        );
+        // Aberta, a prévia monta (sobreposição) e fecha.
+        assert!(super::super::analysis_view::envelope_dialog(&app).is_some());
+        let _ = update(&mut app, Message::CloseEnvelope);
+        assert!(app.envelope_preview.is_none());
+        assert!(super::super::analysis_view::envelope_dialog(&app).is_none());
+    }
+
+    #[test]
+    fn previa_aberta_acompanha_a_troca_de_conta_e_os_dados() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), true, false);
+        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        let _ = update(&mut app, Message::ShowEnvelope);
+        assert!(
+            app.envelope_preview
+                .as_deref()
+                .unwrap()
+                .contains("Conta: pessoal")
+        );
+        let _ = update(&mut app, Message::SelectBook(Book::Business));
+        let preview = app.envelope_preview.as_deref().unwrap();
+        assert!(preview.contains("Conta: comercial"));
+        assert_eq!(preview, app.current_envelope());
     }
 
     #[test]

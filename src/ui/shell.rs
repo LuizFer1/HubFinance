@@ -33,6 +33,9 @@ pub fn root(app: &App) -> Element<'_, Message> {
     if let Some(dialog) = remove_view::dialog(app) {
         layers = layers.push(dialog);
     }
+    if let Some(preview) = analysis_view::envelope_dialog(app) {
+        layers = layers.push(preview);
+    }
     if let Some(pending) = &app.pending_removal {
         layers = layers.push(toast(app.tokens, &pending.toast));
     }

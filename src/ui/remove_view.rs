@@ -10,6 +10,9 @@ use iced::widget::{Space, button, column, container, mouse_area, opaque, row, st
 use iced::{Alignment, Element, Length};
 
 use super::app::{App, Message, RemoveStep};
+// As contagens usam o "4.688" do resto da UI: numero grande sem separador e dificil de ler justo
+// no dialogo em que a pessoa decide o que apagar.
+use super::shell::{plural, thousands};
 use super::theme::{self, Tokens};
 use super::{fonts, icons, widgets};
 use crate::hub::snapshot::DeviceView;
@@ -22,10 +25,6 @@ pub(super) fn area_title(area: Area) -> &'static str {
         Area::Reserves => "Reservas",
         Area::Recurrences => "Recorrências",
     }
-}
-
-fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 /// "128 lançamentos", "2 reservas e 14 movimentos": o que a area apaga.
@@ -65,7 +64,7 @@ pub(super) fn area_notes(area: Area, d: &DeviceData) -> Vec<String> {
                 let kept = if d.reserves_kept == 1 {
                     "1 reserva mantida: tem".to_string()
                 } else {
-                    format!("{} reservas mantidas: têm", d.reserves_kept)
+                    format!("{} reservas mantidas: têm", thousands(d.reserves_kept))
                 };
                 notes.push(format!(
                     "{kept} movimentos de outros aparelhos. Só os movimentos deste aparelho \
@@ -159,7 +158,7 @@ pub(super) fn toast_text(base: &str, d: &DeviceData, selected: AreaSet) -> Strin
     } else {
         "itens serão apagados"
     };
-    format!("{base} · {n} {verb}")
+    format!("{base} · {} {verb}", thousands(n))
 }
 
 /// Quem aparece no modal: a pessoa da lista (aparelho ativo) ou, para um aparelho ja removido
@@ -509,6 +508,21 @@ mod tests {
             ]
         );
         assert!(area_notes(Area::Budgets, &d).is_empty());
+    }
+
+    #[test]
+    fn contagens_grandes_tem_separador_de_milhar() {
+        let d = DeviceData {
+            transactions: 4688,
+            reserves_kept: 1200,
+            ..data()
+        };
+        assert_eq!(area_count_text(Area::Transactions, &d), "4.688 lançamentos");
+        assert!(area_notes(Area::Reserves, &d)[0].starts_with("1.200 reservas mantidas"));
+        let mut only = AreaSet::default();
+        only.insert(Area::Transactions);
+        assert!(confirm_label(&d, only, true).contains("4.688 itens"));
+        assert!(toast_text("Dados de Pixel", &d, only).ends_with("4.688 itens serão apagados"));
     }
 
     #[test]

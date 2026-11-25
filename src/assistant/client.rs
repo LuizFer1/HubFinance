@@ -2,7 +2,7 @@
 //! `ureq`. Fala com `Destination` e nada mais: nao ha como apontar para outra URL.
 
 use std::io::Read;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -132,47 +132,95 @@ fn stream_failure(d: &Destination) -> AssistantError {
     }
 }
 
-/// O que a thread de leitura entrega ao laco que consome o stream.
+/// O que a thread da requisicao entrega ao laco que consome o stream.
 #[derive(Debug, PartialEq, Eq)]
 enum Chunk {
     Data(Vec<u8>),
     End,
     TimedOut,
     Failed,
+    /// A requisicao falhou antes de haver stream (conexao, TLS) ou o status nao foi 200; o erro
+    /// ja vem traduzido.
+    Rejected(AssistantError),
 }
 
-/// `read` bloqueia e nao tem como ser interrompido: ler numa thread e esperar por canal com
-/// prazo e o que faz "Parar" e "sem dado por 60 s" valerem mesmo com a conexao muda. Se o
-/// consumidor sumir (cancelou), o proximo `send` falha e a thread encerra, fechando a conexao.
-fn spawn_reader(mut reader: impl Read + Send + 'static) -> std::io::Result<Receiver<Chunk>> {
+/// Tudo o que a thread precisa para fazer a requisicao sozinha.
+struct Call {
+    agent: ureq::Agent,
+    url: String,
+    auth: Option<String>,
+    body: Value,
+    destination: Destination,
+    model: String,
+}
+
+/// A requisicao inteira (envio, espera dos cabecalhos, corpo do erro, leitura do stream) roda
+/// numa thread: `send` e `read` bloqueiam e nao tem como ser interrompidos, e um modelo frio
+/// pode levar ate 2 min so para devolver os cabecalhos. Com o canal, `consume_stream` confere o
+/// "Parar" desde o primeiro instante e aplica o prazo "sem dado por 60 s". Se o consumidor sumir
+/// (cancelou), o proximo `send` falha e a thread encerra, fechando a conexao; no pior caso ela
+/// morre no prazo do `ureq` (`RESPONSE_TIMEOUT` ou `BODY_TOTAL_CAP`).
+fn spawn_call(call: Call) -> std::io::Result<Receiver<Chunk>> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .name("assistant-sse".into())
-        .spawn(move || {
-            let mut buf = [0u8; 4096];
-            loop {
-                let msg = match reader.read(&mut buf) {
-                    Ok(0) => Chunk::End,
-                    Ok(n) => Chunk::Data(buf[..n].to_vec()),
-                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                    Err(e) => {
-                        // O ureq embrulha o proprio erro (o teto do corpo) num `io::Error`.
-                        let timed_out = e.kind() == std::io::ErrorKind::TimedOut
-                            || matches!(ureq::Error::from(e), ureq::Error::Timeout(_));
-                        if timed_out {
-                            Chunk::TimedOut
-                        } else {
-                            Chunk::Failed
-                        }
-                    }
-                };
-                let last = !matches!(msg, Chunk::Data(_));
-                if tx.send(msg).is_err() || last {
-                    break;
+        .spawn(move || run_call(call, &tx))?;
+    Ok(rx)
+}
+
+fn run_call(call: Call, tx: &Sender<Chunk>) {
+    let mut request = call.agent.post(&call.url).header("X-Title", APP_TITLE);
+    if let Some(a) = &call.auth {
+        request = request.header("Authorization", a);
+    }
+    let resp = match request.send_json(&call.body) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = tx.send(Chunk::Rejected(transport_error(&e, &call.destination)));
+            return;
+        }
+    };
+    let status = resp.status().as_u16();
+    let mut reader = resp.into_body().into_reader();
+    if status != 200 {
+        let mut raw = Vec::new();
+        let _ = (&mut reader).take(16 * 1024).read_to_end(&mut raw);
+        let text = String::from_utf8_lossy(&raw);
+        let _ = tx.send(Chunk::Rejected(status_error(
+            status,
+            &text,
+            &call.destination,
+            &call.model,
+        )));
+        return;
+    }
+    pump(&mut reader, tx);
+}
+
+/// Copia o corpo para o canal ate o fim, um erro ou o consumidor sumir.
+fn pump(reader: &mut impl Read, tx: &Sender<Chunk>) {
+    let mut buf = [0u8; 4096];
+    loop {
+        let msg = match reader.read(&mut buf) {
+            Ok(0) => Chunk::End,
+            Ok(n) => Chunk::Data(buf[..n].to_vec()),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                // O ureq embrulha o proprio erro (o teto do corpo) num `io::Error`.
+                let timed_out = e.kind() == std::io::ErrorKind::TimedOut
+                    || matches!(ureq::Error::from(e), ureq::Error::Timeout(_));
+                if timed_out {
+                    Chunk::TimedOut
+                } else {
+                    Chunk::Failed
                 }
             }
-        })?;
-    Ok(rx)
+        };
+        let last = !matches!(msg, Chunk::Data(_));
+        if tx.send(msg).is_err() || last {
+            return;
+        }
+    }
 }
 
 /// Devolve o maior prefixo UTF-8 valido de `pending` (removendo-o do buffer). Um caractere
@@ -205,10 +253,55 @@ fn take_valid_utf8(pending: &mut Vec<u8>) -> String {
     }
 }
 
-/// Traduz os pedacos de bytes em texto para a UI. `idle`: sem dado novo por esse tempo vira
-/// `Timeout`; o "Parar" e conferido a cada `CANCEL_POLL`.
+/// Aplica os eventos ao resultado. `Ok(true)` = chegou o `[DONE]`. `at_eof`: o ultimo pedaco
+/// de uma conexao cortada pode ser meia linha de JSON; isso nao e erro de formato, e so uma
+/// resposta interrompida.
+fn apply_events(
+    events: Vec<Event>,
+    out: &mut ChatOutcome,
+    on_delta: &mut dyn FnMut(&str),
+    d: &Destination,
+    model: &str,
+    at_eof: bool,
+) -> Result<bool, AssistantError> {
+    for ev in events {
+        match ev {
+            Event::Delta(piece) => {
+                on_delta(&piece);
+                out.text.push_str(&piece);
+            }
+            Event::Usage {
+                tokens_in,
+                tokens_out,
+            } => {
+                out.tokens_in = Some(tokens_in);
+                out.tokens_out = Some(tokens_out);
+            }
+            Event::Error { code, message } => {
+                let status = code.and_then(|c| u16::try_from(c).ok()).unwrap_or(500);
+                return Err(match status_error(status, &message, d, model) {
+                    // Sem mapeamento conhecido, a mensagem do provedor diz mais que "HTTP 500".
+                    AssistantError::Other(_) if !message.is_empty() => {
+                        AssistantError::Other(message)
+                    }
+                    known => known,
+                });
+            }
+            Event::Malformed if at_eof => {}
+            Event::Malformed => return Err(AssistantError::Malformed),
+            Event::Done => return Ok(true),
+        }
+    }
+    Ok(false)
+}
+
+/// Traduz os pedacos de bytes em texto para a UI. `first`: espera maxima pelo primeiro byte
+/// (cabecalhos incluidos); `idle`: depois disso, sem dado novo por esse tempo vira `Timeout`.
+/// O "Parar" e conferido a cada `CANCEL_POLL`, em qualquer fase. Conexao que fecha sem
+/// `[DONE]` devolve o texto ate ali com `interrupted`: a resposta esta incompleta.
 fn consume_stream(
     rx: &Receiver<Chunk>,
+    first: Duration,
     idle: Duration,
     d: &Destination,
     model: &str,
@@ -218,54 +311,42 @@ fn consume_stream(
     let mut parser = SseParser::default();
     let mut out = ChatOutcome::default();
     let mut pending: Vec<u8> = Vec::new();
+    let mut budget = first;
     let mut last_data = Instant::now();
     loop {
         if cancel.is_cancelled() {
             out.interrupted = true;
             return Ok(out);
         }
-        let left = idle.saturating_sub(last_data.elapsed());
+        let left = budget.saturating_sub(last_data.elapsed());
         if left.is_zero() {
             return Err(AssistantError::Timeout);
         }
         let bytes = match rx.recv_timeout(left.min(CANCEL_POLL)) {
             Ok(Chunk::Data(b)) => b,
-            Ok(Chunk::End) => return Ok(out),
+            Ok(Chunk::End) => {
+                // Descarrega a ultima linha, que pode nao ter terminado em `\n`.
+                let tail = take_valid_utf8(&mut pending);
+                let events = parser.push(&format!("{tail}\n"));
+                if !apply_events(events, &mut out, on_delta, d, model, true)? {
+                    out.interrupted = true;
+                }
+                return Ok(out);
+            }
             Ok(Chunk::TimedOut) => return Err(AssistantError::Timeout),
+            Ok(Chunk::Rejected(e)) => return Err(e),
             Ok(Chunk::Failed) | Err(RecvTimeoutError::Disconnected) => {
                 return Err(stream_failure(d));
             }
             Err(RecvTimeoutError::Timeout) => continue,
         };
+        budget = idle;
         last_data = Instant::now();
         pending.extend_from_slice(&bytes);
         let text = take_valid_utf8(&mut pending);
-        for ev in parser.push(&text) {
-            match ev {
-                Event::Delta(piece) => {
-                    on_delta(&piece);
-                    out.text.push_str(&piece);
-                }
-                Event::Usage {
-                    tokens_in,
-                    tokens_out,
-                } => {
-                    out.tokens_in = Some(tokens_in);
-                    out.tokens_out = Some(tokens_out);
-                }
-                Event::Error { code, message } => {
-                    let status = code.and_then(|c| u16::try_from(c).ok()).unwrap_or(500);
-                    return Err(match status_error(status, &message, d, model) {
-                        // Sem mapeamento conhecido, a mensagem do provedor diz mais que "HTTP 500".
-                        AssistantError::Other(_) if !message.is_empty() => {
-                            AssistantError::Other(message)
-                        }
-                        known => known,
-                    });
-                }
-                Event::Malformed => return Err(AssistantError::Malformed),
-                Event::Done => return Ok(out),
-            }
+        let events = parser.push(&text);
+        if apply_events(events, &mut out, on_delta, d, model, false)? {
+            return Ok(out);
         }
     }
 }
@@ -311,25 +392,18 @@ impl Provider for OpenAiCompatible {
         on_delta: &mut dyn FnMut(&str),
         cancel: &CancelFlag,
     ) -> Result<ChatOutcome, AssistantError> {
-        let url = format!("{}/chat/completions", self.destination.base_url());
-        let mut call = self.agent.post(&url).header("X-Title", APP_TITLE);
-        if let Some(a) = self.auth()? {
-            call = call.header("Authorization", &a);
-        }
-        let resp = call
-            .send_json(body(req, &self.destination, self.deny_data_collection))
-            .map_err(|e| transport_error(&e, &self.destination))?;
-        let status = resp.status().as_u16();
-        let reader = resp.into_body().into_reader();
-        if status != 200 {
-            let mut raw = Vec::new();
-            let _ = reader.take(16 * 1024).read_to_end(&mut raw);
-            let text = String::from_utf8_lossy(&raw);
-            return Err(status_error(status, &text, &self.destination, &req.model));
-        }
-        let rx = spawn_reader(reader).map_err(|e| AssistantError::Other(e.to_string()))?;
+        let call = Call {
+            agent: self.agent.clone(),
+            url: format!("{}/chat/completions", self.destination.base_url()),
+            auth: self.auth()?,
+            body: body(req, &self.destination, self.deny_data_collection),
+            destination: self.destination.clone(),
+            model: req.model.clone(),
+        };
+        let rx = spawn_call(call).map_err(|e| AssistantError::Other(e.to_string()))?;
         consume_stream(
             &rx,
+            RESPONSE_TIMEOUT,
             READ_IDLE_TIMEOUT,
             &self.destination,
             &req.model,
@@ -454,6 +528,7 @@ mod tests {
         let r = consume_stream(
             &rx,
             idle,
+            idle,
             &Destination::local(11434),
             "m",
             &mut |s| seen.push(s.to_string()),
@@ -536,6 +611,146 @@ mod tests {
             &CancelFlag::default(),
         );
         assert_eq!(r.unwrap_err(), AssistantError::Malformed);
+    }
+
+    #[test]
+    fn ultima_linha_sem_quebra_e_descarregada_no_fim_mas_resposta_fica_interrompida() {
+        let (r, seen) = run(
+            vec![
+                sse(r#"{"choices":[{"delta":{"content":"a"}}]}"#),
+                // Sem `\n\n` final e sem `[DONE]`: a conexao fechou no meio.
+                Chunk::Data(br#"data: {"choices":[{"delta":{"content":"b"}}]}"#.to_vec()),
+                Chunk::End,
+            ],
+            Duration::from_secs(5),
+            &CancelFlag::default(),
+        );
+        let out = r.unwrap();
+        assert_eq!(out.text, "ab");
+        assert!(out.interrupted);
+        assert_eq!(seen, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn fim_sem_done_e_interrompido_e_com_done_nao() {
+        let (r, _) = run(
+            vec![
+                sse(r#"{"choices":[{"delta":{"content":"a"}}]}"#),
+                Chunk::End,
+            ],
+            Duration::from_secs(5),
+            &CancelFlag::default(),
+        );
+        assert!(r.unwrap().interrupted);
+        let (r, _) = run(
+            vec![
+                sse(r#"{"choices":[{"delta":{"content":"a"}}]}"#),
+                Chunk::Data(b"data: [DONE]\n\n".to_vec()),
+                Chunk::End,
+            ],
+            Duration::from_secs(5),
+            &CancelFlag::default(),
+        );
+        assert!(!r.unwrap().interrupted);
+    }
+
+    #[test]
+    fn meia_linha_no_fim_nao_vira_erro_de_formato() {
+        let (r, _) = run(
+            vec![
+                Chunk::Data(b"data: {\"choices\":[{\"del".to_vec()),
+                Chunk::End,
+            ],
+            Duration::from_secs(5),
+            &CancelFlag::default(),
+        );
+        let out = r.unwrap();
+        assert!(out.interrupted);
+        assert!(out.text.is_empty());
+    }
+
+    #[test]
+    fn requisicao_recusada_chega_como_erro() {
+        let (r, _) = run(
+            vec![Chunk::Rejected(AssistantError::BadKey)],
+            Duration::from_secs(5),
+            &CancelFlag::default(),
+        );
+        assert_eq!(r.unwrap_err(), AssistantError::BadKey);
+    }
+
+    #[test]
+    fn parar_vale_enquanto_espera_os_cabecalhos() {
+        // Canal mudo (a thread ainda esta no `send`, ou no corpo do erro): o "Parar" feito de
+        // fora tem de acordar o laco bem antes do prazo de 30 s.
+        let (tx, rx) = mpsc::channel::<Chunk>();
+        let cancel = CancelFlag::default();
+        let remote = cancel.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            remote.cancel();
+        });
+        let started = Instant::now();
+        let out = consume_stream(
+            &rx,
+            Duration::from_secs(30),
+            Duration::from_secs(30),
+            &Destination::local(11434),
+            "m",
+            &mut |_| {},
+            &cancel,
+        )
+        .unwrap();
+        t.join().unwrap();
+        drop(tx);
+        assert!(out.interrupted);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn prazo_do_primeiro_byte_e_separado_do_prazo_ocioso() {
+        // Antes de qualquer dado vale `first`; so depois do primeiro pedaco passa a valer `idle`.
+        let (tx, rx) = mpsc::channel::<Chunk>();
+        tx.send(sse(r#"{"choices":[{"delta":{"content":"a"}}]}"#))
+            .unwrap();
+        let started = Instant::now();
+        let r = consume_stream(
+            &rx,
+            Duration::from_secs(30),
+            Duration::from_millis(150),
+            &Destination::local(11434),
+            "m",
+            &mut |_| {},
+            &CancelFlag::default(),
+        );
+        assert_eq!(r.unwrap_err(), AssistantError::Timeout);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        drop(tx);
+    }
+
+    #[test]
+    fn pump_entrega_dados_e_fim() {
+        let (tx, rx) = mpsc::channel();
+        let mut reader = std::io::Cursor::new(b"abc".to_vec());
+        pump(&mut reader, &tx);
+        assert_eq!(rx.recv().unwrap(), Chunk::Data(b"abc".to_vec()));
+        assert_eq!(rx.recv().unwrap(), Chunk::End);
+    }
+
+    #[test]
+    fn pump_classifica_erro_de_leitura() {
+        struct Failing(std::io::ErrorKind);
+        impl Read for Failing {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(self.0.into())
+            }
+        }
+        let (tx, rx) = mpsc::channel();
+        pump(&mut Failing(std::io::ErrorKind::TimedOut), &tx);
+        assert_eq!(rx.recv().unwrap(), Chunk::TimedOut);
+        let (tx, rx) = mpsc::channel();
+        pump(&mut Failing(std::io::ErrorKind::ConnectionReset), &tx);
+        assert_eq!(rx.recv().unwrap(), Chunk::Failed);
     }
 
     #[test]

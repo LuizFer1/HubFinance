@@ -15,7 +15,7 @@ use super::{fonts, widgets};
 use crate::advisor::{Finding, Severity};
 use crate::assistant::prompt::Role;
 use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
-use crate::dashboard::money::{MASK, MINUS};
+use crate::dashboard::money::{MASK, MINUS, group_thousands};
 use crate::hub::snapshot::Status;
 
 const GAP: f32 = 14.0;
@@ -125,7 +125,47 @@ pub(super) fn conversations_of_book(app: &App) -> Vec<&ConversationSummary> {
 }
 
 fn tokens_label((tokens_in, tokens_out): (u32, u32)) -> String {
-    format!("{tokens_in} → {tokens_out} tokens")
+    format!(
+        "{} → {} tokens",
+        group_thousands(u64::from(tokens_in)),
+        group_thousands(u64::from(tokens_out))
+    )
+}
+
+/// Total do cabecalho. Sem nenhuma resposta que tenha informado uso (modelo local que nao manda
+/// `usage`, ou conversa so com a abertura), "0 → 0" afirmaria um zero que ninguem mediu.
+fn tokens_total_label(open: &OpenConversation) -> String {
+    if open
+        .messages
+        .iter()
+        .any(|m| m.tokens_in.is_some() || m.tokens_out.is_some())
+    {
+        tokens_label(open.tokens_total())
+    } else {
+        "—".to_string()
+    }
+}
+
+/// "Cancelar" na previa da nuvem. Sem nenhuma resposta do assistente nada nunca foi enviado e a
+/// conversa so tem a abertura automatica: fecha-la a deixaria no historico como lixo, entao ela
+/// some. Com resposta, ja ha o que guardar e so fecha.
+fn cancel_preview_message(open: &OpenConversation) -> Message {
+    if open
+        .messages
+        .iter()
+        .any(|m| m.role == MessageRole::Assistant)
+    {
+        Message::CloseConversation
+    } else {
+        Message::DeleteConversation(open.id.clone())
+    }
+}
+
+/// Aviso acima da previa com "Ocultar valores" ligado: a tela mascara, o envio nao.
+const HIDDEN_VALUES_NOTE: &str = "Os valores estão ocultos na tela; o envio leva os valores reais.";
+
+fn hidden_values_note(app: &App) -> Option<&'static str> {
+    app.hide_values.then_some(HIDDEN_VALUES_NOTE)
 }
 
 fn chat_area(app: &App) -> Option<Element<'_, Message>> {
@@ -138,9 +178,7 @@ fn chat_area(app: &App) -> Option<Element<'_, Message>> {
             .font(fonts::INTER_MEDIUM)
             .color(t.text),
         Space::new().width(Length::Fill),
-        text(tokens_label(open.tokens_total()))
-            .size(12)
-            .color(t.text_muted),
+        text(tokens_total_label(open)).size(12).color(t.text_muted),
         button(text("Fechar").size(13).font(fonts::INTER_MEDIUM))
             .padding([4, 10])
             .style(theme::outline_divider(t))
@@ -362,24 +400,25 @@ fn preview_intro(open: &OpenConversation) -> &'static str {
 fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, Message> {
     let t = app.tokens;
     let cloud = &app.snapshot.assistant.settings.cloud;
-    let envelope = container(scrollable(
-        container(
-            text(preview_shown(app, open))
-                .size(12)
-                .font(fonts::INTER)
-                .color(t.text),
-        )
-        .padding(12)
-        .width(Length::Fill),
-    ))
-    .height(220)
-    .style(theme::card(t));
+    let mut body = column![].spacing(8);
+    if let Some(note) = hidden_values_note(app) {
+        body = body.push(text(note).size(12).color(t.text_muted));
+    }
+    body = body.push(
+        text(preview_shown(app, open))
+            .size(12)
+            .font(fonts::INTER)
+            .color(t.text),
+    );
+    let envelope = container(scrollable(container(body).padding(12).width(Length::Fill)))
+        .height(220)
+        .style(theme::card(t));
     let actions = row![
         Space::new().width(Length::Fill),
         button(text("Cancelar").size(13).font(fonts::INTER_MEDIUM))
             .padding([6, 14])
             .style(theme::outline_divider(t))
-            .on_press(Message::CloseConversation),
+            .on_press(cancel_preview_message(open)),
         button(text("Enviar").size(13).font(fonts::INTER_MEDIUM))
             .padding([6, 14])
             .style(theme::outline_accent(t))
@@ -782,7 +821,7 @@ mod tests {
         };
         assert_eq!(
             reply_notes(&m).join(" · "),
-            "llama3.1:8b · 1240 → 380 tokens"
+            "llama3.1:8b · 1.240 → 380 tokens"
         );
         m.sent_to_cloud = true;
         m.provider = Some("cloud".into());
@@ -790,7 +829,7 @@ mod tests {
         m.deny_data_collection = Some(true);
         assert_eq!(
             reply_notes(&m).join(" · "),
-            "1240 → 380 tokens · enviado à nuvem · sem retenção · openai/gpt-4o"
+            "1.240 → 380 tokens · enviado à nuvem · sem retenção · openai/gpt-4o"
         );
         m.interrupted = true;
         assert!(reply_notes(&m).contains(&"interrompida".to_string()));
@@ -799,7 +838,92 @@ mod tests {
         m.provider = None;
         assert_eq!(
             reply_notes(&m).join(" · "),
-            "1240 → 380 tokens · interrompida · enviado à nuvem · sem retenção"
+            "1.240 → 380 tokens · interrompida · enviado à nuvem · sem retenção"
+        );
+    }
+
+    fn conversation_with(messages: Vec<MessageView>) -> OpenConversation {
+        OpenConversation {
+            id: "C1".into(),
+            book: crate::dashboard::contract::Book::Personal,
+            envelope: String::new(),
+            messages,
+            needs_cloud_consent: true,
+        }
+    }
+
+    fn msg(role: MessageRole, tokens: Option<u32>) -> MessageView {
+        MessageView {
+            id: "m".into(),
+            role,
+            content: String::new(),
+            sent_to_cloud: false,
+            deny_data_collection: None,
+            provider: None,
+            model: None,
+            tokens_in: tokens,
+            tokens_out: tokens,
+            interrupted: false,
+        }
+    }
+
+    #[test]
+    fn total_do_cabecalho_agrupa_milhares_e_some_sem_uso_informado() {
+        assert_eq!(tokens_label((1240, 380)), "1.240 → 380 tokens");
+        assert_eq!(tokens_label((1_234_567, 0)), "1.234.567 → 0 tokens");
+        let none = conversation_with(vec![
+            msg(MessageRole::User, None),
+            msg(MessageRole::Assistant, None),
+        ]);
+        assert_eq!(tokens_total_label(&none), "—");
+        let some = conversation_with(vec![
+            msg(MessageRole::User, None),
+            msg(MessageRole::Assistant, Some(1500)),
+        ]);
+        assert_eq!(tokens_total_label(&some), "1.500 → 1.500 tokens");
+        // Uso informado como zero e uma medida, nao ausencia.
+        let zero = conversation_with(vec![msg(MessageRole::Assistant, Some(0))]);
+        assert_eq!(tokens_total_label(&zero), "0 → 0 tokens");
+    }
+
+    #[test]
+    fn cancelar_a_previa_apaga_a_conversa_que_nunca_foi_respondida() {
+        let fresh = conversation_with(vec![msg(MessageRole::User, None)]);
+        assert!(matches!(
+            cancel_preview_message(&fresh),
+            Message::DeleteConversation(id) if id == "C1"
+        ));
+        // Um erro nao e resposta: nada saiu.
+        let failed = conversation_with(vec![
+            msg(MessageRole::User, None),
+            msg(MessageRole::Error, None),
+        ]);
+        assert!(matches!(
+            cancel_preview_message(&failed),
+            Message::DeleteConversation(_)
+        ));
+        let answered = conversation_with(vec![
+            msg(MessageRole::User, None),
+            msg(MessageRole::Assistant, None),
+            msg(MessageRole::User, None),
+        ]);
+        assert!(matches!(
+            cancel_preview_message(&answered),
+            Message::CloseConversation
+        ));
+    }
+
+    #[test]
+    fn previa_com_valores_ocultos_avisa_que_o_envio_leva_os_reais() {
+        use crate::ui::app::tests::app_with_fixtures;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        app.hide_values = false;
+        assert_eq!(hidden_values_note(&app), None);
+        app.hide_values = true;
+        assert_eq!(
+            hidden_values_note(&app),
+            Some("Os valores estão ocultos na tela; o envio leva os valores reais.")
         );
     }
 

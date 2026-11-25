@@ -41,7 +41,6 @@ pub struct OpenConversation {
     pub needs_cloud_consent: bool,
 }
 
-#[allow(dead_code)] // usado pela UI (Task 4.7)
 impl OpenConversation {
     pub fn tokens_total(&self) -> (u32, u32) {
         self.messages.iter().fold((0, 0), |(i, o), m| {

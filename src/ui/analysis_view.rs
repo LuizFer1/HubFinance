@@ -2,15 +2,18 @@
 //! Tudo vem de `app.analysis` (calculado em `App::rebuild`); aqui so se monta a arvore.
 
 use iced::widget::{
-    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text,
+    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text, text_input,
 };
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{App, Message};
+use super::assistant_settings_view;
 use super::theme::{self, Tokens};
 use super::{fonts, widgets};
 use crate::advisor::{Finding, Severity};
+use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
 use crate::dashboard::money::{MASK, MINUS};
+use crate::hub::snapshot::Status;
 
 const GAP: f32 = 14.0;
 
@@ -22,8 +25,24 @@ exatas.";
 
 pub fn view(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
-    let preview = row![
+    let toolbar = row![
+        button(
+            text("Conversar sobre isso")
+                .size(13)
+                .font(fonts::INTER_MEDIUM)
+        )
+        .padding([6, 12])
+        .style(theme::outline_accent(t))
+        .on_press(Message::StartConversation),
         Space::new().width(Length::Fill),
+        button(
+            text("Configurar assistente")
+                .size(13)
+                .font(fonts::INTER_MEDIUM)
+        )
+        .padding([6, 12])
+        .style(theme::outline_divider(t))
+        .on_press(Message::ToggleAssistantSettings),
         button(
             text("Ver o que o assistente vê")
                 .size(13)
@@ -32,7 +51,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .padding([6, 12])
         .style(theme::outline_divider(t))
         .on_press(Message::ShowEnvelope),
-    ];
+    ]
+    .spacing(8);
     let body: Element<'_, Message> = if app.analysis.findings.is_empty() {
         card(
             t,
@@ -52,10 +72,290 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .width(Length::Fill)
             .into()
     };
-    column![preview, body]
-        .spacing(GAP)
+    let mut page = column![toolbar].spacing(GAP).width(Length::Fill);
+    if app.assistant_settings_open {
+        page = page.push(assistant_settings_view::view(app));
+    }
+    page = page.push(body);
+    if matches!(app.snapshot.status, Status::Failed(_)) {
+        // Sem o nucleo nao ha assistente; os achados (do ultimo snapshot) seguem valendo.
+        page = page.push(card(t, text(HUB_DOWN).size(14).color(t.text_muted)));
+    } else {
+        if let Some(chat) = chat_area(app) {
+            page = page.push(chat);
+        }
+        if let Some(list) = conversation_list(app) {
+            page = page.push(list);
+        }
+    }
+    page.into()
+}
+
+/// No lugar do chat quando o nucleo nao subiu.
+const HUB_DOWN: &str = "O hub não iniciou; a análise acima continua valendo.";
+
+/// A conversa aberta, so se for da conta que a tela mostra: com a outra conta aberta ela falaria
+/// de numeros que nao estao na tela.
+pub(super) fn open_conversation(app: &App) -> Option<&OpenConversation> {
+    app.snapshot
+        .assistant
+        .open
+        .as_ref()
+        .filter(|c| c.book == app.book)
+}
+
+/// Os dados do hub mudaram desde que a conversa comecou (comparacao por ponteiro do `Arc`,
+/// spec 3). Conversa reaberta do historico (`chat_dataset == None`) nao tem de onde comparar.
+pub(super) fn data_changed(app: &App) -> bool {
+    app.chat_dataset
+        .as_ref()
+        .is_some_and(|started| !std::sync::Arc::ptr_eq(started, &app.snapshot.dashboard))
+}
+
+/// Conversas da conta que a tela mostra (cada uma e presa a uma conta).
+pub(super) fn conversations_of_book(app: &App) -> Vec<&ConversationSummary> {
+    app.snapshot
+        .assistant
+        .conversations
+        .iter()
+        .filter(|c| c.book == app.book)
+        .collect()
+}
+
+fn tokens_label((tokens_in, tokens_out): (u32, u32)) -> String {
+    format!("{tokens_in} → {tokens_out} tokens")
+}
+
+fn chat_area(app: &App) -> Option<Element<'_, Message>> {
+    let t = app.tokens;
+    let view = &app.snapshot.assistant;
+    let open = open_conversation(app)?;
+    let header = row![
+        text("Conversa")
+            .size(15)
+            .font(fonts::INTER_MEDIUM)
+            .color(t.text),
+        Space::new().width(Length::Fill),
+        text(tokens_label(open.tokens_total()))
+            .size(12)
+            .color(t.text_muted),
+        button(text("Fechar").size(13).font(fonts::INTER_MEDIUM))
+            .padding([4, 10])
+            .style(theme::outline_divider(t))
+            .on_press(Message::CloseConversation),
+    ]
+    .spacing(12)
+    .align_y(Alignment::Center);
+    let mut col = column![header].spacing(12).width(Length::Fill);
+    if data_changed(app) {
+        col = col.push(
+            container(
+                row![
+                    text("Os dados mudaram desde o início desta conversa")
+                        .size(13)
+                        .color(t.warning),
+                    Space::new().width(Length::Fill),
+                    button(text("Nova conversa").size(13).font(fonts::INTER_MEDIUM))
+                        .padding([4, 10])
+                        .style(theme::outline_accent(t))
+                        .on_press(Message::StartConversation),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+            )
+            .padding([8, 12])
+            .width(Length::Fill)
+            .style(theme::outlined(t.warning, 8.0)),
+        );
+    }
+    let last = open.messages.len().saturating_sub(1);
+    let mut messages = column![].spacing(10).width(Length::Fill);
+    for (i, m) in open.messages.iter().enumerate() {
+        messages = messages.push(message_bubble(app, m, i == last && !view.busy));
+    }
+    if let (true, Some(partial)) = (view.busy, view.streaming.as_deref()) {
+        messages = messages.push(streaming_bubble(app, partial));
+    }
+    // Altura fixa: a pagina ja rola, e uma rolagem dentro de outra so se resolve com tamanho
+    // definido. Ancorada embaixo, a conversa acompanha o texto que chega.
+    let height = (app.window_size.height - 340.0).clamp(220.0, 520.0);
+    col = col.push(
+        scrollable(container(messages).padding([0, 12]))
+            .direction(scrollable::Direction::Vertical(
+                scrollable::Scrollbar::new()
+                    .width(6)
+                    .scroller_width(6)
+                    .margin(3)
+                    .anchor(scrollable::Anchor::End),
+            ))
+            .style(theme::scrollbar(t))
+            .width(Length::Fill)
+            .height(height),
+    );
+    // Sem `on_input` o campo fica desabilitado enquanto ha resposta chegando.
+    let mut input = text_input("Pergunte algo sobre estes números", &app.chat_input)
+        .size(14)
+        .padding([10, 12])
+        .style(theme::input(t))
+        .width(Length::Fill);
+    if !view.busy {
+        input = input
+            .on_input(Message::ChatInput)
+            .on_submit(Message::ChatSubmit);
+    }
+    col = col.push(input);
+    Some(card(t, col))
+}
+
+fn message_bubble<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<'a, Message> {
+    let t = app.tokens;
+    let content = mask(app, &m.content);
+    match m.role {
+        MessageRole::User => row![
+            Space::new().width(Length::Fill),
+            container(text(content).size(14).color(t.text))
+                .padding([8, 12])
+                .max_width(520)
+                .style(theme::fill(t.surface_2, 10.0)),
+        ]
+        .into(),
+        MessageRole::Assistant => {
+            let mut notes = vec![match (m.tokens_in, m.tokens_out) {
+                (Some(i), Some(o)) => tokens_label((i, o)),
+                _ => "—".to_string(),
+            }];
+            if m.interrupted {
+                notes.push("interrompida".to_string());
+            }
+            if m.sent_to_cloud {
+                notes.push("enviado à nuvem".to_string());
+            }
+            row![
+                column![
+                    container(text(content).size(14).color(t.text))
+                        .padding([8, 12])
+                        .style(theme::outlined(t.divider(), 10.0)),
+                    text(notes.join(" · ")).size(11).color(t.text_muted),
+                ]
+                .spacing(4)
+                .max_width(560),
+                Space::new().width(Length::Fill),
+            ]
+            .into()
+        }
+        MessageRole::Error => {
+            let mut body = column![text(content).size(14).color(t.expense_fg)].spacing(8);
+            if is_last {
+                body = body.push(
+                    button(text("Tentar de novo").size(13).font(fonts::INTER_MEDIUM))
+                        .padding([4, 10])
+                        .style(theme::danger_outline(t))
+                        .on_press(Message::ChatRetry),
+                );
+            }
+            row![
+                container(body)
+                    .padding([8, 12])
+                    .max_width(560)
+                    .style(theme::outlined(theme::alpha(t.expense, 0.55), 10.0)),
+                Space::new().width(Length::Fill),
+            ]
+            .into()
+        }
+    }
+}
+
+fn streaming_bubble<'a>(app: &'a App, partial: &str) -> Element<'a, Message> {
+    let t = app.tokens;
+    let shown = if partial.is_empty() {
+        "…".to_string()
+    } else {
+        mask(app, partial)
+    };
+    row![
+        container(
+            column![
+                text(shown).size(14).color(t.text),
+                button(text("Parar").size(13).font(fonts::INTER_MEDIUM))
+                    .padding([4, 10])
+                    .style(theme::outline_divider(t))
+                    .on_press(Message::ChatStop),
+            ]
+            .spacing(8)
+        )
+        .padding([8, 12])
+        .max_width(560)
+        .style(theme::outlined(t.divider(), 10.0)),
+        Space::new().width(Length::Fill),
+    ]
+    .into()
+}
+
+/// Rotulo do botao "Apagar todas" conforme esteja armado ou nao.
+pub(super) fn delete_all_label(armed: bool) -> &'static str {
+    if armed {
+        "Apagar todas? Clique de novo"
+    } else {
+        "Apagar todas"
+    }
+}
+
+/// Conversas da conta que a tela mostra, com abrir e apagar em cada uma.
+fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
+    let t = app.tokens;
+    let items = conversations_of_book(app);
+    if items.is_empty() {
+        return None;
+    }
+    let armed = app.confirm_delete_all.is_some();
+    let delete_all = button(
+        text(delete_all_label(armed))
+            .size(13)
+            .font(fonts::INTER_MEDIUM),
+    )
+    .padding([4, 10])
+    .style(move |theme: &iced::Theme, status| {
+        if armed {
+            theme::danger_filled(t)(theme, status)
+        } else {
+            theme::danger_outline(t)(theme, status)
+        }
+    })
+    .on_press(Message::DeleteAllConversations);
+    let open_id = open_conversation(app).map(|c| c.id.as_str());
+    let mut col = column![
+        row![
+            widgets::kicker(t, "Conversas"),
+            Space::new().width(Length::Fill),
+            delete_all,
+        ]
+        .align_y(Alignment::Center)
+    ]
+    .spacing(8)
+    .width(Length::Fill);
+    for c in items {
+        let is_open = open_id == Some(c.id.as_str());
+        let title = button(
+            text(c.title.as_str())
+                .size(14)
+                .font(if is_open {
+                    fonts::INTER_SEMIBOLD
+                } else {
+                    fonts::INTER
+                })
+                .color(if is_open { t.accent_300 } else { t.text }),
+        )
+        .padding([6, 8])
         .width(Length::Fill)
-        .into()
+        .style(theme::plain(t.text))
+        .on_press(Message::OpenConversation(c.id.clone()));
+        let delete = button(text("Apagar").size(12).font(fonts::INTER_MEDIUM))
+            .padding([4, 8])
+            .style(theme::danger_outline(t))
+            .on_press(Message::DeleteConversation(c.id.clone()));
+        col = col.push(row![title, delete].spacing(8).align_y(Alignment::Center));
+    }
+    Some(card(t, col))
 }
 
 /// O texto da prévia como aparece na tela: com "Ocultar valores" ligado cada R$ vira a máscara

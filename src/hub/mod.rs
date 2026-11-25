@@ -30,17 +30,16 @@ pub enum Command {
     },
     /// "Manter tudo" de um aparelho ja removido.
     KeepDeviceData(String),
-    #[allow(dead_code)] // usado pela UI (Task 4.7)
     Assistant(AssistantCommand),
     Shutdown,
 }
 
 /// Pedidos da tela Analise. O nucleo executa; o estado volta por `Snapshot.assistant`.
-#[allow(dead_code)] // usado pela UI (Task 4.7)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssistantCommand {
     SaveSettings(crate::assistant::settings::Settings),
     /// Vazio apaga a chave.
+    #[allow(dead_code)] // usado pela UI (Issue 05)
     SaveKey(String),
     ListModels,
     /// O envelope vem pronto da UI (`App::current_envelope`): e o mesmo texto da previa.
@@ -56,6 +55,7 @@ pub enum AssistantCommand {
     Resend,
     /// O usuario viu a previa da conversa `id`: libera o envio dela para a nuvem e envia. Leva o
     /// id porque a conversa aberta pode ter mudado entre o clique e o comando.
+    #[allow(dead_code)] // usado pela UI (Issue 05)
     ApproveCloudSend(String),
     Cancel,
     Delete(String),

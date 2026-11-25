@@ -16,17 +16,18 @@ use tokio::sync::watch;
 use super::connection_view;
 use super::remove_view;
 use super::theme::Tokens;
+use crate::assistant::settings::ProviderChoice;
 use crate::config::{self, ThemeMode, UiPrefs};
 use crate::dashboard::contract::Book;
 use crate::dashboard::dataset::{Dataset, avatar_bytes};
 use crate::dashboard::grafite::{GrafiteView, build_grafite};
 use crate::dashboard::list::{Filters, NONE_KEY, TypeFilter};
 use crate::dashboard::people::{DeviceInfo, Person, people};
-use crate::dashboard::periods::month_window;
+use crate::dashboard::periods::{month_label, month_window};
 use crate::dashboard::view::{ReservesView, TransactionsView, build_reserves, build_transactions};
 use crate::desktop::{Desktop, DesktopEvent, EventReceiver};
 use crate::hub::snapshot::{DeviceView, Snapshot, Status};
-use crate::hub::{Command, HubHandle};
+use crate::hub::{AssistantCommand, Command, HubHandle};
 use crate::store::erase::{Area, AreaSet};
 
 /// Quanto tempo "Copiado" fica no botao, como no prototipo.
@@ -205,6 +206,20 @@ pub struct App {
     pub(super) autostart_failed: bool,
     /// "Ocultar valores" do Dashboard, lembrado no `ui.json` como o tema.
     pub(super) hide_values: bool,
+    /// Texto digitado no chat da Analise.
+    pub(super) chat_input: String,
+    /// Painel "Configurar assistente" aberto.
+    pub(super) assistant_settings_open: bool,
+    /// O que esta no campo "Porta": so digitos, ate 5. Pode estar invalido (vazio, 0, 70000)
+    /// sem que nada seja gravado; a porta gravada continua a do `assistant.json`.
+    pub(super) port_input: String,
+    /// O `Arc` do dataset do snapshot quando a conversa comecou, comparado por ponteiro com o
+    /// atual para o aviso "os dados mudaram" (spec 3). `None` = conversa reaberta do
+    /// historico: nao se sabe de quando eram os dados, entao nao ha o que comparar.
+    pub(super) chat_dataset: Option<std::sync::Arc<Dataset>>,
+    /// "Apagar todas" armado: o segundo clique antes do prazo apaga. Expira no `Tick`, para um
+    /// clique esquecido nao deixar o botao perigoso armado para sempre.
+    pub(super) confirm_delete_all: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -282,6 +297,22 @@ pub enum Message {
     /// "Ver o que o assistente vê" (tela Análise).
     ShowEnvelope,
     CloseEnvelope,
+    /// "Conversar sobre isso": nova conversa com o envelope atual.
+    StartConversation,
+    ChatInput(String),
+    ChatSubmit,
+    ChatStop,
+    ChatRetry,
+    OpenConversation(String),
+    CloseConversation,
+    DeleteConversation(String),
+    /// Dois cliques: o primeiro arma (`confirm_delete_all`), o segundo apaga.
+    DeleteAllConversations,
+    ToggleAssistantSettings,
+    SettingsProvider(ProviderChoice),
+    SettingsPort(String),
+    SettingsLocalModel(String),
+    RefreshModels,
     Noop,
 }
 
@@ -294,6 +325,7 @@ impl App {
         desktop: Rc<dyn Desktop>,
     ) -> App {
         let snapshot = handle.snapshot.borrow().clone();
+        let snapshot_port = snapshot.assistant.settings.local.port.to_string();
         let tokens = Tokens::for_mode(prefs.theme);
         let mut app = App {
             handle,
@@ -342,6 +374,11 @@ impl App {
             autostart_pref: prefs.autostart,
             autostart_failed: false,
             hide_values: prefs.hide_values,
+            chat_input: String::new(),
+            assistant_settings_open: false,
+            port_input: snapshot_port,
+            chat_dataset: None,
+            confirm_delete_all: None,
             desktop,
             tooltip: String::new(),
         };
@@ -422,6 +459,12 @@ impl App {
         self.refresh_user_avatars();
         self.clear_charts();
         tracing::trace!("telas recalculadas para {month}");
+    }
+
+    /// Abre o painel "Configurar assistente" com o campo de porta refletindo o que esta gravado.
+    fn open_assistant_settings(&mut self) {
+        self.assistant_settings_open = true;
+        self.port_input = self.snapshot.assistant.settings.local.port.to_string();
     }
 
     /// O texto que o assistente recebe nesta conta agora; a prévia e o envio usam este mesmo.
@@ -719,6 +762,12 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 .is_some_and(|p| Instant::now() >= p.deadline)
             {
                 app.commit_pending();
+            }
+            if app
+                .confirm_delete_all
+                .is_some_and(|deadline| Instant::now() >= deadline)
+            {
+                app.confirm_delete_all = None;
             }
             app.set_today(local_today(app.offset));
             Task::none()
@@ -1093,8 +1142,146 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.orphans_postponed = true;
             Task::none()
         }
+        Message::StartConversation => {
+            let settings = &app.snapshot.assistant.settings;
+            let Some(destination) = settings
+                .destination()
+                .filter(|_| settings.model().is_some())
+            else {
+                app.open_assistant_settings();
+                return Task::none();
+            };
+            app.chat_dataset = Some(std::sync::Arc::clone(&app.snapshot.dashboard));
+            app.chat_input.clear();
+            let title = format!("Análise de {}", month_label(&app.analysis.month));
+            // O envelope sai inteiro, nunca o mascarado: "Ocultar valores" e so de quem olha.
+            let envelope = app.current_envelope();
+            send_assistant(
+                app,
+                AssistantCommand::NewConversation {
+                    book: app.book,
+                    title,
+                    envelope,
+                },
+            );
+            // A nuvem pede a previa antes do primeiro envio (Issue 05); o modelo local nao
+            // precisa de consentimento e ja pede a resposta de abertura.
+            if !destination.is_cloud() {
+                send_assistant(app, AssistantCommand::Resend);
+            }
+            Task::none()
+        }
+        Message::ChatInput(text) => {
+            app.chat_input = text;
+            Task::none()
+        }
+        Message::ChatSubmit => {
+            let text = app.chat_input.trim().to_string();
+            if text.is_empty() || app.snapshot.assistant.busy {
+                return Task::none();
+            }
+            app.chat_input.clear();
+            send_assistant(app, AssistantCommand::Send(text));
+            Task::none()
+        }
+        Message::ChatStop => {
+            send_assistant(app, AssistantCommand::Cancel);
+            Task::none()
+        }
+        Message::ChatRetry => {
+            if !app.snapshot.assistant.busy {
+                send_assistant(app, AssistantCommand::Resend);
+            }
+            Task::none()
+        }
+        Message::OpenConversation(id) => {
+            // Conversa do historico: nao se sabe de quando eram os dados.
+            app.chat_dataset = None;
+            send_assistant(app, AssistantCommand::Open(id));
+            Task::none()
+        }
+        Message::CloseConversation => {
+            app.chat_dataset = None;
+            send_assistant(app, AssistantCommand::Close);
+            Task::none()
+        }
+        Message::DeleteConversation(id) => {
+            send_assistant(app, AssistantCommand::Delete(id));
+            Task::none()
+        }
+        Message::DeleteAllConversations => {
+            let armed = app
+                .confirm_delete_all
+                .take()
+                .is_some_and(|deadline| Instant::now() < deadline);
+            if armed {
+                app.chat_dataset = None;
+                send_assistant(app, AssistantCommand::DeleteAll);
+            } else {
+                app.confirm_delete_all = Some(Instant::now() + DELETE_ALL_ARMED_FOR);
+            }
+            Task::none()
+        }
+        Message::ToggleAssistantSettings => {
+            if app.assistant_settings_open {
+                app.assistant_settings_open = false;
+            } else {
+                app.open_assistant_settings();
+            }
+            Task::none()
+        }
+        Message::SettingsProvider(provider) => {
+            let mut settings = app.snapshot.assistant.settings.clone();
+            settings.provider = provider;
+            send_assistant(app, AssistantCommand::SaveSettings(settings));
+            // Escolher o Ollama pela primeira vez ja traz a lista: sem ela o painel mostraria
+            // "nenhum modelo" sem a pessoa ter pedido nada.
+            if provider == ProviderChoice::Local && app.snapshot.assistant.models.is_none() {
+                send_assistant(app, AssistantCommand::ListModels);
+            }
+            Task::none()
+        }
+        Message::SettingsPort(text) => {
+            app.port_input = text
+                .chars()
+                .filter(char::is_ascii_digit)
+                .take(PORT_DIGITS)
+                .collect();
+            let settings = &app.snapshot.assistant.settings;
+            if let Ok(port) = app.port_input.parse::<u16>()
+                && port > 0
+                && port != settings.local.port
+            {
+                let mut settings = settings.clone();
+                settings.local.port = port;
+                send_assistant(app, AssistantCommand::SaveSettings(settings));
+            }
+            Task::none()
+        }
+        Message::SettingsLocalModel(model) => {
+            let mut settings = app.snapshot.assistant.settings.clone();
+            settings.local.model = Some(model);
+            send_assistant(app, AssistantCommand::SaveSettings(settings));
+            Task::none()
+        }
+        Message::RefreshModels => {
+            send_assistant(app, AssistantCommand::ListModels);
+            Task::none()
+        }
         Message::Noop => Task::none(),
     }
+}
+
+/// Quanto tempo "Apagar todas" fica armado depois do primeiro clique.
+pub(super) const DELETE_ALL_ARMED_FOR: Duration = Duration::from_secs(3);
+
+/// A porta mais alta (65535) tem 5 digitos.
+const PORT_DIGITS: usize = 5;
+
+/// Pedido ao assistente no nucleo. Falha de envio (nucleo ja desligado) e ignorada como nos
+/// outros comandos: a janela fecha junto.
+fn send_assistant(app: &App, command: AssistantCommand) {
+    let _ = app.handle.commands.send(Command::Assistant(command));
 }
 
 /// "Ana foi removida do hub". O genero e uma heuristica (a do prototipo): nome de pessoa
@@ -2932,5 +3119,384 @@ pub(super) mod tests {
         );
         assert_eq!(app.book, Book::Personal);
         assert_eq!(app.transactions.list.count, 7);
+    }
+
+    // ---- assistente: chat e configuracao ----
+
+    use crate::assistant::settings::Settings;
+    use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
+
+    fn local_settings(model: Option<&str>) -> Settings {
+        let mut s = Settings {
+            provider: ProviderChoice::Local,
+            ..Settings::default()
+        };
+        s.local.model = model.map(Into::into);
+        s
+    }
+
+    /// App de exemplo na tela Analise com o assistente local configurado.
+    fn assistant_app(
+        dir: &std::path::Path,
+        settings: Settings,
+    ) -> (App, mpsc::UnboundedReceiver<Command>) {
+        let (mut app, mut rx, _tx) = app_with_fixtures(dir);
+        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        app.snapshot.assistant.settings = settings;
+        assert!(drain(&mut rx).is_empty());
+        (app, rx)
+    }
+
+    fn msg(role: MessageRole, content: &str) -> MessageView {
+        MessageView {
+            id: format!("m-{content}"),
+            role,
+            content: content.into(),
+            sent_to_cloud: false,
+            tokens_in: None,
+            tokens_out: None,
+            interrupted: false,
+        }
+    }
+
+    fn open_conv(book: Book, messages: Vec<MessageView>) -> OpenConversation {
+        OpenConversation {
+            id: "C1".into(),
+            book,
+            envelope: String::new(),
+            messages,
+            needs_cloud_consent: false,
+        }
+    }
+
+    #[test]
+    fn conversar_local_manda_o_envelope_da_previa_e_ja_pede_a_abertura() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("llama3.1:8b")));
+        let env = app.current_envelope();
+        let _ = update(&mut app, Message::StartConversation);
+        let sent = drain(&mut rx);
+        assert_eq!(
+            sent,
+            vec![
+                Command::Assistant(AssistantCommand::NewConversation {
+                    book: app.book,
+                    title: format!("Análise de {}", month_label(&app.analysis.month)),
+                    envelope: env,
+                }),
+                Command::Assistant(AssistantCommand::Resend),
+            ]
+        );
+        assert!(!app.assistant_settings_open);
+        assert!(
+            app.chat_dataset
+                .as_ref()
+                .is_some_and(|d| std::sync::Arc::ptr_eq(d, &app.snapshot.dashboard))
+        );
+    }
+
+    #[test]
+    fn conversar_com_valores_ocultos_continua_mandando_o_envelope_inteiro() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let _ = update(&mut app, Message::ToggleHideValues);
+        assert!(app.hide_values);
+        let _ = update(&mut app, Message::StartConversation);
+        let Some(Command::Assistant(AssistantCommand::NewConversation { envelope, .. })) =
+            drain(&mut rx).into_iter().next()
+        else {
+            panic!("esperava NewConversation");
+        };
+        assert_eq!(envelope, app.current_envelope());
+        assert!(envelope.contains("R$ "), "o envelope nunca vai mascarado");
+    }
+
+    #[test]
+    fn conversar_sem_destino_ou_sem_modelo_abre_a_configuracao_e_nao_manda_nada() {
+        let dir = tempfile::tempdir().unwrap();
+        for settings in [Settings::default(), local_settings(None)] {
+            let (mut app, mut rx) = assistant_app(dir.path(), settings);
+            assert!(!app.assistant_settings_open);
+            let _ = update(&mut app, Message::StartConversation);
+            assert!(app.assistant_settings_open);
+            assert!(app.chat_dataset.is_none());
+            assert!(drain(&mut rx).is_empty());
+        }
+    }
+
+    #[test]
+    fn enviar_vazio_ou_ocupado_nao_manda_nada_e_enviar_manda_aparado() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        for blank in ["", "   ", "\n\t "] {
+            app.chat_input = blank.into();
+            let _ = update(&mut app, Message::ChatSubmit);
+        }
+        assert!(drain(&mut rx).is_empty());
+
+        app.snapshot.assistant.busy = true;
+        app.chat_input = "e agora?".into();
+        let _ = update(&mut app, Message::ChatSubmit);
+        assert!(drain(&mut rx).is_empty());
+        assert_eq!(
+            app.chat_input, "e agora?",
+            "o texto fica para quando liberar"
+        );
+
+        app.snapshot.assistant.busy = false;
+        app.chat_input = "  e agora?  ".into();
+        let _ = update(&mut app, Message::ChatSubmit);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::Send(
+                "e agora?".into()
+            ))]
+        );
+        assert!(app.chat_input.is_empty());
+    }
+
+    #[test]
+    fn parar_tentar_de_novo_abrir_fechar_e_apagar_mandam_o_comando_certo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let _ = update(&mut app, Message::ChatStop);
+        let _ = update(&mut app, Message::ChatRetry);
+        let _ = update(&mut app, Message::OpenConversation("C9".into()));
+        let _ = update(&mut app, Message::CloseConversation);
+        let _ = update(&mut app, Message::DeleteConversation("C9".into()));
+        assert_eq!(
+            drain(&mut rx),
+            [
+                AssistantCommand::Cancel,
+                AssistantCommand::Resend,
+                AssistantCommand::Open("C9".into()),
+                AssistantCommand::Close,
+                AssistantCommand::Delete("C9".into()),
+            ]
+            .map(Command::Assistant)
+        );
+        // "Tentar de novo" com resposta chegando nao reenvia.
+        app.snapshot.assistant.busy = true;
+        let _ = update(&mut app, Message::ChatRetry);
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn apagar_todas_pede_segundo_clique_dentro_do_prazo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let _ = update(&mut app, Message::DeleteAllConversations);
+        assert!(app.confirm_delete_all.is_some());
+        assert!(drain(&mut rx).is_empty());
+        let _ = update(&mut app, Message::DeleteAllConversations);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::DeleteAll)]
+        );
+        assert!(app.confirm_delete_all.is_none());
+
+        // Prazo vencido: o clique so arma de novo, e o tique desarma.
+        app.confirm_delete_all = Some(Instant::now() - Duration::from_millis(1));
+        let _ = update(&mut app, Message::DeleteAllConversations);
+        assert!(drain(&mut rx).is_empty());
+        assert!(app.confirm_delete_all.is_some());
+        app.confirm_delete_all = Some(Instant::now() - Duration::from_millis(1));
+        let _ = update(&mut app, Message::Tick);
+        assert!(app.confirm_delete_all.is_none());
+    }
+
+    #[test]
+    fn configuracao_manda_o_save_settings_certo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), Settings::default());
+
+        // Sem lista ainda: escolher Local salva e ja pede os modelos.
+        let _ = update(&mut app, Message::SettingsProvider(ProviderChoice::Local));
+        assert_eq!(
+            drain(&mut rx),
+            vec![
+                Command::Assistant(AssistantCommand::SaveSettings(Settings {
+                    provider: ProviderChoice::Local,
+                    ..Settings::default()
+                })),
+                Command::Assistant(AssistantCommand::ListModels),
+            ]
+        );
+        // Com lista ja carregada, so salva.
+        app.snapshot.assistant.models = Some(Ok(vec!["a".into()]));
+        let _ = update(&mut app, Message::SettingsProvider(ProviderChoice::None));
+        assert_eq!(drain(&mut rx).len(), 1);
+
+        app.snapshot.assistant.settings = local_settings(None);
+        let _ = update(&mut app, Message::SettingsLocalModel("llama3.1:8b".into()));
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::SaveSettings(
+                local_settings(Some("llama3.1:8b"))
+            ))]
+        );
+        let _ = update(&mut app, Message::RefreshModels);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::ListModels)]
+        );
+    }
+
+    #[test]
+    fn porta_aceita_so_digitos_ate_cinco_e_so_grava_porta_valida() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let _ = update(&mut app, Message::SettingsPort("11a5b00".into()));
+        assert_eq!(app.port_input, "11500");
+        let mut expected = local_settings(Some("m"));
+        expected.local.port = 11500;
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::SaveSettings(expected))]
+        );
+        // Invalidas: o campo mostra o que foi digitado e nada e gravado.
+        for (typed, shown) in [
+            ("", ""),
+            ("0", "0"),
+            ("70000", "70000"),
+            ("1234567", "12345"),
+        ] {
+            let _ = update(&mut app, Message::SettingsPort(typed.into()));
+            assert_eq!(app.port_input, shown);
+        }
+        let sent = drain(&mut rx);
+        // So "12345" (digitado como 1234567, cortado em 5) e uma porta valida.
+        assert_eq!(sent.len(), 1);
+        // Abrir o painel de novo mostra a porta gravada, nao o rascunho.
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        assert!(app.assistant_settings_open);
+        assert_eq!(app.port_input, "11434");
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        assert!(!app.assistant_settings_open);
+    }
+
+    fn summary(id: &str, book: Book) -> ConversationSummary {
+        ConversationSummary {
+            id: id.into(),
+            book,
+            title: format!("Conversa {id}"),
+            created_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn lista_de_conversas_e_so_da_conta_aberta() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        app.snapshot.assistant.conversations = vec![
+            summary("P1", Book::Personal),
+            summary("B1", Book::Business),
+            summary("P2", Book::Personal),
+        ];
+        let ids = |app: &App| {
+            super::super::analysis_view::conversations_of_book(app)
+                .iter()
+                .map(|c| c.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&app), ["P1", "P2"]);
+        app.book = Book::Business;
+        assert_eq!(ids(&app), ["B1"]);
+    }
+
+    #[test]
+    fn conversa_de_outra_conta_nao_aparece_como_aberta() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        app.snapshot.assistant.open = Some(open_conv(Book::Business, vec![]));
+        assert!(super::super::analysis_view::open_conversation(&app).is_none());
+        app.book = Book::Business;
+        assert!(super::super::analysis_view::open_conversation(&app).is_some());
+    }
+
+    #[test]
+    fn aviso_de_dados_mudados_compara_o_ponteiro_do_dataset() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let changed = super::super::analysis_view::data_changed;
+        assert!(
+            !changed(&app),
+            "sem conversa iniciada aqui nao ha o que comparar"
+        );
+        let _ = update(&mut app, Message::StartConversation);
+        assert!(!changed(&app));
+        // Mesmo conteudo, outro `Arc`: o hub publicou um dataset novo.
+        app.snapshot.dashboard = std::sync::Arc::new(crate::dashboard::fixtures());
+        assert!(changed(&app));
+        // Conversa reaberta do historico: sem referencia, sem aviso.
+        let _ = update(&mut app, Message::OpenConversation("C1".into()));
+        assert!(!changed(&app));
+    }
+
+    #[test]
+    fn tela_analise_monta_com_conversa_streaming_erro_e_painel() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("llama3.1:8b")));
+        let _ = update(&mut app, Message::StartConversation);
+        let mut answered = msg(
+            MessageRole::Assistant,
+            "Você gastou R$ 1.234,56 em mercado.",
+        );
+        answered.tokens_in = Some(120);
+        answered.tokens_out = Some(30);
+        answered.sent_to_cloud = true;
+        let mut cut = msg(MessageRole::Assistant, "parcial");
+        cut.interrupted = true;
+        app.snapshot.assistant.open = Some(open_conv(
+            app.book,
+            vec![
+                msg(MessageRole::User, "Resuma"),
+                answered,
+                cut,
+                msg(
+                    MessageRole::Error,
+                    "Não encontrei o Ollama em 127.0.0.1:11434.",
+                ),
+            ],
+        ));
+        app.snapshot.assistant.conversations = vec![summary("C1", app.book)];
+        app.snapshot.assistant.last_error = Some("Falha ao gravar".into());
+        app.assistant_settings_open = true;
+        app.confirm_delete_all = Some(Instant::now() + DELETE_ALL_ARMED_FOR);
+        app.chat_input = "e depois?".into();
+        // Dados mudaram: a faixa aparece.
+        app.snapshot.dashboard = std::sync::Arc::new(crate::dashboard::fixtures());
+
+        let models = [
+            None,
+            Some(Err("Não encontrei o Ollama.".to_string())),
+            Some(Ok(vec![])),
+            Some(Ok(vec!["llama3.1:8b".to_string(), "qwen3:4b".to_string()])),
+        ];
+        for provider in [
+            ProviderChoice::None,
+            ProviderChoice::Local,
+            ProviderChoice::Cloud,
+        ] {
+            app.snapshot.assistant.settings.provider = provider;
+            for listed in &models {
+                app.snapshot.assistant.models = listed.clone();
+                for (busy, streaming) in [(false, None), (true, Some("R$ 10,00 e ".to_string()))] {
+                    app.snapshot.assistant.busy = busy;
+                    app.snapshot.assistant.streaming = streaming;
+                    for hidden in [false, true] {
+                        app.hide_values = hidden;
+                        for (w, h) in [(1400.0, 900.0), (1024.0, 720.0), (300.0, 200.0)] {
+                            app.window_size = Size::new(w, h);
+                            let _ = super::super::analysis_view::view(&app);
+                            let _ = super::super::shell::root(&app);
+                        }
+                    }
+                }
+            }
+        }
+        // Hub que nao subiu: no lugar do chat, o aviso; a tela ainda monta.
+        app.snapshot.status = Status::Failed("porta ocupada".into());
+        let _ = super::super::analysis_view::view(&app);
     }
 }

@@ -2,6 +2,7 @@
 
 mod analysis_view;
 mod app;
+mod assistant_settings_view;
 mod charts;
 mod connection_view;
 mod dashboard_view;

@@ -14,6 +14,12 @@ use crate::dashboard::money::{MASK, MINUS};
 
 const GAP: f32 = 14.0;
 
+/// Texto da sobreposicao; constante para um teste conferir que a quebra de linha no fonte nao
+/// deixou espacos soltos no meio da frase.
+const INTRO: &str = "Este é o texto exato que o assistente recebe: resumos e totais, sem \
+lançamentos, descrições, nomes de pessoas, aparelhos ou formas de pagamento, nem datas \
+exatas.";
+
 pub fn view(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let preview = row![
@@ -69,12 +75,7 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
         .size(18)
         .font(fonts::INTER_MEDIUM)
         .color(t.text);
-    let intro = text(
-        "Este é o texto exato que o assistente recebe: resumos e totais, sem lançamentos,          descrições, nomes de pessoas, aparelhos ou formas de pagamento, nem datas exatas.",
-    )
-    .size(13)
-    .line_height(1.5)
-    .color(t.text_soft());
+    let intro = text(INTRO).size(13).line_height(1.5).color(t.text_soft());
     // Fonte padrão do app (Inter Hub, com `tnum`: os dígitos alinham). O app não embute uma
     // monoespaçada, e a do sistema teria cobertura incerta para "—" e "−".
     let content = container(scrollable(
@@ -300,6 +301,12 @@ mod tests {
         assert_eq!(app.current_envelope(), full);
         assert_eq!(app.envelope_preview.as_deref(), Some(full.as_str()));
         assert!(envelope_dialog(&app).is_some());
+    }
+
+    #[test]
+    fn texto_da_previa_nao_tem_espaco_duplo() {
+        assert!(!INTRO.contains("  "), "{INTRO:?}");
+        assert!(INTRO.contains("sem lançamentos, descrições"));
     }
 
     #[test]

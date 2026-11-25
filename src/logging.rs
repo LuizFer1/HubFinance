@@ -18,10 +18,11 @@ use std::path::{Path, PathBuf};
 
 use time::format_description::well_known::Rfc3339;
 use tracing_appender::rolling::{InitError, RollingFileAppender, Rotation};
+use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::fmt::time::OffsetTime;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{EnvFilter, fmt};
+use tracing_subscriber::{EnvFilter, Layer, fmt};
 
 use crate::config;
 
@@ -96,6 +97,37 @@ pub fn file_appender(dir: &Path) -> Result<RollingFileAppender, InitError> {
         .build(dir)
 }
 
+/// Alvos de rede que o log nunca deve ver abaixo de `info`.
+const WIRE_TARGETS: [&str; 3] = ["ureq", "ureq_proto", "rustls"];
+
+/// Filtro do `RUST_LOG` (ou `DEFAULT_FILTER`) com as dependencias de rede travadas em `info`.
+/// O `tracing-log` repassa os registros `log` do ureq 3, cujo nivel TRACE e "wire level, NOT
+/// REDACTED": com `RUST_LOG=trace` a chave `Authorization: Bearer` e o envelope da nuvem iam
+/// parar em `hub.*.log`. As diretivas fixas entram depois das do usuario e, para o mesmo alvo,
+/// a ultima substitui a anterior, entao nem `trace` nem `ureq=trace` as afrouxam.
+pub fn build_filter(spec: Option<&str>) -> EnvFilter {
+    let mut filter = match spec {
+        Some(spec) => EnvFilter::try_new(spec).unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER)),
+        None => EnvFilter::new(DEFAULT_FILTER),
+    };
+    for target in WIRE_TARGETS {
+        if let Ok(directive) = format!("{target}=info").parse() {
+            filter = filter.add_directive(directive);
+        }
+    }
+    filter
+}
+
+/// Segunda trava, por camada, independente do `EnvFilter`: uma diretiva mais especifica do usuario
+/// (`ureq_proto::client=trace`) vence `ureq_proto=info` na especificidade e reabriria o TRACE "NOT
+/// REDACTED" do cliente HTTP. Aqui nenhum evento DEBUG/TRACE de `ureq*`/`rustls*` passa para o
+/// arquivo nem para o console, diga o `RUST_LOG` o que disser.
+fn allowed_target(meta: &tracing::Metadata<'_>) -> bool {
+    let target = meta.target();
+    let wire = target.starts_with("ureq") || target.starts_with("rustls");
+    !wire || *meta.level() <= tracing::Level::INFO
+}
+
 /// Instala o subscriber global. Devolve a pasta de logs quando o arquivo esta ativo; `None`
 /// quando caiu para console (ja avisado por `warn!`). Chamado uma vez, em `main`.
 pub fn init(data_dir: &Path, offset: time::UtcOffset) -> Option<PathBuf> {
@@ -105,8 +137,7 @@ pub fn init(data_dir: &Path, offset: time::UtcOffset) -> Option<PathBuf> {
         .map_err(|err| err.to_string())
         .and_then(|()| file_appender(&logs_dir).map_err(|err| err.to_string()));
 
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER));
+    let filter = build_filter(std::env::var("RUST_LOG").ok().as_deref());
     // Fuso local, lido por `main` antes de qualquer thread: as horas do arquivo batem com as da
     // janela.
     let timer = OffsetTime::new(offset, Rfc3339);
@@ -117,7 +148,8 @@ pub fn init(data_dir: &Path, offset: time::UtcOffset) -> Option<PathBuf> {
                     .with_ansi(false)
                     .with_target(false)
                     .with_timer(timer.clone())
-                    .with_writer(appender),
+                    .with_writer(appender)
+                    .with_filter(filter_fn(allowed_target)),
             ),
             None,
         ),
@@ -126,7 +158,12 @@ pub fn init(data_dir: &Path, offset: time::UtcOffset) -> Option<PathBuf> {
     tracing_subscriber::registry()
         .with(filter)
         .with(file_layer)
-        .with(fmt::layer().with_timer(timer).with_writer(std::io::stderr))
+        .with(
+            fmt::layer()
+                .with_timer(timer)
+                .with_writer(std::io::stderr)
+                .with_filter(filter_fn(allowed_target)),
+        )
         .init();
 
     tracing::info!(
@@ -165,6 +202,129 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if let Ok(mut inner) = self.0.lock() {
+                inner.extend_from_slice(buf);
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for Capture {
+        type Writer = Capture;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Emite TRACE/DEBUG nos alvos de rede e no do hub sob `spec`; devolve o que chegou ao log.
+    fn captured(spec: &str) -> String {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(build_filter(Some(spec)))
+            .with(
+                fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(capture.clone())
+                    .with_filter(filter_fn(allowed_target)),
+            );
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::trace!(target: "ureq", "WIRE-ureq Authorization: Bearer segredo");
+            tracing::debug!(target: "ureq", "WIRE-ureq-debug");
+            tracing::trace!(target: "ureq_proto", "WIRE-proto");
+            tracing::trace!(target: "rustls", "WIRE-rustls");
+            tracing::trace!(target: "ureq_proto::client::flow", "WIRE-proto-mod");
+            tracing::debug!(target: "ureq::unversioned::transport", "WIRE-ureq-mod");
+            tracing::trace!(target: "rustls::client::hs", "WIRE-rustls-mod");
+            tracing::debug!(target: "hub_finance", "HUB-debug");
+            tracing::info!(target: "ureq", "WIRE-ureq-info");
+        });
+        let bytes = capture.0.lock().map(|b| b.clone()).unwrap_or_default();
+        String::from_utf8(bytes).unwrap_or_default()
+    }
+
+    /// O vetor real: o ureq emite pelo crate `log` e o `tracing-log` repassa ao `tracing`.
+    /// `format_trace` e exatamente o que o `LogTracer` chama por registro (sem o estado global do
+    /// `log::set_logger`), com o subscriber do teste como padrao da thread.
+    #[test]
+    fn registros_log_do_ureq_passam_pela_ponte_e_continuam_filtrados() {
+        fn emit(target: &str, level: log::Level, msg: &str) {
+            let args = format_args!("{msg}");
+            let mut builder = log::Record::builder();
+            builder.target(target).level(level).args(args);
+            let _ = tracing_log::format_trace(&builder.build());
+        }
+
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(build_filter(Some(
+                "ureq_proto::client=trace,ureq=trace,rustls=trace,hub_finance=debug",
+            )))
+            .with(
+                fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(capture.clone())
+                    .with_filter(filter_fn(allowed_target)),
+            );
+        tracing::subscriber::with_default(subscriber, || {
+            emit(
+                "ureq_proto::client::flow",
+                log::Level::Trace,
+                "WIRE Authorization: Bearer segredo",
+            );
+            emit(
+                "ureq::unversioned::transport",
+                log::Level::Debug,
+                "WIRE-ureq",
+            );
+            emit("rustls::client::hs", log::Level::Debug, "WIRE-rustls");
+            emit("ureq", log::Level::Trace, "WIRE-ureq-raiz");
+            // Prova de que a ponte entrega registros (senao o teste seria vazio).
+            emit("ureq", log::Level::Info, "ok-ureq-info");
+            emit("hub_finance", log::Level::Debug, "ok-hub-debug");
+        });
+        let bytes = capture.0.lock().map(|b| b.clone()).unwrap_or_default();
+        let out = String::from_utf8(bytes).unwrap_or_default();
+        assert!(!out.contains("WIRE"), "{out}");
+        assert!(!out.contains("segredo"), "{out}");
+        assert!(out.contains("ok-ureq-info"), "{out}");
+        assert!(out.contains("ok-hub-debug"), "{out}");
+    }
+
+    #[test]
+    fn rust_log_nao_baixa_o_nivel_das_dependencias_de_rede() {
+        for spec in [
+            "trace",
+            "debug",
+            "ureq=trace,ureq_proto=trace,rustls=trace",
+            "ureq_proto::client=trace",
+            "ureq::unversioned=trace",
+            "rustls::client=trace",
+            "ureq_proto::client::flow=trace,ureq::unversioned::transport=debug,rustls::client::hs=trace",
+            "hub_finance=trace",
+        ] {
+            let out = captured(spec);
+            assert!(!out.contains("WIRE-ureq Authorization"), "{spec}: {out}");
+            assert!(!out.contains("WIRE-ureq-debug"), "{spec}: {out}");
+            assert!(!out.contains("WIRE-proto"), "{spec}: {out}");
+            assert!(!out.contains("WIRE-rustls"), "{spec}: {out}");
+            assert!(!out.contains("WIRE-proto-mod"), "{spec}: {out}");
+            assert!(!out.contains("WIRE-ureq-mod"), "{spec}: {out}");
+            assert!(!out.contains("WIRE-rustls-mod"), "{spec}: {out}");
+            assert!(!out.contains("segredo"), "{spec}: {out}");
+            assert!(out.contains("WIRE-ureq-info"), "{spec}: {out}");
+        }
+        // O que o usuario pediu para o proprio hub continua valendo.
+        assert!(captured("trace").contains("HUB-debug"));
     }
 
     #[test]

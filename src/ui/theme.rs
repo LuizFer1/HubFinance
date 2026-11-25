@@ -9,7 +9,7 @@
 //! novo nasce aqui; o que nao esta na tabela sai de `mix` entre tokens (spec do dashboard §9).
 
 use iced::gradient::{self, Gradient};
-use iced::widget::{button, container, scrollable};
+use iced::widget::{button, container, scrollable, text_input};
 use iced::{Background, Border, Color, Degrees, Shadow, Theme, Vector};
 
 use crate::config::ThemeMode;
@@ -648,6 +648,29 @@ pub fn plain(color: Color) -> impl Fn(&Theme, button::Status) -> button::Style {
         background: None,
         text_color: color,
         ..button::Style::default()
+    }
+}
+
+/// Campo de texto: fundo da janela com a borda no divisor (a mesma cara de `field`), borda no
+/// acento com foco. Desabilitado, o texto esmaece para mostrar que nao aceita digitacao.
+pub fn input(t: &'static Tokens) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
+    move |_, status| {
+        let border_color = match status {
+            text_input::Status::Focused { .. } => t.accent,
+            _ => t.divider(),
+        };
+        text_input::Style {
+            background: Background::Color(t.bg),
+            border: outline(border_color, 8.0),
+            icon: t.text_muted,
+            placeholder: t.text_muted,
+            value: if matches!(status, text_input::Status::Disabled) {
+                t.text_muted
+            } else {
+                t.text
+            },
+            selection: alpha(t.accent, 0.35),
+        }
     }
 }
 

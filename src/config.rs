@@ -19,6 +19,11 @@ pub const REPO_URL: &str = "https://github.com/LuizFer1/HubFinance";
 /// injecao. Quando a 0.1.0 montar `.../releases/tag/v<versao>`, a versao tera passado antes
 /// pelo parser estrito (tres inteiros) — mantenha isso para quem mexer aqui.
 pub const RELEASES_URL: &str = "https://github.com/LuizFer1/HubFinance/releases";
+/// Unico destino de nuvem do assistente (emenda da regra da LAN). Fixo e nao editavel: um campo
+/// livre transformaria "local" em nuvem disfarcada, sem aviso nem previa.
+pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+/// Porta padrao do Ollama.
+pub const OLLAMA_DEFAULT_PORT: u16 = 11434;
 /// Subpasta de `data_dir` com os `hub.AAAA-MM-DD.log` (ver `logging.rs`).
 pub const LOGS_DIR: &str = "logs";
 

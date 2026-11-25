@@ -7,6 +7,7 @@
 pub mod args;
 pub mod autostart;
 pub mod instance;
+pub mod secret;
 pub mod tray;
 
 use std::rc::Rc;

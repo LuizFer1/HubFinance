@@ -1195,7 +1195,10 @@ mod grafite_tests {
         ] {
             assert_eq!(stable_entity_id(seed), id, "{seed}");
         }
-        assert!(!ds.knows_transaction("QZM0FK4WFZC0Q3CWQFMGF34CFF"));
+        assert!(
+            !ds.occurrence_index()
+                .knows_occurrence("RCAD", "RCAD:2026-11")
+        );
         for b in [
             ("budget:CAT-COMPRAS", "P6H9YASDE69SPT1DPPHSYTSXEP"),
             ("budget:CAT-MERCADO", "PM5V2MS3PC532W9VP45B24SKPW"),

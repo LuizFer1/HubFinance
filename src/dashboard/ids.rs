@@ -1,9 +1,11 @@
 //! Id deterministico do app (`domain/ids/stable-id.ts::stableEntityId`), portado byte a byte.
 //!
 //! O hub nunca grava linha, mas precisa *achar* a que o app grava: a ocorrencia de uma serie
-//! tem id `stable_entity_id("<serie>:<periodo>")`, e e pela presenca desse id que a projecao
-//! sabe que a ocorrencia ja foi materializada (sem contar duas vezes). Um bit diferente do app
-//! e toda ocorrencia aparece em dobro no "O que vem".
+//! tem id `stable_entity_id("<serie>:<periodo>")` quando o lugar esta livre. A existencia e
+//! decidida pela chave (`OccurrenceIndex::knows_occurrence`); o id so serve para olhar o lugar
+//! v1 (linha ignorada ou ambigua). Este id colide (spec 2026-11-19-id-estavel-colisao): nunca
+//! use "o id existe" como "o fato existe". Um bit diferente do app e a linha ambigua ou
+//! ignorada deixa de ser achada.
 
 /// Mesmo alfabeto Crockford do ULID usado pelo app.
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";

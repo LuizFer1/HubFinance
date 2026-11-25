@@ -3,6 +3,7 @@
 use tokio::sync::{mpsc, watch};
 
 use crate::config::Config;
+use crate::desktop::secret::SecretStore;
 
 pub mod dashboard;
 mod run;
@@ -27,7 +28,33 @@ pub enum Command {
     },
     /// "Manter tudo" de um aparelho ja removido.
     KeepDeviceData(String),
+    #[allow(dead_code)] // usado pela UI (Task 4.7)
+    Assistant(AssistantCommand),
     Shutdown,
+}
+
+/// Pedidos da tela Analise. O nucleo executa; o estado volta por `Snapshot.assistant`.
+#[allow(dead_code)] // usado pela UI (Task 4.7)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssistantCommand {
+    SaveSettings(crate::assistant::settings::Settings),
+    /// Vazio apaga a chave.
+    SaveKey(String),
+    ListModels,
+    /// O envelope vem pronto da UI (`App::current_envelope`): e o mesmo texto da previa.
+    NewConversation {
+        book: crate::dashboard::contract::Book,
+        title: String,
+        envelope: String,
+    },
+    Open(String),
+    Close,
+    Send(String),
+    /// Envia o que ja esta na conversa (abertura, ou "Tentar de novo").
+    Resend,
+    Cancel,
+    Delete(String),
+    DeleteAll,
 }
 
 #[derive(Clone)]
@@ -42,7 +69,10 @@ pub struct HubHandle {
 /// Runtime proprio, e nao o executor do iced: o servidor nao deve depender do ciclo de vida
 /// da UI, e o desligamento ordenado fica explicito. `tokio::sync` funciona de qualquer
 /// executor, entao a ponte e so um canal.
-pub fn start(config: Config) -> (HubHandle, std::thread::JoinHandle<()>) {
+pub fn start(
+    config: Config,
+    secrets: Box<dyn SecretStore>,
+) -> (HubHandle, std::thread::JoinHandle<()>) {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
     let (snap_tx, snap_rx) = watch::channel(Snapshot {
         data_dir: config.data_dir.clone(),
@@ -54,7 +84,7 @@ pub fn start(config: Config) -> (HubHandle, std::thread::JoinHandle<()>) {
             .thread_name("nucleo")
             .build()
         {
-            Ok(runtime) => runtime.block_on(run::run(config, cmd_rx, snap_tx)),
+            Ok(runtime) => runtime.block_on(run::run(config, secrets, cmd_rx, snap_tx)),
             Err(e) => {
                 snap_tx.send_modify(|s| {
                     s.status = Status::Failed(format!("nao foi possivel iniciar o runtime: {e}"));
@@ -82,6 +112,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+    use crate::desktop::secret::FakeSecretStore;
 
     fn config(dir: &std::path::Path) -> Config {
         Config {
@@ -134,7 +165,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        let (mut handle, join) = start(config(dir.path()));
+        let (mut handle, join) = start(config(dir.path()), Box::new(FakeSecretStore::default()));
 
         let snap = wait_for(&mut handle.snapshot, Duration::from_secs(10), |s| {
             up(s) || matches!(s.status, Status::Failed(_))
@@ -271,7 +302,7 @@ mod tests {
 
     fn run_hub(dir: &std::path::Path) -> (HubHandle, std::thread::JoinHandle<()>, Snapshot) {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let (mut handle, join) = start(config(dir));
+        let (mut handle, join) = start(config(dir), Box::new(FakeSecretStore::default()));
         let snap = wait_for(&mut handle.snapshot, Duration::from_secs(10), |s| {
             up(s) || matches!(s.status, Status::Failed(_))
         });
@@ -438,11 +469,54 @@ mod tests {
     }
 
     #[test]
+    fn assistente_grava_config_e_publica_no_snapshot_sem_rede() {
+        use crate::assistant::settings::{ProviderChoice, Settings};
+        use crate::dashboard::contract::Book;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, join, before) = run_hub(dir.path());
+        assert_eq!(before.assistant.settings, Settings::default());
+
+        // Sem provedor nenhum o envio nao tem para onde ir: nada sai da maquina e nao ha job.
+        let cmd = |c| handle.commands.send(Command::Assistant(c)).unwrap();
+        cmd(AssistantCommand::NewConversation {
+            book: Book::Personal,
+            title: "t".into(),
+            envelope: "ENV".into(),
+        });
+        cmd(AssistantCommand::Resend);
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+            s.assistant.open.is_some()
+        });
+        assert_eq!(snap.assistant.conversations.len(), 1);
+        assert!(!snap.assistant.busy);
+
+        let settings = Settings {
+            provider: ProviderChoice::Local,
+            ..Settings::default()
+        };
+        handle
+            .commands
+            .send(Command::Assistant(AssistantCommand::SaveSettings(
+                settings.clone(),
+            )))
+            .unwrap();
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(5), |s| {
+            s.assistant.settings == settings
+        });
+        assert!(!snap.assistant.busy);
+        // O dataset nao foi recriado: a UI so reconstroi as telas quando o `Arc` muda.
+        assert!(std::sync::Arc::ptr_eq(&before.dashboard, &snap.dashboard));
+        assert_eq!(Settings::load(dir.path()), settings);
+        stop(handle, join);
+    }
+
+    #[test]
     fn diretorio_invalido_falha_e_ainda_desliga() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("arquivo");
         std::fs::write(&file, "nao sou diretorio").unwrap();
-        let (mut handle, join) = start(config(&file));
+        let (mut handle, join) = start(config(&file), Box::new(FakeSecretStore::default()));
 
         let snap = wait_for(&mut handle.snapshot, Duration::from_secs(10), |s| {
             matches!(s.status, Status::Failed(_))

@@ -66,7 +66,6 @@ pub struct Settings {
     pub cloud: CloudSettings,
 }
 
-#[allow(dead_code)] // usado pelo servico (Task 4.6)
 impl Settings {
     pub fn load(dir: &Path) -> Settings {
         std::fs::read(dir.join(SETTINGS_FILE))

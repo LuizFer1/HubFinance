@@ -1,0 +1,98 @@
+//! Estado do assistente publicado no `Snapshot`. A UI so le isto e manda `Command::Assistant`.
+
+use super::settings::Settings;
+use crate::dashboard::contract::Book;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MessageRole {
+    User,
+    Assistant,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MessageView {
+    pub id: String,
+    pub role: MessageRole,
+    pub content: String,
+    pub sent_to_cloud: bool,
+    pub tokens_in: Option<u32>,
+    pub tokens_out: Option<u32>,
+    pub interrupted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConversationSummary {
+    pub id: String,
+    pub book: Book,
+    pub title: String,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenConversation {
+    pub id: String,
+    pub book: Book,
+    pub envelope: String,
+    pub messages: Vec<MessageView>,
+    /// Ainda nao saiu nada desta conversa para a nuvem: o proximo envio pede a previa (Q5).
+    pub needs_cloud_consent: bool,
+}
+
+#[allow(dead_code)] // usado pela UI (Task 4.7)
+impl OpenConversation {
+    pub fn tokens_total(&self) -> (u32, u32) {
+        self.messages.iter().fold((0, 0), |(i, o), m| {
+            (
+                i.saturating_add(m.tokens_in.unwrap_or(0)),
+                o.saturating_add(m.tokens_out.unwrap_or(0)),
+            )
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AssistantView {
+    pub settings: Settings,
+    pub has_key: bool,
+    /// `None` = nunca listado; `Some(Err)` = falhou (mensagem pt-BR).
+    pub models: Option<Result<Vec<String>, String>>,
+    pub conversations: Vec<ConversationSummary>,
+    pub open: Option<OpenConversation>,
+    /// Texto chegando agora; vira `MessageView` no fim.
+    pub streaming: Option<String>,
+    pub busy: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(i: Option<u32>, o: Option<u32>) -> MessageView {
+        MessageView {
+            id: "x".into(),
+            role: MessageRole::Assistant,
+            content: String::new(),
+            sent_to_cloud: false,
+            tokens_in: i,
+            tokens_out: o,
+            interrupted: false,
+        }
+    }
+
+    #[test]
+    fn total_de_tokens_soma_so_o_que_veio() {
+        let open = OpenConversation {
+            id: "c".into(),
+            book: Book::Personal,
+            envelope: String::new(),
+            messages: vec![
+                msg(Some(10), Some(2)),
+                msg(None, None),
+                msg(Some(5), Some(1)),
+            ],
+            needs_cloud_consent: true,
+        };
+        assert_eq!(open.tokens_total(), (15, 3));
+    }
+}

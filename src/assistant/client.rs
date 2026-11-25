@@ -28,7 +28,6 @@ const CANCEL_POLL: Duration = Duration::from_millis(100);
 /// Identificacao do app no OpenRouter: nome do produto, nenhum dado do usuario.
 const APP_TITLE: &str = "HubFinance";
 
-#[allow(dead_code)] // usado pelo servico (Task 4.6)
 pub struct OpenAiCompatible {
     destination: Destination,
     api_key: Option<Secret>,
@@ -36,7 +35,6 @@ pub struct OpenAiCompatible {
     agent: ureq::Agent,
 }
 
-#[allow(dead_code)] // usado pelo servico (Task 4.6)
 impl OpenAiCompatible {
     pub fn new(destination: Destination, api_key: Option<Secret>, deny: bool) -> Self {
         let mut builder = ureq::Agent::config_builder()
@@ -351,7 +349,6 @@ fn consume_stream(
     }
 }
 
-#[allow(dead_code)] // usado pelo servico (Task 4.6)
 impl Provider for OpenAiCompatible {
     fn list_models(&self) -> Result<Vec<String>, AssistantError> {
         // So o local lista: buscar o catalogo do OpenRouter seria trafego antes de pergunta (Q12).
@@ -392,6 +389,14 @@ impl Provider for OpenAiCompatible {
         on_delta: &mut dyn FnMut(&str),
         cancel: &CancelFlag,
     ) -> Result<ChatOutcome, AssistantError> {
+        // "Parar" apertado antes de o pedido sair: nada deve ir para a rede (nem, na nuvem,
+        // custar tokens) so para ser descartado no primeiro pedaco.
+        if cancel.is_cancelled() {
+            return Ok(ChatOutcome {
+                interrupted: true,
+                ..ChatOutcome::default()
+            });
+        }
         let call = Call {
             agent: self.agent.clone(),
             url: format!("{}/chat/completions", self.destination.base_url()),
@@ -427,6 +432,21 @@ mod tests {
             }],
             max_tokens: 1024,
         }
+    }
+
+    #[test]
+    fn cancelado_antes_de_enviar_nao_faz_pedido() {
+        // Porta 1 recusaria a conexao: se o pedido saisse, o resultado seria `Err`.
+        let client = OpenAiCompatible::new(Destination::local(1), None, true);
+        let cancel = CancelFlag::default();
+        cancel.cancel();
+        let mut deltas = 0;
+        let out = client
+            .chat(&req(), &mut |_| deltas += 1, &cancel)
+            .expect("interrompida, nao erro");
+        assert!(out.interrupted);
+        assert_eq!(out.text, "");
+        assert_eq!(deltas, 0);
     }
 
     #[test]

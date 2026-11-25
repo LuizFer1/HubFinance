@@ -5,7 +5,6 @@
 #[derive(Clone, PartialEq, Eq)]
 pub struct Secret(String);
 
-#[allow(dead_code)] // usado pelo servico (Task 4.6)
 impl Secret {
     pub fn new(value: String) -> Self {
         Secret(value)

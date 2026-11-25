@@ -90,7 +90,9 @@ fn main() -> iced::Result {
     let desktop = desktop::install(events_tx);
     let open_window = desktop::args::opens_window(mode, desktop.has_tray());
     let prefs_dir = config.data_dir.clone();
-    let (handle, _nucleo) = hub::start(config);
+    // Issue 05 troca pelo DPAPI
+    let secrets = Box::new(desktop::secret::FakeSecretStore::default());
+    let (handle, _nucleo) = hub::start(config, secrets);
     // `instance` (mutex e evento) vive ate o fim de `main`, e o kernel so solta os handles
     // quando o processo acaba: a segunda execucao so passa depois disso.
     ui::run(

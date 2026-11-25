@@ -10,10 +10,14 @@ use std::time::{Duration, SystemTime};
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, watch};
 
-use super::Command;
 use super::dashboard::{DashboardState, REFRESH_DEBOUNCE};
 use super::snapshot::{ActivityKind, DeviceView, PairingView, Snapshot, Status};
+use super::{AssistantCommand, Command};
+use crate::assistant::AssistantError;
+use crate::assistant::provider::ChatOutcome;
+use crate::assistant::service::AssistantService;
 use crate::config::Config;
+use crate::desktop::secret::SecretStore;
 use crate::pairing::token::TokenBook;
 use crate::server::ca_http::{CaState, ca_router};
 use crate::server::router::full_api;
@@ -41,10 +45,26 @@ struct Hub {
     /// Quando o dashboard deve recarregar; `None` = nada pendente. Cada push com linha aceita
     /// empurra o prazo (debounce).
     refresh_due: Option<tokio::time::Instant>,
+    assistant: AssistantService,
+    /// Do `spawn_blocking` do modelo de volta ao laco. O `Hub` guarda os dois lados: o laco
+    /// nunca ve o canal fechar, e cada job leva um clone do remetente.
+    assistant_tx: mpsc::UnboundedSender<WorkerEvent>,
+    assistant_rx: mpsc::UnboundedReceiver<WorkerEvent>,
+}
+
+/// Do `spawn_blocking` do modelo de volta ao laco: pedacos e o fim.
+enum WorkerEvent {
+    Delta(String),
+    Done {
+        reply_id: String,
+        result: Result<ChatOutcome, AssistantError>,
+    },
+    Models(Result<Vec<String>, AssistantError>),
 }
 
 pub(super) async fn run(
     config: Config,
+    secrets: Box<dyn SecretStore>,
     mut commands: mpsc::UnboundedReceiver<Command>,
     snapshot: watch::Sender<Snapshot>,
 ) {
@@ -57,7 +77,7 @@ pub(super) async fn run(
     };
     snapshot.send_replace(snap.clone());
 
-    match boot(&config, &mut snap).await {
+    match boot(&config, secrets, &mut snap).await {
         Ok(hub) => hub.serve(&mut commands, &snapshot).await,
         Err(msg) => {
             tracing::error!("hub nao subiu: {msg}");
@@ -75,7 +95,11 @@ pub(super) async fn run(
     }
 }
 
-async fn boot(config: &Config, snap: &mut Snapshot) -> Result<Hub, String> {
+async fn boot(
+    config: &Config,
+    secrets: Box<dyn SecretStore>,
+    snap: &mut Snapshot,
+) -> Result<Hub, String> {
     let store = Store::open(&config.db_path()).map_err(|e| {
         format!(
             "nao foi possivel abrir o banco em {}: {e}",
@@ -120,6 +144,7 @@ async fn boot(config: &Config, snap: &mut Snapshot) -> Result<Hub, String> {
     snap.http_port = servers.http_addr.port();
     snap.addresses = ips;
     snap.status = network_status(&snap.addresses);
+    let (assistant_tx, assistant_rx) = mpsc::unbounded_channel();
     let mut hub = Hub {
         store,
         tokens,
@@ -132,7 +157,11 @@ async fn boot(config: &Config, snap: &mut Snapshot) -> Result<Hub, String> {
         snap: snap.clone(),
         dashboard: DashboardState::default(),
         refresh_due: None,
+        assistant: AssistantService::open(&config.data_dir, secrets),
+        assistant_tx,
+        assistant_rx,
     };
+    hub.snap.assistant = hub.assistant.view().clone();
     hub.reload_devices().await;
     // Falha aqui vira linha de erro na atividade; o hub sobe mesmo assim, com dataset vazio.
     hub.refresh_dashboard().await;
@@ -207,7 +236,9 @@ impl Hub {
                         self.erase_device_data(device_id, areas).await;
                     }
                     Some(Command::KeepDeviceData(id)) => self.keep_device_data(id).await,
+                    Some(Command::Assistant(c)) => self.on_assistant(c),
                 },
+                Some(ev) = self.assistant_rx.recv() => self.on_worker(ev),
                 Some(event) = self.events.recv() => self.on_event(event).await,
                 _ = tick.tick() => self.on_tick().await,
                 _ = tokio::time::sleep_until(
@@ -220,6 +251,9 @@ impl Hub {
             snapshot.send_replace(self.snap.clone());
         }
 
+        // O `spawn_blocking` nao e abortavel e o runtime espera por ele ao ser descartado:
+        // "Parar" faz a leitura do stream acabar em ate 100 ms.
+        self.assistant.cancel();
         self.snap.status = Status::Stopping;
         self.snap.pairing = None;
         snapshot.send_replace(self.snap.clone());
@@ -248,6 +282,71 @@ impl Hub {
             token: token.value,
             expires_at: token.expires_at,
         });
+    }
+
+    fn on_assistant(&mut self, c: AssistantCommand) {
+        use AssistantCommand as A;
+        match c {
+            A::SaveSettings(s) => self.assistant.save_settings(s),
+            A::SaveKey(k) => self.assistant.save_key(&k),
+            A::ListModels => {
+                if let Some(p) = self.assistant.provider() {
+                    let tx = self.assistant_tx.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let _ = tx.send(WorkerEvent::Models(p.list_models()));
+                    });
+                }
+            }
+            A::NewConversation {
+                book,
+                title,
+                envelope,
+            } => self.assistant.new_conversation(book, title, envelope),
+            A::Open(id) => self.assistant.open_conversation(&id),
+            A::Close => self.assistant.close_conversation(),
+            A::Send(text) => {
+                self.assistant.push_user(&text);
+                self.spawn_chat();
+            }
+            A::Resend => {
+                self.assistant.drop_last_error();
+                self.spawn_chat();
+            }
+            A::Cancel => self.assistant.cancel(),
+            A::Delete(id) => self.assistant.delete_conversation(&id),
+            A::DeleteAll => self.assistant.delete_all(),
+        }
+        self.snap.assistant = self.assistant.view().clone();
+    }
+
+    fn spawn_chat(&mut self) {
+        let Some(job) = self.assistant.prepare_send() else {
+            return;
+        };
+        let tx = self.assistant_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let delta_tx = tx.clone();
+            let result = job.provider.chat(
+                &job.request,
+                &mut |d| {
+                    let _ = delta_tx.send(WorkerEvent::Delta(d.to_string()));
+                },
+                &job.cancel,
+            );
+            let _ = tx.send(WorkerEvent::Done {
+                reply_id: job.reply_id,
+                result,
+            });
+        });
+    }
+
+    fn on_worker(&mut self, ev: WorkerEvent) {
+        match ev {
+            WorkerEvent::Delta(d) => self.assistant.delta(&d),
+            WorkerEvent::Done { reply_id, result } => self.assistant.finish(reply_id, result),
+            WorkerEvent::Models(r) => self.assistant.set_models(r),
+        }
+        self.snap.assistant = self.assistant.view().clone();
     }
 
     fn device_name(&self, device_id: &str) -> String {

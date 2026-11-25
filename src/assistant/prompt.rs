@@ -1,16 +1,12 @@
 //! Prompt fixo (spec 5). O modelo so conversa sobre o envelope; conta nenhuma e dele.
 
 /// Turnos (pergunta + resposta) do historico que vao ao modelo; o envelope vai sempre (Q14).
-#[allow(dead_code)] // usado pelo cliente (Issue 04)
 pub const MAX_TURNS: usize = 10;
-#[allow(dead_code)] // usado pelo cliente (Issue 04)
 pub const MAX_OUTPUT_TOKENS: u32 = 1024;
 /// Primeira mensagem de toda conversa (Q16).
-#[allow(dead_code)] // usado pelo cliente (Issue 04)
 pub const OPENING_REQUEST: &str =
     "Quais são os 3 pontos que mais pesam na minha situação e o que fazer em cada um?";
 
-#[allow(dead_code)] // usado pelo cliente (Issue 04)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     System,
@@ -18,7 +14,6 @@ pub enum Role {
     Assistant,
 }
 
-#[allow(dead_code)] // usado pelo cliente (Issue 04)
 impl Role {
     /// O nome que a API do provedor espera em `messages[].role`.
     pub fn as_str(self) -> &'static str {
@@ -30,7 +25,6 @@ impl Role {
     }
 }
 
-#[allow(dead_code)] // usado pelo cliente (Issue 04)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Turn {
     pub role: Role,
@@ -41,7 +35,6 @@ pub struct Turn {
 /// nele. O resumo vai entre cercas e a regra 6 o declara dado: nomes de categoria e de reserva
 /// sao texto digitado pelo usuario e nao podem virar ordem. O envelope entra como veio de
 /// `envelope::render`, sem reformatar (a previa mostra exatamente isso).
-#[allow(dead_code)] // usado pelo cliente (Issue 04)
 pub fn system_prompt(envelope: &str) -> String {
     format!(
         "Você é um assistente de orçamento doméstico dentro do HubFinance. Responda em português \
@@ -61,7 +54,6 @@ RESUMO:\n<<<RESUMO\n{envelope}\nRESUMO>>>"
 
 /// Sistema + os ultimos `MAX_TURNS` pares do historico, na ordem. Cortar pelo fim (e nao pelo
 /// comeco) mantem a pergunta mais recente, que e a que o modelo tem de responder.
-#[allow(dead_code)] // usado pelo cliente (Issue 04)
 pub fn messages(envelope: &str, history: &[Turn]) -> Vec<Turn> {
     let keep = MAX_TURNS * 2;
     let mut start = history.len().saturating_sub(keep);

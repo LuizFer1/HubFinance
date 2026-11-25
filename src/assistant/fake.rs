@@ -15,7 +15,6 @@ pub struct FakeProvider {
     pub seen: Mutex<Vec<ChatRequest>>,
 }
 
-#[allow(dead_code)] // usado pelos testes do servico (Task 4.6)
 impl FakeProvider {
     pub fn answering(parts: &[&str]) -> Self {
         FakeProvider {

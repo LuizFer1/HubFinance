@@ -10,8 +10,10 @@ pub mod fake;
 pub mod prompt;
 pub mod provider;
 pub mod secret;
+pub mod service;
 pub mod settings;
 pub mod sse;
+pub mod view;
 
 /// Cada falha vira uma mensagem em pt-BR na conversa, com "Tentar de novo" (spec 6). Nenhuma
 /// derruba a janela nem o nucleo.

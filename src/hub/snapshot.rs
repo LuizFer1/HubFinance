@@ -125,6 +125,9 @@ pub struct Snapshot {
     /// `Arc` porque o snapshot e republicado inteiro a cada mudanca: clonar o `Arc` e um
     /// incremento, e a UI compara por ponteiro para saber se os dados mudaram.
     pub dashboard: Arc<Dataset>,
+    /// Estado da tela Analise. Muda a cada pedaco de resposta; por isso a UI so reconstroi as
+    /// telas quando o `dashboard` (por ponteiro) ou os aparelhos mudam, nunca por este campo.
+    pub assistant: crate::assistant::view::AssistantView,
 }
 
 impl Snapshot {

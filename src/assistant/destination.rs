@@ -4,7 +4,6 @@
 
 use crate::config::{OLLAMA_DEFAULT_PORT, OPENROUTER_BASE_URL};
 
-#[allow(dead_code)] // usado pelo servico (Task 4.6)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Destination {
     Local { port: u16 },
@@ -15,7 +14,6 @@ pub enum Destination {
 #[error("porta inválida")]
 pub struct InvalidPort;
 
-#[allow(dead_code)] // usado pelo servico (Task 4.6)
 impl Destination {
     pub fn try_local(port: u16) -> Result<Self, InvalidPort> {
         if port == 0 {

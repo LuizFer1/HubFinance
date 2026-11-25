@@ -21,7 +21,7 @@ use super::charts::{
     EMPTY_HEIGHT, EMPTY_WIDTH, EmptyChartProgram, HISTORY_HEIGHT, HistoryProgram, MeterProgram,
     PACE_HEIGHT, PaceProgram, SwatchProgram,
 };
-use super::theme::{self, Tokens, alpha};
+use super::theme::{self, Tokens};
 use super::{fonts, icons, shell, time};
 use crate::dashboard::grafite::{
     BusinessBlock, EmergencyBlock, HistoryBody, Line, Section, Tone, UpcomingLine,
@@ -1749,7 +1749,7 @@ fn footer(app: &App) -> Option<Element<'_, Message>> {
                     v.ignored_total,
                 ),
                 12.0,
-                alpha(app.tokens.text, 0.50),
+                app.tokens.text_muted,
             )
             .width(Length::Fill),
         )

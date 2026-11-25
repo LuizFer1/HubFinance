@@ -1125,6 +1125,34 @@ mod tests {
         assert!(contrast(LIGHT.accent, LIGHT.token("amber")) < 1.6);
     }
 
+    /// B3: o que saiu do piso de 4,5 e o que entrou no lugar. Rodape do Dashboard (era o texto
+    /// a 50 %, 3,17 no claro) em `text_muted`; ritmo da caixinha (era `tag-orange`, 3,80 no claro)
+    /// em `warning`; tag da cor da pessoa (era o nome na cor, 2,84 no pior token do claro) com o
+    /// nome em `text_soft` sobre a mesma tinta de 16 %, e a cor so no ponto.
+    #[test]
+    fn rodape_ritmo_e_tag_de_cor_passam_4_5() {
+        assert!(contrast(alpha_over(LIGHT.text, 0.50, LIGHT.bg), LIGHT.bg) < 4.5);
+        assert!(contrast(LIGHT.token("orange"), LIGHT.surface) < 4.5);
+        let worst_old = colors::TOKENS
+            .iter()
+            .map(|tk| contrast(LIGHT.token(tk), LIGHT.token_tint(tk, 0.16)))
+            .fold(f64::MAX, f64::min);
+        assert!(worst_old < 4.5, "{worst_old:.2}");
+        for t in [&DARK, &LIGHT] {
+            assert!(contrast(t.text_muted, t.bg) >= 4.5, "rodape {:?}", t.mode);
+            assert!(contrast(t.warning, t.surface) >= 4.5, "ritmo {:?}", t.mode);
+            for tk in colors::TOKENS {
+                let c = contrast(t.text_soft(), t.token_tint(tk, 0.16));
+                assert!(c >= 4.5, "tag {tk} {:?}: {c:.2}", t.mode);
+            }
+        }
+    }
+
+    /// Cor com alfa composta sobre um fundo solido, como a tela a desenha.
+    fn alpha_over(c: Color, a: f32, bg: Color) -> Color {
+        mix(bg, c, a)
+    }
+
     /// A3: todo estilo de botao apaga quando desabilitado, sem tinta e com contorno no divisor.
     #[test]
     fn todo_botao_desabilitado_apaga_sem_tinta() {

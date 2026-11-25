@@ -215,8 +215,9 @@ pub fn avatar<'a, M: 'a>(
     .into()
 }
 
-/// Tag da cor da pessoa: pilula de 20 px, fundo a cor a 16 % sobre a superficie, ponto de 6 e o
-/// nome da cor ("Magenta") em 11 Medium na cor.
+/// Tag da cor da pessoa: pilula de 20 px, fundo a cor a 16 % sobre a superficie, ponto de 6 na
+/// cor e o nome da cor ("Magenta") em 11 Medium no texto de apoio. O nome na propria cor ficava
+/// abaixo de 4,5:1 em varios tokens do claro; a cor fica so no ponto.
 pub fn color_tag<'a, M: 'a>(t: &'static Tokens, token: &str) -> Element<'a, M> {
     let color = t.token(token);
     container(
@@ -226,7 +227,7 @@ pub fn color_tag<'a, M: 'a>(t: &'static Tokens, token: &str) -> Element<'a, M> {
                 .size(11)
                 .font(fonts::INTER_MEDIUM)
                 .line_height(1.0)
-                .color(color),
+                .color(t.text_soft()),
         ]
         .spacing(5)
         .align_y(Alignment::Center),

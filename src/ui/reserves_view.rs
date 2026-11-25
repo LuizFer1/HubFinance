@@ -714,7 +714,7 @@ fn pots_card(app: &App) -> Element<'_, Message> {
 fn pace_style(t: &'static Tokens, pace: &Pace) -> (&'static str, Color) {
     match pace {
         Pace::OnTrack { .. } | Pace::Reached => (icons::CHECK_CIRCLE, t.income_fg),
-        Pace::Overdue { .. } | Pace::Behind { .. } => (icons::WARNING_CIRCLE, t.token("orange")),
+        Pace::Overdue { .. } | Pace::Behind { .. } => (icons::WARNING_CIRCLE, t.warning),
         Pace::NoRecurring { .. } | Pace::NoDeadline { .. } | Pace::NoGoal => {
             (icons::REPEAT, t.text_muted)
         }

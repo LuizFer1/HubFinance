@@ -8,7 +8,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Color, Element, Length, Padding};
 
-use super::app::{App, Message};
+use super::app::{App, Message, awaiting_cloud_consent};
 use super::assistant_settings_view;
 use super::theme::{self, Tokens};
 use super::{fonts, widgets};
@@ -169,10 +169,13 @@ fn chat_area(app: &App) -> Option<Element<'_, Message>> {
             .style(theme::outlined(t.warning, 8.0)),
         );
     }
+    // Nuvem sem a previa aprovada: nada saiu, e o "Tentar de novo" sob a pergunta de abertura
+    // reenviaria sem a pessoa ver o que vai. A previa toma o lugar dele e do campo de pergunta.
+    let awaiting = awaiting_cloud_consent(app).is_some();
     let last = open.messages.len().saturating_sub(1);
     let mut messages = column![].spacing(10).width(Length::Fill);
     for (i, m) in open.messages.iter().enumerate() {
-        messages = messages.push(message_bubble(app, m, i == last && !view.busy));
+        messages = messages.push(message_bubble(app, m, i == last && !view.busy && !awaiting));
     }
     if let (true, Some(partial)) = (view.busy, view.streaming.as_deref()) {
         messages = messages.push(streaming_bubble(app, partial));
@@ -193,6 +196,10 @@ fn chat_area(app: &App) -> Option<Element<'_, Message>> {
             .width(Length::Fill)
             .height(height),
     );
+    if awaiting {
+        col = col.push(consent_preview(app, open));
+        return Some(card(t, col));
+    }
     // Sem `on_input` o campo fica desabilitado enquanto ha resposta chegando.
     let mut input = text_input("Pergunte algo sobre estes números", &app.chat_input)
         .size(14)
@@ -264,6 +271,80 @@ fn message_bubble<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Elemen
             .into()
         }
     }
+}
+
+pub(super) const PREVIEW_TITLE: &str = "Prévia do que vai sair";
+
+pub(super) const PREVIEW_INTRO: &str = "Este é o texto exato que vai para o OpenRouter na primeira mensagem desta conversa. Só depois de você enviar é que algo sai do computador.";
+
+/// "Retencao: ..." da previa, a partir da politica configurada agora (e a que vale no envio).
+pub(super) fn retention_line(deny_data_collection: bool) -> &'static str {
+    if deny_data_collection {
+        "Retenção: não permitida"
+    } else {
+        "Retenção: permitida"
+    }
+}
+
+/// O envelope da conversa como aparece na previa: o da propria conversa (e o que de fato vai),
+/// com a mascara de "Ocultar valores" so na tela.
+pub(super) fn preview_shown<'a>(app: &App, open: &'a OpenConversation) -> Cow<'a, str> {
+    mask(app, &open.envelope)
+}
+
+/// O card que toma o lugar do campo de pergunta enquanto a conversa de nuvem espera aprovacao:
+/// o envelope **desta conversa** (o que de fato vai; o `Resend` do nucleo le o mesmo texto),
+/// o modelo, a politica, e "Enviar"/"Cancelar". Na tela o texto segue o "Ocultar valores"; o
+/// que sai nunca e mascarado.
+fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, Message> {
+    let t = app.tokens;
+    let cloud = &app.snapshot.assistant.settings.cloud;
+    let envelope = container(scrollable(
+        container(
+            text(preview_shown(app, open))
+                .size(12)
+                .font(fonts::INTER)
+                .color(t.text),
+        )
+        .padding(12)
+        .width(Length::Fill),
+    ))
+    .height(220)
+    .style(theme::card(t));
+    let actions = row![
+        Space::new().width(Length::Fill),
+        button(text("Cancelar").size(13).font(fonts::INTER_MEDIUM))
+            .padding([6, 14])
+            .style(theme::outline_divider(t))
+            .on_press(Message::CloseConversation),
+        button(text("Enviar").size(13).font(fonts::INTER_MEDIUM))
+            .padding([6, 14])
+            .style(theme::outline_accent(t))
+            .on_press(Message::ApproveCloudSend),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    column![
+        text(PREVIEW_TITLE)
+            .size(15)
+            .font(fonts::INTER_SEMIBOLD)
+            .color(t.text),
+        text(PREVIEW_INTRO)
+            .size(13)
+            .line_height(1.4)
+            .color(t.text_muted),
+        envelope,
+        text(format!("Modelo: {}", cloud.model.trim()))
+            .size(13)
+            .color(t.text_soft()),
+        text(retention_line(cloud.deny_data_collection))
+            .size(13)
+            .color(t.text_soft()),
+        actions,
+    ]
+    .spacing(10)
+    .width(Length::Fill)
+    .into()
 }
 
 fn retry_button(t: &'static Tokens) -> Element<'static, Message> {
@@ -610,6 +691,30 @@ mod tests {
         assert_eq!(app.current_envelope(), full);
         assert_eq!(app.envelope_preview.as_deref(), Some(full.as_str()));
         assert!(envelope_dialog(&app).is_some());
+    }
+
+    #[test]
+    fn linha_de_retencao_da_previa() {
+        assert_eq!(retention_line(true), "Retenção: não permitida");
+        assert_eq!(retention_line(false), "Retenção: permitida");
+    }
+
+    #[test]
+    fn textos_da_nuvem_nao_tem_espaco_duplo() {
+        for text in [
+            PREVIEW_INTRO,
+            assistant_settings_view::CLOUD_EXPLAIN,
+            assistant_settings_view::DENY_LABEL,
+            assistant_settings_view::DENY_WARNING,
+            assistant_settings_view::PLAIN_KEY_WARNING,
+        ] {
+            assert!(!text.contains("  "), "{text:?}");
+        }
+        assert!(
+            assistant_settings_view::CLOUD_EXPLAIN.starts_with(
+                "Ligado, o resumo de achados e totais desta conta vai para o OpenRouter"
+            )
+        );
     }
 
     #[test]

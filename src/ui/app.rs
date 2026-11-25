@@ -16,7 +16,9 @@ use tokio::sync::watch;
 use super::connection_view;
 use super::remove_view;
 use super::theme::Tokens;
-use crate::assistant::settings::ProviderChoice;
+use crate::assistant::secret::Secret;
+use crate::assistant::settings::{ProviderChoice, Settings};
+use crate::assistant::view::OpenConversation;
 use crate::config::{self, ThemeMode, UiPrefs};
 use crate::dashboard::contract::Book;
 use crate::dashboard::dataset::{Dataset, avatar_bytes};
@@ -213,6 +215,14 @@ pub struct App {
     /// O que esta no campo "Porta": so digitos, ate 5. Pode estar invalido (vazio, 0, 70000)
     /// sem que nada seja gravado; a porta gravada continua a do `assistant.json`.
     pub(super) port_input: String,
+    /// O que esta no campo "Modelo" da nuvem; grava no Enter, ao fechar o painel e junto de
+    /// qualquer outra mudanca (gravar a cada tecla faria o campo, que le o snapshot, perder
+    /// letras no vai-e-volta com o nucleo).
+    pub(super) model_input: String,
+    /// A chave do OpenRouter que a pessoa esta digitando. Vive so aqui e so ate o "Salvar":
+    /// `SaveKey` a leva ao nucleo e o campo e esvaziado na hora; nunca vai para log nem Debug
+    /// (por isso a `Secret` nas mensagens e no comando).
+    pub(super) key_input: String,
     /// O envelope desta conta agora (nunca mascarado), recalculado so em `rebuild`: a previa, o
     /// envio e o aviso "os dados mudaram" (spec 3) leem o mesmo texto sem refazer as agregacoes
     /// a cada quadro. O aviso compara com o envelope guardado na conversa, entao vale tambem
@@ -315,6 +325,19 @@ pub enum Message {
     /// Enter no campo da porta: grava se for valida.
     SettingsPortSubmit,
     SettingsLocalModel(String),
+    /// Interruptor "Enviar para a nuvem".
+    SettingsCloudEnabled(bool),
+    /// Texto do campo "Modelo" da nuvem (so rascunho; grava no Enter ou ao fechar o painel).
+    SettingsCloudModel(String),
+    SettingsCloudModelSubmit,
+    /// "Nao permitir que o provedor guarde ou treine com os dados".
+    SettingsDeny(bool),
+    /// Texto do campo da chave; `Secret` para um `{:?}` de mensagem nao vazar a chave.
+    KeyInput(crate::assistant::secret::Secret),
+    SaveKey,
+    RemoveKey,
+    /// "Enviar" da previa: a pessoa viu o que sai e libera o primeiro envio desta conversa.
+    ApproveCloudSend,
     RefreshModels,
     Noop,
 }
@@ -329,6 +352,7 @@ impl App {
     ) -> App {
         let snapshot = handle.snapshot.borrow().clone();
         let snapshot_port = snapshot.assistant.settings.local.port.to_string();
+        let snapshot_model = snapshot.assistant.settings.cloud.model.clone();
         let tokens = Tokens::for_mode(prefs.theme);
         let mut app = App {
             handle,
@@ -380,6 +404,8 @@ impl App {
             chat_input: String::new(),
             assistant_settings_open: false,
             port_input: snapshot_port,
+            model_input: snapshot_model,
+            key_input: String::new(),
             envelope_now: String::new(),
             confirm_delete_all: None,
             desktop,
@@ -468,7 +494,9 @@ impl App {
     /// Abre o painel "Configurar assistente" com o campo de porta refletindo o que esta gravado.
     fn open_assistant_settings(&mut self) {
         self.assistant_settings_open = true;
-        self.port_input = self.snapshot.assistant.settings.local.port.to_string();
+        let settings = &self.snapshot.assistant.settings;
+        self.port_input = settings.local.port.to_string();
+        self.model_input = settings.cloud.model.clone();
     }
 
     /// O texto que o assistente recebe nesta conta agora; a prévia e o envio usam este mesmo.
@@ -1164,10 +1192,15 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::StartConversation => {
+            // Modelo ou porta digitados e ainda sem Enter: gravam antes, para a conversa (e a
+            // previa da nuvem) usar o que a pessoa ve no painel.
+            edit_settings(app, |_| {});
             let settings = &app.snapshot.assistant.settings;
             let Some(destination) = settings
                 .destination()
                 .filter(|_| settings.model().is_some())
+                // Nuvem sem chave so falharia na primeira resposta; a configuracao explica.
+                .filter(|d| !d.is_cloud() || app.snapshot.assistant.has_key)
             else {
                 app.open_assistant_settings();
                 return Task::none();
@@ -1184,8 +1217,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     envelope,
                 },
             );
-            // A nuvem pede a previa antes do primeiro envio (Issue 05); o modelo local nao
-            // precisa de consentimento e ja pede a resposta de abertura.
+            // A nuvem so envia depois da previa aprovada na tela (`ApproveCloudSend`); o modelo
+            // local nao precisa de consentimento e ja pede a resposta de abertura.
             if !destination.is_cloud() {
                 send_assistant(app, AssistantCommand::Resend);
             }
@@ -1197,7 +1230,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ChatSubmit => {
             let text = app.chat_input.trim().to_string();
-            if text.is_empty() || app.snapshot.assistant.busy {
+            if text.is_empty()
+                || app.snapshot.assistant.busy
+                || awaiting_cloud_consent(app).is_some()
+            {
                 return Task::none();
             }
             app.chat_input.clear();
@@ -1209,7 +1245,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ChatRetry => {
-            if !app.snapshot.assistant.busy {
+            if !app.snapshot.assistant.busy && awaiting_cloud_consent(app).is_none() {
                 send_assistant(app, AssistantCommand::Resend);
             }
             Task::none()
@@ -1240,6 +1276,11 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ToggleAssistantSettings => {
             if app.assistant_settings_open {
+                // Porta ou modelo validos digitados sem Enter gravam ao fechar; invalidos
+                // somem (a configuracao gravada continua valendo). A chave nao salva tambem:
+                // nao fica na memoria de um painel fechado.
+                edit_settings(app, |_| {});
+                app.key_input.clear();
                 app.assistant_settings_open = false;
             } else {
                 app.open_assistant_settings();
@@ -1247,9 +1288,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SettingsProvider(provider) => {
-            let mut settings = app.snapshot.assistant.settings.clone();
-            settings.provider = provider;
-            send_assistant(app, AssistantCommand::SaveSettings(settings));
+            edit_settings(app, |s| s.provider = provider);
             // Escolher o Ollama pela primeira vez ja traz a lista: sem ela o painel mostraria
             // "nenhum modelo" sem a pessoa ter pedido nada.
             if provider == ProviderChoice::Local && app.snapshot.assistant.models.is_none() {
@@ -1267,24 +1306,58 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SettingsPortSubmit => {
-            let settings = &app.snapshot.assistant.settings;
-            if let Ok(port) = app.port_input.parse::<u16>()
-                && port > 0
-                && port != settings.local.port
-            {
-                let mut settings = settings.clone();
-                settings.local.port = port;
-                send_assistant(app, AssistantCommand::SaveSettings(settings));
-            }
+            edit_settings(app, |_| {});
             Task::none()
         }
         Message::SettingsLocalModel(model) => {
-            let mut settings = app.snapshot.assistant.settings.clone();
-            settings.local.model = Some(model);
-            send_assistant(app, AssistantCommand::SaveSettings(settings));
+            edit_settings(app, |s| s.local.model = Some(model));
+            Task::none()
+        }
+        Message::SettingsCloudEnabled(enabled) => {
+            edit_settings(app, |s| s.cloud.enabled = enabled);
+            Task::none()
+        }
+        Message::SettingsCloudModel(text) => {
+            app.model_input = text;
+            Task::none()
+        }
+        Message::SettingsCloudModelSubmit => {
+            edit_settings(app, |_| {});
+            Task::none()
+        }
+        Message::SettingsDeny(deny) => {
+            edit_settings(app, |s| s.cloud.deny_data_collection = deny);
+            Task::none()
+        }
+        Message::KeyInput(key) => {
+            app.key_input = key.expose().to_string();
+            Task::none()
+        }
+        Message::SaveKey => {
+            // `take`: o campo esvazia no mesmo instante, e a chave nao fica em `App`. Campo em
+            // branco nao faz nada: apagar a chave e o "Remover", nunca um "Salvar" vazio.
+            let key = std::mem::take(&mut app.key_input);
+            if !key.trim().is_empty() {
+                send_assistant(app, AssistantCommand::SaveKey(Secret::new(key)));
+            }
+            Task::none()
+        }
+        Message::RemoveKey => {
+            app.key_input.clear();
+            send_assistant(app, AssistantCommand::SaveKey(Secret::new(String::new())));
+            Task::none()
+        }
+        Message::ApproveCloudSend => {
+            // O id vai junto: o nucleo so libera se for a conversa ainda aberta.
+            if let Some(open) = awaiting_cloud_consent(app) {
+                let id = open.id.clone();
+                send_assistant(app, AssistantCommand::ApproveCloudSend(id));
+            }
             Task::none()
         }
         Message::RefreshModels => {
+            // Porta digitada sem Enter: a lista tem que vir da porta que a pessoa ve no campo.
+            edit_settings(app, |_| {});
             send_assistant(app, AssistantCommand::ListModels);
             Task::none()
         }
@@ -1297,6 +1370,44 @@ pub(super) const DELETE_ALL_ARMED_FOR: Duration = Duration::from_secs(3);
 
 /// A porta mais alta (65535) tem 5 digitos.
 const PORT_DIGITS: usize = 5;
+
+/// A conversa aberta que ainda espera a previa da nuvem ser aprovada: o destino e a nuvem e
+/// nada saiu dela. Enquanto isso a tela mostra a previa no lugar do campo de pergunta.
+pub(super) fn awaiting_cloud_consent(app: &App) -> Option<&OpenConversation> {
+    super::analysis_view::open_conversation(app).filter(|o| {
+        o.needs_cloud_consent
+            && app
+                .snapshot
+                .assistant
+                .settings
+                .destination()
+                .is_some_and(|d| d.is_cloud())
+    })
+}
+
+/// A configuracao gravada com a mudanca pedida, mais os rascunhos validos do painel (porta e
+/// modelo da nuvem). Manda `SaveSettings` so se algo mudou de fato. Os rascunhos so entram com
+/// o painel aberto: antes disso eles podem ser o padrao de um snapshot anterior ao boot do
+/// nucleo, e gravar isso apagaria a escolha da pessoa.
+fn edit_settings(app: &App, change: impl FnOnce(&mut Settings)) {
+    let saved = &app.snapshot.assistant.settings;
+    let mut next = saved.clone();
+    if app.assistant_settings_open {
+        if let Ok(port) = app.port_input.parse::<u16>()
+            && port > 0
+        {
+            next.local.port = port;
+        }
+        let model = app.model_input.trim();
+        if !model.is_empty() {
+            next.cloud.model = model.to_string();
+        }
+    }
+    change(&mut next);
+    if next != *saved {
+        send_assistant(app, AssistantCommand::SaveSettings(next));
+    }
+}
 
 /// Pedido ao assistente no nucleo. Falha de envio (nucleo ja desligado) e ignorada como nos
 /// outros comandos: a janela fecha junto.
@@ -3338,8 +3449,13 @@ pub(super) mod tests {
         );
         // Com lista ja carregada, so salva.
         app.snapshot.assistant.models = Some(Ok(vec!["a".into()]));
+        app.snapshot.assistant.settings.provider = ProviderChoice::Local;
         let _ = update(&mut app, Message::SettingsProvider(ProviderChoice::None));
         assert_eq!(drain(&mut rx).len(), 1);
+        // Clicar no que ja esta escolhido nao regrava nada.
+        app.snapshot.assistant.settings.provider = ProviderChoice::None;
+        let _ = update(&mut app, Message::SettingsProvider(ProviderChoice::None));
+        assert!(drain(&mut rx).is_empty());
 
         app.snapshot.assistant.settings = local_settings(None);
         let _ = update(&mut app, Message::SettingsLocalModel("llama3.1:8b".into()));
@@ -3360,6 +3476,9 @@ pub(super) mod tests {
     fn porta_filtra_ao_digitar_e_so_grava_porta_valida_no_enter() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        // O campo so existe com o painel aberto.
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        assert!(app.assistant_settings_open);
         // Digitar so filtra: nenhuma tecla grava.
         let _ = update(&mut app, Message::SettingsPort("11a5b00".into()));
         assert_eq!(app.port_input, "11500");
@@ -3384,13 +3503,306 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::SettingsPort("11434".into()));
         let _ = update(&mut app, Message::SettingsPortSubmit);
         assert!(drain(&mut rx).is_empty());
-        // Abrir o painel de novo mostra a porta gravada, nao o rascunho.
-        let _ = update(&mut app, Message::SettingsPort("9".into()));
+        // Rascunho invalido some ao fechar: abrir o painel de novo mostra a porta gravada.
+        let _ = update(&mut app, Message::SettingsPort("0".into()));
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        assert!(!app.assistant_settings_open);
+        assert!(drain(&mut rx).is_empty());
         let _ = update(&mut app, Message::ToggleAssistantSettings);
         assert!(app.assistant_settings_open);
         assert_eq!(app.port_input, "11434");
+    }
+
+    #[test]
+    fn porta_valida_sem_enter_grava_ao_atualizar_modelos_e_ao_fechar_o_painel() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let mut with_port = local_settings(Some("m"));
+        with_port.local.port = 11500;
+        let save = Command::Assistant(AssistantCommand::SaveSettings(with_port));
+
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        let _ = update(&mut app, Message::SettingsPort("11500".into()));
+        // "Atualizar modelos" grava antes de listar: a lista vem da porta que a pessoa ve.
+        let _ = update(&mut app, Message::RefreshModels);
+        assert_eq!(
+            drain(&mut rx),
+            vec![
+                save.clone(),
+                Command::Assistant(AssistantCommand::ListModels)
+            ]
+        );
+
+        // Fechar o painel tambem grava (o snapshot de teste segue com a porta antiga).
         let _ = update(&mut app, Message::ToggleAssistantSettings);
         assert!(!app.assistant_settings_open);
+        assert_eq!(drain(&mut rx), vec![save]);
+
+        // Porta igual a gravada, ou invalida, nao manda nada.
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        let _ = update(&mut app, Message::SettingsPort("70000".into()));
+        let _ = update(&mut app, Message::RefreshModels);
+        let _ = update(&mut app, Message::SettingsPort("11434".into()));
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::ListModels)]
+        );
+    }
+
+    // ---- nuvem: configuracao, chave e previa ----
+
+    fn cloud_settings() -> Settings {
+        let mut s = Settings {
+            provider: ProviderChoice::Cloud,
+            ..Settings::default()
+        };
+        s.cloud.enabled = true;
+        s
+    }
+
+    fn cloud_app(dir: &std::path::Path) -> (App, mpsc::UnboundedReceiver<Command>) {
+        let (mut app, rx) = assistant_app(dir, cloud_settings());
+        app.snapshot.assistant.has_key = true;
+        (app, rx)
+    }
+
+    fn awaiting_conv(book: Book, envelope: &str) -> OpenConversation {
+        OpenConversation {
+            id: "C1".into(),
+            book,
+            envelope: envelope.into(),
+            messages: vec![msg(MessageRole::User, "Resuma")],
+            needs_cloud_consent: true,
+        }
+    }
+
+    #[test]
+    fn conversar_na_nuvem_cria_a_conversa_mas_nao_pede_a_abertura() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = cloud_app(dir.path());
+        let env = app.current_envelope();
+        let _ = update(&mut app, Message::StartConversation);
+        // Sem `Resend`: o primeiro envio so sai depois da previa aprovada na tela.
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::NewConversation {
+                book: app.book,
+                title: format!("Análise de {}", month_label(&app.analysis.month)),
+                envelope: env,
+            })]
+        );
+    }
+
+    #[test]
+    fn nuvem_desligada_ou_sem_chave_abre_a_configuracao_em_vez_de_conversar() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = cloud_app(dir.path());
+        app.snapshot.assistant.has_key = false;
+        let _ = update(&mut app, Message::StartConversation);
+        assert!(app.assistant_settings_open);
+        assert!(drain(&mut rx).is_empty());
+
+        let (mut app, mut rx) = cloud_app(dir.path());
+        app.snapshot.assistant.settings.cloud.enabled = false;
+        let _ = update(&mut app, Message::StartConversation);
+        assert!(app.assistant_settings_open);
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn previa_aprovada_manda_o_id_da_conversa_e_so_quando_ha_o_que_aprovar() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = cloud_app(dir.path());
+        // Nada aberto: o clique nao manda nada.
+        let _ = update(&mut app, Message::ApproveCloudSend);
+        assert!(drain(&mut rx).is_empty());
+
+        app.snapshot.assistant.open = Some(awaiting_conv(app.book, "ENV DA CONVERSA"));
+        assert!(super::awaiting_cloud_consent(&app).is_some());
+        let _ = update(&mut app, Message::ApproveCloudSend);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::ApproveCloudSend(
+                "C1".into()
+            ))]
+        );
+
+        // Enquanto espera, nem pergunta nova nem "Tentar de novo" saem.
+        app.chat_input = "e agora?".into();
+        let _ = update(&mut app, Message::ChatSubmit);
+        let _ = update(&mut app, Message::ChatRetry);
+        assert!(drain(&mut rx).is_empty());
+        assert_eq!(app.chat_input, "e agora?");
+
+        // Conversa da outra conta, ja aprovada, ou destino local: nao ha o que aprovar.
+        app.snapshot.assistant.open = Some(awaiting_conv(Book::Business, "E"));
+        assert!(super::awaiting_cloud_consent(&app).is_none());
+        let mut approved = awaiting_conv(app.book, "E");
+        approved.needs_cloud_consent = false;
+        app.snapshot.assistant.open = Some(approved);
+        assert!(super::awaiting_cloud_consent(&app).is_none());
+        app.snapshot.assistant.open = Some(awaiting_conv(app.book, "E"));
+        app.snapshot.assistant.settings = local_settings(Some("m"));
+        assert!(super::awaiting_cloud_consent(&app).is_none());
+        let _ = update(&mut app, Message::ApproveCloudSend);
+        let _ = update(&mut app, Message::ChatRetry);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::Resend)]
+        );
+    }
+
+    #[test]
+    fn previa_mostra_o_envelope_da_propria_conversa_e_mascara_so_na_tela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = cloud_app(dir.path());
+        // O envelope guardado na conversa (nao o de agora) e o que a previa mostra.
+        let env = "Gasto R$ 1.234,56 em mercado.";
+        app.snapshot.assistant.open = Some(awaiting_conv(app.book, env));
+        app.hide_values = false;
+        let open = super::awaiting_cloud_consent(&app).unwrap();
+        assert_eq!(super::super::analysis_view::preview_shown(&app, open), env);
+        assert_eq!(open.envelope, env, "o que sai nunca e mascarado");
+        app.hide_values = true;
+        let open = super::awaiting_cloud_consent(&app).unwrap();
+        let shown = super::super::analysis_view::preview_shown(&app, open);
+        assert!(!shown.contains("1.234"), "{shown}");
+        assert_eq!(open.envelope, env);
+        let _ = super::super::analysis_view::view(&app);
+    }
+
+    #[test]
+    fn interruptores_da_nuvem_mandam_a_configuracao_inteira() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), Settings::default());
+        let _ = update(&mut app, Message::SettingsCloudEnabled(true));
+        let mut expected = Settings::default();
+        expected.cloud.enabled = true;
+        let mut off = expected.clone();
+        off.cloud.deny_data_collection = false;
+        let _ = update(&mut app, Message::SettingsDeny(false));
+        // O snapshot de teste nao anda: cada comando parte da configuracao gravada.
+        let mut denied = Settings::default();
+        denied.cloud.deny_data_collection = false;
+        assert_eq!(
+            drain(&mut rx),
+            vec![
+                Command::Assistant(AssistantCommand::SaveSettings(expected)),
+                Command::Assistant(AssistantCommand::SaveSettings(denied)),
+            ]
+        );
+        // Ja era o valor gravado (nuvem desligada, retencao negada): nada a gravar.
+        let _ = update(&mut app, Message::SettingsCloudEnabled(false));
+        let _ = update(&mut app, Message::SettingsDeny(true));
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn modelo_da_nuvem_so_grava_no_enter_ou_ao_fechar_e_nunca_em_branco() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), cloud_settings());
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        assert_eq!(
+            app.model_input,
+            crate::assistant::settings::SUGGESTED_CLOUD_MODEL
+        );
+        let _ = update(
+            &mut app,
+            Message::SettingsCloudModel(" openai/gpt-4o ".into()),
+        );
+        assert!(drain(&mut rx).is_empty(), "digitar nao grava");
+        let mut expected = cloud_settings();
+        expected.cloud.model = "openai/gpt-4o".into();
+        let _ = update(&mut app, Message::SettingsCloudModelSubmit);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::SaveSettings(
+                expected.clone()
+            ))]
+        );
+        let _ = update(&mut app, Message::SettingsCloudModel("anthropic/x".into()));
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        expected.cloud.model = "anthropic/x".into();
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::SaveSettings(expected))]
+        );
+        // Em branco nao apaga o modelo gravado.
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        let _ = update(&mut app, Message::SettingsCloudModel("   ".into()));
+        let _ = update(&mut app, Message::SettingsCloudModelSubmit);
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn salvar_a_chave_leva_ao_nucleo_e_esvazia_o_campo_na_hora() {
+        use crate::assistant::secret::Secret;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = cloud_app(dir.path());
+        let _ = update(
+            &mut app,
+            Message::KeyInput(Secret::new("sk-or-segredo".into())),
+        );
+        assert_eq!(app.key_input, "sk-or-segredo");
+        assert!(drain(&mut rx).is_empty(), "digitar nao salva");
+        let _ = update(&mut app, Message::SaveKey);
+        assert!(
+            app.key_input.is_empty(),
+            "a chave nao fica no estado da tela"
+        );
+        let sent = drain(&mut rx);
+        assert_eq!(
+            sent,
+            vec![Command::Assistant(AssistantCommand::SaveKey(Secret::new(
+                "sk-or-segredo".into()
+            )))]
+        );
+        // O Debug do que foi mandado (e de qualquer mensagem) nunca mostra a chave.
+        assert!(!format!("{sent:?}").contains("segredo"));
+        let typed = Message::KeyInput(Secret::new("sk-or-segredo".into()));
+        assert!(!format!("{typed:?}").contains("segredo"));
+
+        // "Salvar" em branco nao apaga a chave; so o "Remover" apaga.
+        let _ = update(&mut app, Message::KeyInput(Secret::new("   ".into())));
+        let _ = update(&mut app, Message::SaveKey);
+        assert!(drain(&mut rx).is_empty());
+        let _ = update(&mut app, Message::KeyInput(Secret::new("sk-or-x".into())));
+        let _ = update(&mut app, Message::RemoveKey);
+        assert!(app.key_input.is_empty());
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::SaveKey(Secret::new(
+                String::new()
+            )))]
+        );
+        // Fechar o painel descarta a chave digitada e nao salva.
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        let _ = update(&mut app, Message::KeyInput(Secret::new("sk-or-y".into())));
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        assert!(app.key_input.is_empty());
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn painel_da_nuvem_monta_em_todos_os_estados() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = cloud_app(dir.path());
+        app.assistant_settings_open = true;
+        for has_key in [false, true] {
+            for encrypted in [false, true] {
+                for deny in [false, true] {
+                    app.snapshot.assistant.has_key = has_key;
+                    app.snapshot.assistant.key_encrypted = encrypted;
+                    app.snapshot.assistant.settings.cloud.deny_data_collection = deny;
+                    app.key_input = "sk".into();
+                    let _ = super::super::analysis_view::view(&app);
+                }
+            }
+        }
+        app.snapshot.assistant.open = Some(awaiting_conv(app.book, "ENV"));
+        let _ = super::super::analysis_view::view(&app);
+        let _ = super::super::shell::root(&app);
     }
 
     fn summary(id: &str, book: Book) -> ConversationSummary {

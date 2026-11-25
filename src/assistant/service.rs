@@ -145,6 +145,18 @@ impl AssistantService {
         }
     }
 
+    /// A conversa aberta termina numa pergunta sem resposta. Aprovar a previa de uma conversa
+    /// que ja foi respondida (por exemplo, no modelo local, antes de trocar para a nuvem) so
+    /// libera as proximas perguntas: reenviar o historico terminado numa resposta do modelo
+    /// seria um pedido sem pergunta.
+    pub fn has_unanswered_question(&self) -> bool {
+        self.view
+            .open
+            .as_ref()
+            .and_then(|o| o.messages.last())
+            .is_some_and(|m| m.role == MessageRole::User)
+    }
+
     /// Provedor real para o destino atual; `None` sem assistente utilizavel.
     pub fn provider(&self) -> Option<Box<dyn Provider>> {
         let d = self.view.settings.destination()?;
@@ -685,6 +697,19 @@ mod tests {
         assert!(open.messages[1].sent_to_cloud);
         s.save_key("  ");
         assert!(!s.view().has_key);
+    }
+
+    #[test]
+    fn pergunta_sem_resposta_so_existe_se_a_ultima_fala_e_do_usuario() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = svc(dir.path());
+        assert!(!s.has_unanswered_question(), "sem conversa aberta");
+        s.new_conversation(Book::Personal, "t".into(), "E".into());
+        assert!(s.has_unanswered_question());
+        run(&mut s, &FakeProvider::answering(&["oi"]));
+        assert!(!s.has_unanswered_question());
+        s.push_user("e agora?");
+        assert!(s.has_unanswered_question());
     }
 
     #[test]

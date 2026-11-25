@@ -38,9 +38,9 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssistantCommand {
     SaveSettings(crate::assistant::settings::Settings),
-    /// Vazio apaga a chave.
-    #[allow(dead_code)] // usado pela UI (Issue 05)
-    SaveKey(String),
+    /// Vazio apaga a chave. `Secret`: o `Debug` do comando (um `{:?}` esquecido, uma falha de
+    /// `assert_eq!`) nunca mostra a chave.
+    SaveKey(crate::assistant::secret::Secret),
     ListModels,
     /// O envelope vem pronto da UI (`App::current_envelope`): e o mesmo texto da previa.
     NewConversation {
@@ -55,7 +55,6 @@ pub enum AssistantCommand {
     Resend,
     /// O usuario viu a previa da conversa `id`: libera o envio dela para a nuvem e envia. Leva o
     /// id porque a conversa aberta pode ter mudado entre o clique e o comando.
-    #[allow(dead_code)] // usado pela UI (Issue 05)
     ApproveCloudSend(String),
     Cancel,
     Delete(String),
@@ -535,7 +534,9 @@ mod tests {
         settings.cloud.enabled = true;
         let send = |c| handle.commands.send(Command::Assistant(c)).unwrap();
         send(AssistantCommand::SaveSettings(settings));
-        send(AssistantCommand::SaveKey("sk-or-teste".into()));
+        send(AssistantCommand::SaveKey(
+            crate::assistant::secret::Secret::new("sk-or-teste".into()),
+        ));
         send(AssistantCommand::NewConversation {
             book: Book::Personal,
             title: "t".into(),

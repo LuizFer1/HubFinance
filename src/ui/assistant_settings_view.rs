@@ -1,6 +1,6 @@
-//! Painel "Configurar assistente" da tela Analise. Nesta versao so Nenhum e Local (Ollama): a
-//! nuvem aparece desligada ate a Issue 05. Tudo que muda sai como `SaveSettings` para o nucleo;
-//! o painel so mostra o que o snapshot diz estar gravado.
+//! Painel "Configurar assistente" da tela Analise: Nenhum, Local (Ollama) ou Nuvem (OpenRouter).
+//! Tudo que muda sai como `SaveSettings` (ou `SaveKey`) para o nucleo; o painel so mostra o que
+//! o snapshot diz estar gravado, fora os rascunhos de porta, modelo e chave.
 
 use iced::widget::{Space, button, column, container, pick_list, row, text, text_input};
 use iced::{Alignment, Element, Length, Padding};
@@ -8,13 +8,23 @@ use iced::{Alignment, Element, Length, Padding};
 use super::app::{App, Message};
 use super::theme::{self, Tokens};
 use super::{fonts, widgets};
+use crate::assistant::secret::Secret;
 use crate::assistant::settings::ProviderChoice;
 
 /// Dica da lista vazia; constante para o teste conferir o texto.
 pub(super) const NO_MODELS_HINT: &str =
     "Nenhum modelo instalado. Rode `ollama pull llama3.1:8b` e atualize.";
 
-pub(super) const CLOUD_SOON: &str = "na próxima versão";
+/// Explicacao do interruptor da nuvem; constante para o teste conferir o texto.
+pub(super) const CLOUD_EXPLAIN: &str = "Ligado, o resumo de achados e totais desta conta vai para o OpenRouter quando você conversar. Lançamentos, descrições, pessoas e datas exatas nunca saem.";
+
+pub(super) const PLAIN_KEY_WARNING: &str =
+    "Neste sistema a chave fica em texto puro na pasta de dados do hub.";
+
+pub(super) const DENY_LABEL: &str = "Não permitir que o provedor guarde ou treine com os dados";
+
+pub(super) const DENY_WARNING: &str =
+    "Alguns provedores podem guardar ou treinar com o que você enviar.";
 
 pub fn view(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
@@ -36,14 +46,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             );
         }
         ProviderChoice::Local => body = body.push(local_section(app)),
-        // Sem caminho na UI ate a Issue 05; so chega aqui por um `assistant.json` editado a mao.
-        ProviderChoice::Cloud => {
-            body = body.push(
-                text("A nuvem chega na próxima versão. Escolha Nenhum ou Local.")
-                    .size(13)
-                    .color(t.text_muted),
-            );
-        }
+        ProviderChoice::Cloud => body = body.push(cloud_section(app)),
     }
     if let Some(err) = &view.last_error {
         body = body.push(text(err.as_str()).size(13).color(t.expense_fg));
@@ -55,28 +58,22 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-/// Nenhum / Local / Nuvem. `widgets::segmented` so tem duas opcoes, e a terceira precisa
-/// aparecer desabilitada com o aviso, entao o trilho e montado aqui com o mesmo estilo.
+/// Nenhum / Local / Nuvem. `widgets::segmented` so tem duas opcoes, entao o trilho de tres e
+/// montado aqui com o mesmo estilo.
 fn provider_picker(t: &'static Tokens, current: ProviderChoice) -> Element<'static, Message> {
     let option = |label: &'static str, choice: ProviderChoice| {
         segment(
             t,
             label,
             current == choice,
-            Some(Message::SettingsProvider(choice)),
+            Message::SettingsProvider(choice),
         )
     };
-    let cloud = row![
-        segment(t, "Nuvem (OpenRouter)", false, None),
-        text(CLOUD_SOON).size(12).color(t.text_muted),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
     let rail = container(
         row![
             option("Nenhum", ProviderChoice::None),
             option("Local (Ollama)", ProviderChoice::Local),
-            cloud,
+            option("Nuvem (OpenRouter)", ProviderChoice::Cloud),
         ]
         .spacing(4)
         .align_y(Alignment::Center),
@@ -90,23 +87,16 @@ fn segment(
     t: &'static Tokens,
     label: &'static str,
     active: bool,
-    on_press: Option<Message>,
+    on_press: Message,
 ) -> Element<'static, Message> {
     let content = container(text(label).size(13).line_height(1.0))
         .height(36)
         .padding([0, 14])
         .align_y(Alignment::Center);
-    let enabled = on_press.is_some();
     button(content)
         .padding(0)
-        .style(move |theme: &iced::Theme, status| {
-            if enabled {
-                theme::segment(t, active)(theme, status)
-            } else {
-                theme::plain(t.text_muted)(theme, status)
-            }
-        })
-        .on_press_maybe(on_press)
+        .style(theme::segment(t, active))
+        .on_press(on_press)
         .into()
 }
 
@@ -161,6 +151,113 @@ fn local_section(app: &App) -> Element<'_, Message> {
                 .spacing(6),
             );
         }
+    }
+    section.into()
+}
+
+/// Sim / Nao no estilo do hub (`seg_switch`), com o rotulo a esquerda.
+fn yes_no<'a>(
+    t: &'static Tokens,
+    label: &'static str,
+    on: bool,
+    message: impl Fn(bool) -> Message,
+) -> Element<'a, Message> {
+    row![
+        text(label).size(13).color(t.text).width(Length::Fill),
+        container(widgets::seg_switch(
+            t,
+            [
+                (None, "Sim", on, message(true)),
+                (None, "Não", !on, message(false)),
+            ],
+        ))
+        .width(140),
+    ]
+    .spacing(12)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn cloud_section(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let view = &app.snapshot.assistant;
+    let cloud = &view.settings.cloud;
+    let mut section = column![
+        yes_no(
+            t,
+            "Enviar para a nuvem",
+            cloud.enabled,
+            Message::SettingsCloudEnabled
+        ),
+        text(CLOUD_EXPLAIN)
+            .size(13)
+            .line_height(1.4)
+            .color(t.text_muted),
+    ]
+    .spacing(8);
+
+    // Chave: salva (so "Remover") ou campo para digitar. O campo e `secure`: a chave nunca
+    // aparece na tela.
+    let key: Element<'_, Message> = if view.has_key {
+        row![
+            text("Chave salva").size(13).color(t.text),
+            Space::new().width(Length::Fill),
+            button(text("Remover").size(13).font(fonts::INTER_MEDIUM))
+                .padding([8, 14])
+                .style(theme::danger_outline(t))
+                .on_press(Message::RemoveKey),
+        ]
+        .align_y(Alignment::Center)
+        .into()
+    } else {
+        row![
+            text_input("sk-or-...", &app.key_input)
+                .secure(true)
+                .on_input(|k| Message::KeyInput(Secret::new(k)))
+                .on_submit(Message::SaveKey)
+                .size(13)
+                .width(Length::Fill)
+                .padding([8, 10])
+                .style(theme::input(t)),
+            button(text("Salvar").size(13).font(fonts::INTER_MEDIUM))
+                .padding([8, 14])
+                .style(theme::outline_accent(t))
+                .on_press_maybe((!app.key_input.trim().is_empty()).then_some(Message::SaveKey)),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .into()
+    };
+    section = section.push(column![widgets::kicker(t, "Chave do OpenRouter"), key].spacing(6));
+    if !view.key_encrypted {
+        section = section.push(text(PLAIN_KEY_WARNING).size(13).color(t.warning));
+    }
+
+    section = section.push(
+        column![
+            widgets::kicker(t, "Modelo"),
+            text_input(
+                crate::assistant::settings::SUGGESTED_CLOUD_MODEL,
+                &app.model_input
+            )
+            .on_input(Message::SettingsCloudModel)
+            .on_submit(Message::SettingsCloudModelSubmit)
+            .size(13)
+            .width(Length::Fill)
+            .padding([8, 10])
+            .style(theme::input(t)),
+        ]
+        .spacing(6),
+    );
+
+    section = section.push(yes_no(
+        t,
+        DENY_LABEL,
+        cloud.deny_data_collection,
+        Message::SettingsDeny,
+    ));
+    if !cloud.deny_data_collection {
+        section = section.push(text(DENY_WARNING).size(13).color(t.warning));
     }
     section.into()
 }

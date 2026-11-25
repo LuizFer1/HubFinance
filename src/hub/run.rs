@@ -316,7 +316,7 @@ impl Hub {
         use AssistantCommand as A;
         match c {
             A::SaveSettings(s) => self.assistant.save_settings(s),
-            A::SaveKey(k) => self.assistant.save_key(&k),
+            A::SaveKey(k) => self.assistant.save_key(k.expose()),
             A::ListModels => {
                 if let (Some(p), Some(d)) =
                     (self.assistant.provider(), self.assistant.destination())
@@ -344,7 +344,9 @@ impl Hub {
                 self.spawn_chat();
             }
             A::ApproveCloudSend(id) => {
-                if self.assistant.grant_cloud_consent(&id) {
+                if self.assistant.grant_cloud_consent(&id)
+                    && self.assistant.has_unanswered_question()
+                {
                     self.spawn_chat();
                 }
             }

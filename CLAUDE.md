@@ -76,19 +76,19 @@ com um hub de verdade por curl.
 ## Layering
 
 `protocol/` é puro (sem rusqlite, axum, tokio, iced). `store/` é o único módulo com rusqlite;
-`server/` o único com axum; `ui/` o único com iced. `dashboard/` é puro (sem rusqlite, axum,
-tokio, iced): contrato de campos, dataset e agregações; a UI deriva as telas dele. `advisor/` é puro como `dashboard/` (lê só `dashboard/`).
-`assistant/` é o único módulo além de `store/` com rusqlite, e só abre o `assistant.db` (nunca
-o banco de sync; `store/` nunca abre o dele); é o único com `ureq`. `ui/` fala com o assistente
-só por `Command::Assistant` e `Snapshot.assistant`. `hub/` liga
-tudo numa thread com runtime tokio e publica `Snapshot` por `watch`; a UI só renderiza o
-snapshot e envia `Command`. `desktop/` é o único com `tray-icon`, `image` e `windows-sys`
-(bandeja, instância única, chave `Run`), sem iced, rusqlite, axum nem tokio; fala com `ui/` por
-um trait (`Desktop`, com `Fake` nos testes) e por um canal de `DesktopEvent`. Tudo que é Win32
-fica em `cfg(windows)` com um caminho `not(windows)` que compila (o CI roda clippy nos três
-sistemas); nenhum teste cria bandeja, mutex nem valor no registro. `logging.rs` e `main.rs` são
-os únicos com `tracing-subscriber`/`tracing-appender`; `ui/` abre o navegador só por
-`open::that_detached` com URL constante de `config.rs`.
+`server/` o único com axum; `ui/` o único com iced. `dashboard/` é puro (sem rusqlite, axum, tokio,
+iced): contrato de campos, dataset e agregações; a UI deriva as telas dele. `advisor/` é puro como
+`dashboard/` (lê só `dashboard/`). `assistant/` é o único módulo além de `store/` com rusqlite, e só
+abre o `assistant.db` (nunca o banco de sync; `store/` nunca abre o dele); é o único com `ureq`.
+`ui/` fala com o assistente só por `Command::Assistant` e `Snapshot.assistant`. `hub/` liga tudo
+numa thread com runtime tokio e publica `Snapshot` por `watch`; a UI só renderiza o snapshot e envia
+`Command`. `desktop/` é o único com `tray-icon`, `image` e `windows-sys` (bandeja, instância única,
+chave `Run`), sem iced, rusqlite, axum nem tokio; fala com `ui/` por um trait (`Desktop`, com `Fake`
+nos testes) e por um canal de `DesktopEvent`. Tudo que é Win32 fica em `cfg(windows)` com um caminho
+`not(windows)` que compila (o CI roda clippy nos três sistemas); nenhum teste cria bandeja, mutex
+nem valor no registro. `logging.rs` e `main.rs` são os únicos com
+`tracing-subscriber`/`tracing-appender`; `ui/` abre o navegador só por `open::that_detached` com URL
+constante de `config.rs`.
 
 ## Convenções
 

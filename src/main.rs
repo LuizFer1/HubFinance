@@ -3,6 +3,8 @@
 // continua recebendo a mesma coisa.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod advisor;
+mod assistant;
 mod config;
 mod dashboard;
 mod desktop;
@@ -88,7 +90,9 @@ fn main() -> iced::Result {
     let desktop = desktop::install(events_tx);
     let open_window = desktop::args::opens_window(mode, desktop.has_tray());
     let prefs_dir = config.data_dir.clone();
-    let (handle, _nucleo) = hub::start(config);
+    // Chave do OpenRouter: DPAPI no Windows (ver `desktop::secret`).
+    let secrets = desktop::secret::system(&config.data_dir);
+    let (handle, _nucleo) = hub::start(config, secrets);
     // `instance` (mutex e evento) vive ate o fim de `main`, e o kernel so solta os handles
     // quando o processo acaba: a segunda execucao so passa depois disso.
     ui::run(

@@ -32,6 +32,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 tracing-appender = "0.2"
 open = "5"
+# Cliente HTTP do assistente (Ollama local e OpenRouter). Bloqueante e pequeno: roda em
+# `spawn_blocking`. A feature `rustls` do ureq ja usa ring (mesmo provedor do servidor) e traz
+# os certificados raiz embutidos (webpki-roots), sem aws-lc-rs nem depender do sistema.
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -39,6 +43,9 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 # Le a tabela `name` das fontes vendorizadas no teste; ja vem na arvore pelo iced (fontdb).
 ttf-parser = "0.25"
+# Teste do caminho `log` -> `tracing` do ureq; as duas ja vem na arvore (tracing-subscriber, ureq).
+log = "0.4"
+tracing-log = "0.2"
 
 # Bandeja, instancia unica e chave Run: so no Windows. A tray-icon no Linux exige GTK e
 # libayatana-appindicator em tempo de build (e no .deb/AppImage), e o release.yml compila os
@@ -50,6 +57,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_Security_Cryptography",
   "Win32_System_Registry",
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",
@@ -68,7 +76,7 @@ winresource = "0.1"
 product-name = "HubFinance"
 identifier = "io.github.luizfer1.hubfinance"
 description = "Hub de sync opcional do HomeFinance, so na rede local"
-long-description = "Guarda e retransmite as linhas que os celulares com HomeFinance enviam, mostra um dashboard somente leitura e pareia aparelhos. Nada sai da rede local."
+long-description = "Guarda e retransmite as linhas que os celulares com HomeFinance enviam, mostra um dashboard somente leitura e pareia aparelhos. Nada sai da rede local, a menos que o usuario ligue a analise na nuvem."
 homepage = "https://github.com/LuizFer1/HubFinance"
 authors = ["Luiz Fernando"]
 publisher = "Luiz Fernando"

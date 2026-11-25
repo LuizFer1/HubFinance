@@ -18,6 +18,10 @@ pub struct SseParser {
     buf: String,
 }
 
+/// Cada linha `data:` e tratada como um JSON completo. O SSE do padrao permite juntar varias
+/// linhas `data:` num evento e so despachar na linha em branco, mas OpenAI, Ollama `/v1` e
+/// OpenRouter mandam um JSON por linha `data:`; implementar a juncao seria codigo sem uso e
+/// com mais chance de esconder um erro de formato real.
 impl SseParser {
     pub fn push(&mut self, chunk: &str) -> Vec<Event> {
         self.buf.push_str(chunk);

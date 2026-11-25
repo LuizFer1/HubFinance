@@ -197,10 +197,13 @@ mod tests {
     use super::*;
     use crate::advisor::{FindingKind, analyze};
     use crate::dashboard::dataset::{
-        CATEGORIES, PAYMENT_METHODS, RECURRENCES, RESERVE_MOVEMENTS, RESERVES, TRANSACTIONS, USERS,
+        BOOKS, BUDGETS, CATEGORIES, PAYMENT_METHODS, RECURRENCES, RESERVE_MOVEMENTS, RESERVES,
+        TRANSACTIONS, USERS,
     };
     use crate::dashboard::{GRAFITE_TODAY, dataset_of, fixtures, fixtures_grafite};
     use serde_json::{Value, json};
+
+    type Row = (&'static str, &'static str, bool, Value);
 
     const ALL_KINDS: [FindingKind; 9] = [
         FindingKind::Pace,
@@ -230,7 +233,7 @@ mod tests {
     /// em setembro e outubro e uma serie fixa de `series_amount` (com ou sem as ocorrencias
     /// gravadas: com elas o peso do fixo dispara, sem elas dispara o comprometido do mes que
     /// vem).
-    fn sentinel(series_amount: i64, occurrences: bool) -> Dataset {
+    fn sentinel_rows(series_amount: i64, occurrences: bool) -> Vec<Row> {
         let tx = |description: &str, kind: &str, amount: i64, on: &str, cat: Option<&str>| {
             json!({
                 "kind": kind, "description": description, "amountMinor": amount,
@@ -238,7 +241,7 @@ mod tests {
                 "userId": "U-VIVO", "paymentMethodId": "PM-CARTAO"
             })
         };
-        let mut rows: Vec<(&str, &str, bool, Value)> = vec![
+        let mut rows: Vec<Row> = vec![
             (
                 USERS,
                 "U-VIVO",
@@ -362,7 +365,11 @@ mod tests {
                 ));
             }
         }
-        let ds = dataset_of(rows);
+        rows
+    }
+
+    fn sentinel(series_amount: i64, occurrences: bool) -> Dataset {
+        let ds = dataset_of(sentinel_rows(series_amount, occurrences));
         assert_eq!(
             ds.ignored_total(),
             0,
@@ -370,6 +377,96 @@ mod tests {
             ds.ignored
         );
         ds.for_book(Book::Personal)
+    }
+
+    /// As linhas da conta COMERCIAL, com nomes-sentinela proprios: conta, categoria, forma de
+    /// pagamento, vendas e compras, reserva, movimento e meta.
+    fn business_rows() -> Vec<Row> {
+        vec![
+            (
+                BOOKS,
+                "BOOK-LOJA",
+                false,
+                json!({ "kind": "business", "name": "Loja Sentinela Comercial", "color": "amber", "icon": "storefront" }),
+            ),
+            (
+                CATEGORIES,
+                "CAT-LOJA",
+                false,
+                json!({ "name": "Insumos Sentinela Comercial", "icon": "tag", "color": "sky", "kind": "expense", "mergedInto": null, "book": "business" }),
+            ),
+            (
+                PAYMENT_METHODS,
+                "PM-LOJA",
+                false,
+                json!({ "name": "Maquininha Sentinela Comercial", "icon": "credit-card", "book": "business" }),
+            ),
+            (
+                TRANSACTIONS,
+                "TX-LOJA-VENDA-9",
+                false,
+                json!({ "kind": "income", "description": "Venda Sentinela Comercial", "amountMinor": 777_700, "occurredOn": "2026-09-08", "categoryId": null, "paymentMethodId": "PM-LOJA", "book": "business" }),
+            ),
+            (
+                TRANSACTIONS,
+                "TX-LOJA-VENDA-10",
+                false,
+                json!({ "kind": "income", "description": "Venda Sentinela Comercial", "amountMinor": 777_700, "occurredOn": "2026-10-08", "categoryId": null, "paymentMethodId": "PM-LOJA", "book": "business" }),
+            ),
+            (
+                TRANSACTIONS,
+                "TX-LOJA-COMPRA-9",
+                false,
+                json!({ "kind": "expense", "description": "Fornecedor Sentinela Comercial", "amountMinor": 333_300, "occurredOn": "2026-09-09", "categoryId": "CAT-LOJA", "paymentMethodId": "PM-LOJA", "book": "business" }),
+            ),
+            (
+                TRANSACTIONS,
+                "TX-LOJA-COMPRA-10",
+                false,
+                json!({ "kind": "expense", "description": "Fornecedor Sentinela Comercial", "amountMinor": 333_300, "occurredOn": "2026-10-09", "categoryId": "CAT-LOJA", "paymentMethodId": "PM-LOJA", "book": "business" }),
+            ),
+            (
+                RESERVES,
+                "RES-LOJA",
+                false,
+                json!({
+                    "kind": "goal", "name": "Caixa Sentinela Comercial", "icon": "piggy-bank",
+                    "color": "teal", "targetMinor": 500_000, "multiple": null,
+                    "essentialCategoryIds": null, "essentialOverrideMinor": null,
+                    "deadline": null, "recurring": null, "book": "business"
+                }),
+            ),
+            (
+                RESERVE_MOVEMENTS,
+                "MOV-LOJA",
+                false,
+                json!({
+                    "reserveId": "RES-LOJA", "amountMinor": 123_400, "occurredOn": "2026-10-07",
+                    "userId": null, "description": "Aporte Sentinela Comercial", "reason": null,
+                    "recurring": false, "book": "business"
+                }),
+            ),
+            (
+                BUDGETS,
+                "BUD-LOJA",
+                false,
+                json!({ "categoryId": "CAT-LOJA", "limitMinor": 654_300, "book": "business" }),
+            ),
+        ]
+    }
+
+    /// As duas contas no mesmo dataset, como o hub as recebe.
+    fn both_books() -> Dataset {
+        let mut rows = sentinel_rows(70_000, true);
+        rows.extend(business_rows());
+        let ds = dataset_of(rows);
+        assert_eq!(
+            ds.ignored_total(),
+            0,
+            "linha fora do contrato: {:?}",
+            ds.ignored
+        );
+        ds
     }
 
     /// Gasta mais do que ganha e deixa a reserva de emergencia no negativo: os numeros que
@@ -469,18 +566,25 @@ mod tests {
     /// Tudo que e dado pessoal no dataset e nao pode estar em `s`, em TODAS as linhas (vivas
     /// e apagadas), nao so nas que o envelope usa. Devolve os vazamentos e o que foi conferido.
     fn check(s: &str, ds: &Dataset) -> (Vec<String>, Checked) {
+        check_in(s, ds, ds)
+    }
+
+    /// `scope` e a conta do envelope (de onde vem o que PODE aparecer); `ds` e o dataset
+    /// inteiro, com as duas contas (de onde vem o que NAO pode).
+    fn check_in(s: &str, scope: &Dataset, ds: &Dataset) -> (Vec<String>, Checked) {
         // Nomes que PODEM aparecer. Uma ocorrencia que cai inteira dentro de um deles nao e
         // vazamento ("Mercado" dentro de "Mercado e feira"); qualquer outra e. O nome nao e
         // apagado do texto antes de procurar: "Mercado Pago" (forma de pagamento) perderia o
         // "Mercado" e vazaria sem ser visto. Categoria apagada nao esta aqui: o gasto dela
         // sai como "Sem categoria".
-        let allowed: Vec<&str> = ds
+        let allowed: Vec<&str> = scope
             .categories
             .values()
             .filter(|c| !c.deleted)
             .map(|c| c.name.as_str())
             .chain(
-                ds.reserves
+                scope
+                    .reserves
                     .values()
                     .filter(|r| !r.deleted)
                     .map(|r| r.name.as_str()),
@@ -501,6 +605,7 @@ mod tests {
 
         let mut out = Vec::new();
         let mut seen = Checked::default();
+        let mut other_book = 0;
         let mut look = |what: &str, needle: &str, counter: &mut usize| {
             let needle = needle.trim();
             if needle.len() < 3 {
@@ -545,6 +650,22 @@ mod tests {
         }
         for c in ds.categories.values().filter(|c| c.deleted) {
             look("categoria apagada", &c.name, &mut seen.deleted_names);
+        }
+        // Categoria e reserva da OUTRA conta: dentro da conta do envelope seus nomes sao
+        // permitidos, fora dela nao.
+        for c in ds
+            .categories
+            .values()
+            .filter(|c| !scope.categories.contains_key(&c.id))
+        {
+            look("categoria de outra conta", &c.name, &mut other_book);
+        }
+        for r in ds
+            .reserves
+            .values()
+            .filter(|r| !scope.reserves.contains_key(&r.id))
+        {
+            look("reserva de outra conta", &r.name, &mut other_book);
         }
         for b in ds.books.values() {
             look("conta", &b.name, &mut seen.people);
@@ -675,6 +796,66 @@ mod tests {
         }
         assert!(is_exact_date(b"2026-11-19"));
         assert!(!is_exact_date(b"2026-11 R$"));
+    }
+
+    /// Duas contas no mesmo hub: nada de uma pode aparecer no envelope da outra (nomes de
+    /// categoria, reserva e conta, descricoes, formas de pagamento, ids). Cada lado e checado
+    /// contra o dataset INTEIRO, que e quem tem os sentinelas do outro.
+    #[test]
+    fn contas_nao_se_misturam_no_envelope() {
+        let full = both_books();
+        assert!(full.has_business_book());
+        let personal = full.for_book(Book::Personal);
+        let business = full.for_book(Book::Business);
+        assert!(business.transactions.len() >= 4 && personal.transactions.len() >= 4);
+
+        let envelope = |scope: &Dataset, book| {
+            let a = analyze(scope, "2026-11-19");
+            render(&build(&a, scope, "2026-11-19", book))
+        };
+        let sp = envelope(&personal, Book::Personal);
+        let sb = envelope(&business, Book::Business);
+
+        let (leaks, seen) = check_in(&sp, &personal, &full);
+        assert!(leaks.is_empty(), "pessoal: {leaks:?}\n{sp}");
+        assert!(seen.descriptions >= 6 && seen.ids >= 15, "{seen:?}");
+        let (leaks, _) = check_in(&sb, &business, &full);
+        assert!(leaks.is_empty(), "comercial: {leaks:?}\n{sb}");
+
+        // Nao-vacuo: cada envelope mostra o que e DELE, e so isso.
+        assert!(
+            sp.contains("Conta: pessoal") && sp.contains("Moradia"),
+            "{sp}"
+        );
+        assert!(sp.contains("Reserva de emergência"), "{sp}");
+        assert!(!sp.contains("Comercial"), "{sp}");
+        assert!(sb.contains("Conta: comercial"), "{sb}");
+        assert!(sb.contains("Insumos Sentinela Comercial"), "{sb}");
+        assert!(sb.contains("Caixa Sentinela Comercial"), "{sb}");
+        assert!(sb.contains("R$ 7.777,00"), "{sb}");
+        assert!(!sb.contains("Moradia"), "{sb}");
+        assert!(!sb.contains("Reserva de emergência"), "{sb}");
+        assert!(!sb.contains("Zelda"), "{sb}");
+        // Detector: um sentinela da outra conta no texto e pego.
+        for extra in [
+            "Caixa Sentinela Comercial",
+            "Venda Sentinela Comercial",
+            "Maquininha Sentinela Comercial",
+            "Loja Sentinela Comercial",
+        ] {
+            let leaked = format!("{sp}\n{extra}");
+            assert!(
+                !check_in(&leaked, &personal, &full).0.is_empty(),
+                "nao pegou: {extra}"
+            );
+        }
+        for extra in ["Zelda Sentinela", "Aluguel Sentinela", "Cartão Sentinela"] {
+            let leaked = format!("{sb}\n{extra}");
+            assert!(
+                !check_in(&leaked, &business, &full).0.is_empty(),
+                "nao pegou: {extra}"
+            );
+        }
     }
 
     #[test]

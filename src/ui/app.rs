@@ -955,7 +955,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             app.screen = screen;
             app.cat_menu_open = false;
-            Task::none()
+            iced::widget::operation::snap_to(
+                super::shell::CONTENT_SCROLL,
+                iced::widget::operation::RelativeOffset::START,
+            )
         }
         Message::ToggleCategoryMenu => {
             app.cat_menu_open = !app.cat_menu_open;

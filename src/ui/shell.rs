@@ -19,6 +19,10 @@ use crate::dashboard::contract::Book;
 use crate::dashboard::money::group_thousands;
 use crate::hub::snapshot::Status;
 
+/// Id da rolagem do conteudo: sem ele o iced guarda a posicao pela arvore e a tela nova abria
+/// no meio, onde a anterior estava. `SelectScreen` volta este id ao topo.
+pub(super) const CONTENT_SCROLL: &str = "conteudo";
+
 const TITLEBAR_HEIGHT: f32 = 36.0;
 const SIDEBAR_WIDTH: f32 = 232.0;
 /// Espessura da borda que redimensiona; os cantos pegam 12 px ao longo de cada lado.
@@ -550,6 +554,7 @@ fn content(app: &App) -> Element<'_, Message> {
         left: 32.0,
     });
     let scroll = scrollable(inner)
+        .id(CONTENT_SCROLL)
         .direction(scrollable::Direction::Vertical(
             scrollable::Scrollbar::new()
                 .width(6)

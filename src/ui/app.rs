@@ -219,6 +219,11 @@ pub struct App {
     /// qualquer outra mudanca (gravar a cada tecla faria o campo, que le o snapshot, perder
     /// letras no vai-e-volta com o nucleo).
     pub(super) model_input: String,
+    /// A porta e o modelo gravados dos quais os rascunhos acima foram copiados. Um rascunho so
+    /// vale (`edit_settings`) se difere da sua base, isto e, se a pessoa mexeu nele: com o
+    /// painel aberto antes do boot do nucleo os rascunhos nascem do snapshot padrao, e sem a
+    /// base uma troca qualquer regravaria esse padrao por cima da escolha salva.
+    pub(super) draft_base: (u16, String),
     /// A chave do OpenRouter que a pessoa esta digitando. Vive so aqui e so ate o "Salvar":
     /// `SaveKey` a leva ao nucleo e o campo e esvaziado na hora; nunca vai para log nem Debug
     /// (por isso a `Secret` nas mensagens e no comando).
@@ -353,6 +358,10 @@ impl App {
         let snapshot = handle.snapshot.borrow().clone();
         let snapshot_port = snapshot.assistant.settings.local.port.to_string();
         let snapshot_model = snapshot.assistant.settings.cloud.model.clone();
+        let draft_base = (
+            snapshot.assistant.settings.local.port,
+            snapshot_model.clone(),
+        );
         let tokens = Tokens::for_mode(prefs.theme);
         let mut app = App {
             handle,
@@ -405,6 +414,7 @@ impl App {
             assistant_settings_open: false,
             port_input: snapshot_port,
             model_input: snapshot_model,
+            draft_base,
             key_input: String::new(),
             envelope_now: String::new(),
             confirm_delete_all: None,
@@ -497,6 +507,27 @@ impl App {
         let settings = &self.snapshot.assistant.settings;
         self.port_input = settings.local.port.to_string();
         self.model_input = settings.cloud.model.clone();
+        self.draft_base = (settings.local.port, settings.cloud.model.clone());
+    }
+
+    /// Um snapshot novo traz a configuracao gravada de verdade (o primeiro depois do boot, ou a
+    /// de outra janela): rascunho que a pessoa nao tocou (ainda igual a base) acompanha, e o
+    /// que ela digitou fica.
+    fn resync_drafts(&mut self) {
+        let settings = &self.snapshot.assistant.settings;
+        let (base_port, base_model) = &mut self.draft_base;
+        if settings.local.port != *base_port {
+            if self.port_input == base_port.to_string() {
+                self.port_input = settings.local.port.to_string();
+            }
+            *base_port = settings.local.port;
+        }
+        if settings.cloud.model != *base_model {
+            if self.model_input == *base_model {
+                self.model_input = settings.cloud.model.clone();
+            }
+            base_model.clone_from(&settings.cloud.model);
+        }
     }
 
     /// O texto que o assistente recebe nesta conta agora; a prévia e o envio usam este mesmo.
@@ -783,6 +814,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             let people_changed = !std::sync::Arc::ptr_eq(&s.dashboard, &app.snapshot.dashboard)
                 || s.devices != app.snapshot.devices;
             app.snapshot = *s;
+            app.resync_drafts();
             if people_changed {
                 app.refresh_people();
                 app.rebuild();
@@ -917,6 +949,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::Resize(direction) => app.with_window(|id| window::drag_resize(id, direction)),
         Message::SelectScreen(screen) => {
             app.commit_pending();
+            // A chave digitada nao fica na memoria de uma tela que a pessoa deixou.
+            if screen != Screen::Analysis {
+                app.key_input.clear();
+            }
             app.screen = screen;
             app.cat_menu_open = false;
             Task::none()
@@ -1389,17 +1425,23 @@ pub(super) fn awaiting_cloud_consent(app: &App) -> Option<&OpenConversation> {
 /// modelo da nuvem). Manda `SaveSettings` so se algo mudou de fato. Os rascunhos so entram com
 /// o painel aberto: antes disso eles podem ser o padrao de um snapshot anterior ao boot do
 /// nucleo, e gravar isso apagaria a escolha da pessoa.
+///
+/// Parte sempre do ultimo snapshot: duas edicoes mais rapidas que a ida e volta ao nucleo
+/// partem da mesma base e a segunda desfaz a primeira (limitacao aceita; um clique por vez
+/// leva muito mais que o vai-e-volta).
 fn edit_settings(app: &App, change: impl FnOnce(&mut Settings)) {
     let saved = &app.snapshot.assistant.settings;
     let mut next = saved.clone();
     if app.assistant_settings_open {
+        let (base_port, base_model) = &app.draft_base;
         if let Ok(port) = app.port_input.parse::<u16>()
             && port > 0
+            && port != *base_port
         {
             next.local.port = port;
         }
         let model = app.model_input.trim();
-        if !model.is_empty() {
+        if !model.is_empty() && model != base_model.trim() {
             next.cloud.model = model.to_string();
         }
     }
@@ -3720,6 +3762,74 @@ pub(super) mod tests {
             !super::super::analysis_view::PREVIEW_INTRO_EARLIER.contains("pergunta de abertura")
         );
         let _ = super::super::analysis_view::view(&app);
+    }
+
+    fn snapshot_with(app: &App, change: impl FnOnce(&mut Settings)) -> Message {
+        let mut s = app.snapshot.clone();
+        change(&mut s.assistant.settings);
+        Message::Snapshot(Box::new(s))
+    }
+
+    #[test]
+    fn painel_aberto_antes_do_boot_nao_regrava_o_padrao_por_cima_da_escolha_salva() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), Settings::default());
+        // Painel aberto com o snapshot padrao (o nucleo ainda nao subiu).
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        // Chega o snapshot do boot com a porta e o modelo gravados antes.
+        let boot = snapshot_with(&app, |s| {
+            s.local.port = 12345;
+            s.cloud.model = "x/modelo".into();
+        });
+        let _ = update(&mut app, boot);
+        assert_eq!(app.port_input, "12345");
+        assert_eq!(app.model_input, "x/modelo");
+        let _ = update(&mut app, Message::SettingsDeny(false));
+        let mut expected = Settings::default();
+        expected.local.port = 12345;
+        expected.cloud.model = "x/modelo".into();
+        expected.cloud.deny_data_collection = false;
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::SaveSettings(expected))]
+        );
+    }
+
+    #[test]
+    fn rascunho_digitado_sobrevive_ao_snapshot_e_o_intocado_acompanha() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), Settings::default());
+        let _ = update(&mut app, Message::ToggleAssistantSettings);
+        let _ = update(&mut app, Message::SettingsPort("11500".into()));
+        let boot = snapshot_with(&app, |s| {
+            s.local.port = 12345;
+            s.cloud.model = "x/modelo".into();
+        });
+        let _ = update(&mut app, boot);
+        // A porta digitada fica; o modelo, intocado, acompanha o gravado.
+        assert_eq!(app.port_input, "11500");
+        assert_eq!(app.model_input, "x/modelo");
+        let _ = update(&mut app, Message::SettingsPortSubmit);
+        let mut expected = Settings::default();
+        expected.local.port = 11500;
+        expected.cloud.model = "x/modelo".into();
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::SaveSettings(expected))]
+        );
+    }
+
+    #[test]
+    fn deixar_a_analise_descarta_a_chave_digitada() {
+        use crate::assistant::secret::Secret;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = cloud_app(dir.path());
+        let _ = update(&mut app, Message::KeyInput(Secret::new("sk-or-x".into())));
+        // Continuar na propria Analise nao descarta.
+        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        assert_eq!(app.key_input, "sk-or-x");
+        let _ = update(&mut app, Message::SelectScreen(Screen::Dashboard));
+        assert!(app.key_input.is_empty());
     }
 
     #[test]

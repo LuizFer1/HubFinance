@@ -12,7 +12,7 @@ use crate::dashboard::budgets::{BudgetLevel, budget_report};
 use crate::dashboard::cards::upcoming_invoices;
 use crate::dashboard::dataset::Dataset;
 use crate::dashboard::insights::{self, SURPLUS_MONTHS};
-use crate::dashboard::money::format_brl;
+use crate::dashboard::money::{format_brl, signed_brl};
 use crate::dashboard::periods::{last_months, month_of, shift_month};
 use crate::dashboard::recurrence::next_month_free;
 use crate::dashboard::reserves::{div_round, emergency_view, ordered};
@@ -232,7 +232,9 @@ pub(super) fn savings(ds: &Dataset, today: &str) -> Option<Finding> {
                 format!("dos {} meses fechados", avg.months)
             },
             format_brl(avg.income_minor),
-            format_brl(avg.surplus_minor)
+            // Com sinal: sobra negativa e justamente o caso do alerta "saiu mais do que
+            // entrou"; em valor absoluto o texto diria que sobrou dinheiro.
+            signed_brl(avg.surplus_minor)
         ),
         action: (severity != Severity::GoodSign)
             .then(|| "Mirar em guardar 20% da renda por mês".to_string()),
@@ -325,7 +327,7 @@ pub(super) fn emergency(ds: &Dataset, today: &str) -> Option<Finding> {
         title,
         detail: format!(
             "Saldo {} para um custo essencial de {} por mês.",
-            format_brl(view.balance_minor),
+            signed_brl(view.balance_minor),
             format_brl(cost.total_minor)
         ),
         // `remaining_label` vira "Meta alcancada" quando o saldo ja passa da meta; isso nao e acao

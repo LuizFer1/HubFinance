@@ -1,0 +1,126 @@
+//! Prompt fixo (spec 5). O modelo so conversa sobre o envelope; conta nenhuma e dele.
+
+/// Turnos (pergunta + resposta) do historico que vao ao modelo; o envelope vai sempre (Q14).
+#[allow(dead_code)] // usado pelo cliente (Issue 04)
+pub const MAX_TURNS: usize = 10;
+#[allow(dead_code)] // usado pelo cliente (Issue 04)
+pub const MAX_OUTPUT_TOKENS: u32 = 1024;
+/// Primeira mensagem de toda conversa (Q16).
+#[allow(dead_code)] // usado pelo cliente (Issue 04)
+pub const OPENING_REQUEST: &str =
+    "Quais são os 3 pontos que mais pesam na minha situação e o que fazer em cada um?";
+
+#[allow(dead_code)] // usado pelo cliente (Issue 04)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    System,
+    User,
+    Assistant,
+}
+
+#[allow(dead_code)] // usado pelo cliente (Issue 04)
+impl Role {
+    /// O nome que a API do provedor espera em `messages[].role`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+        }
+    }
+}
+
+#[allow(dead_code)] // usado pelo cliente (Issue 04)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Turn {
+    pub role: Role,
+    pub content: String,
+}
+
+/// As regras vao ANTES do resumo: o modelo le o resumo ja sabendo que so pode usar o que esta
+/// nele. O envelope entra como veio de `envelope::render`, sem reformatar (a previa mostra
+/// exatamente isso).
+#[allow(dead_code)] // usado pelo cliente (Issue 04)
+pub fn system_prompt(envelope: &str) -> String {
+    format!(
+        "Você é um assistente de orçamento doméstico dentro do HubFinance. Responda em português \
+do Brasil, direto e sem sermão.\n\
+Regras:\n\
+1. Use apenas os números do RESUMO abaixo. Não faça contas novas além de somas e diferenças \
+simples entre números do resumo.\n\
+2. Se a pergunta pedir algo que não está no resumo, diga \"não tenho esse dado\" e sugira onde \
+ver no app (tela Lançamentos, Dashboard ou Reservas).\n\
+3. Não recomende produto financeiro específico (fundo, ação, banco, corretora, cripto, cartão).\n\
+4. Não julgue pessoas da casa.\n\
+5. Foque em orçamento, hábitos de gasto e reserva.\n\n\
+RESUMO:\n{envelope}"
+    )
+}
+
+/// Sistema + os ultimos `MAX_TURNS` pares do historico, na ordem. Cortar pelo fim (e nao pelo
+/// comeco) mantem a pergunta mais recente, que e a que o modelo tem de responder.
+#[allow(dead_code)] // usado pelo cliente (Issue 04)
+pub fn messages(envelope: &str, history: &[Turn]) -> Vec<Turn> {
+    let keep = MAX_TURNS * 2;
+    let start = history.len().saturating_sub(keep);
+    let mut out = Vec::with_capacity(1 + keep);
+    out.push(Turn {
+        role: Role::System,
+        content: system_prompt(envelope),
+    });
+    out.extend(history[start..].iter().cloned());
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn turn(role: Role, s: &str) -> Turn {
+        Turn {
+            role,
+            content: s.into(),
+        }
+    }
+
+    #[test]
+    fn sistema_e_envelope_sempre_vao_e_o_historico_e_cortado() {
+        let mut history = Vec::new();
+        for i in 0..30 {
+            history.push(turn(Role::User, &format!("p{i}")));
+            history.push(turn(Role::Assistant, &format!("r{i}")));
+        }
+        let msgs = messages("ENVELOPE", &history);
+        assert_eq!(msgs[0].role, Role::System);
+        assert!(msgs[0].content.contains("ENVELOPE"));
+        assert_eq!(msgs.len(), 1 + MAX_TURNS * 2);
+        assert_eq!(msgs.last().map(|m| m.content.as_str()), Some("r29"));
+        // O primeiro turno mantido e o inicio de um par (pergunta), nao uma resposta solta.
+        assert_eq!(msgs[1].role, Role::User);
+        assert_eq!(msgs[1].content, "p20");
+    }
+
+    #[test]
+    fn historico_curto_vai_inteiro() {
+        let history = vec![turn(Role::User, "oi")];
+        let msgs = messages("E", &history);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1].content, "oi");
+        assert_eq!(messages("E", &[]).len(), 1);
+    }
+
+    #[test]
+    fn prompt_proibe_produto_e_manda_recusar_fora_do_envelope() {
+        let s = system_prompt("X");
+        assert!(s.contains("não tenho esse dado"));
+        assert!(s.contains("produto financeiro"));
+        assert!(s.ends_with("RESUMO:\nX"));
+    }
+
+    #[test]
+    fn papeis_tem_o_nome_da_api() {
+        assert_eq!(Role::System.as_str(), "system");
+        assert_eq!(Role::User.as_str(), "user");
+        assert_eq!(Role::Assistant.as_str(), "assistant");
+    }
+}

@@ -3,3 +3,4 @@
 //! `assistant.db`.
 
 pub mod envelope;
+pub mod prompt;

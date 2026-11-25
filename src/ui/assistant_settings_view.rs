@@ -12,8 +12,15 @@ use crate::assistant::secret::Secret;
 use crate::assistant::settings::ProviderChoice;
 
 /// Dica da lista vazia; constante para o teste conferir o texto.
-pub(super) const NO_MODELS_HINT: &str =
-    "Nenhum modelo instalado. Rode `ollama pull llama3.1:8b` e atualize.";
+pub(super) const NO_MODELS_HINT: &str = "Nenhum modelo instalado. Rode ollama pull llama3.1:8b no terminal e clique em Atualizar modelos.";
+
+/// Com o assistente desligado. O painel fica acima dos achados, entao eles estao "abaixo".
+pub(super) const ASSISTANT_OFF: &str =
+    "O assistente está desligado. Os achados abaixo continuam valendo.";
+
+/// Antes da primeira listagem. "Clique", e nao "Toque": o hub e programa de mesa.
+pub(super) const MODELS_NOT_LISTED: &str =
+    "Clique em Atualizar modelos para ver o que o Ollama tem instalado.";
 
 /// Explicacao do interruptor da nuvem; constante para o teste conferir o texto.
 pub(super) const CLOUD_EXPLAIN: &str = "Ligado, o resumo de achados e totais desta conta vai para o OpenRouter quando você conversar. Lançamentos, descrições, pessoas e datas exatas nunca saem.";
@@ -39,11 +46,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .spacing(12);
     match view.settings.provider {
         ProviderChoice::None => {
-            body = body.push(
-                text("O assistente está desligado. A análise acima continua valendo.")
-                    .size(13)
-                    .color(t.text_muted),
-            );
+            body = body.push(text(ASSISTANT_OFF).size(13).color(t.text_muted));
         }
         ProviderChoice::Local => body = body.push(local_section(app)),
         ProviderChoice::Cloud => body = body.push(cloud_section(app)),
@@ -123,11 +126,7 @@ fn local_section(app: &App) -> Element<'_, Message> {
     let mut section = column![port].spacing(10);
     match &view.models {
         None => {
-            section = section.push(
-                text("Toque em Atualizar modelos para ver o que o Ollama tem instalado.")
-                    .size(13)
-                    .color(t.text_muted),
-            );
+            section = section.push(text(MODELS_NOT_LISTED).size(13).color(t.text_muted));
         }
         Some(Err(msg)) => {
             section = section.push(text(msg.as_str()).size(13).color(t.expense_fg));

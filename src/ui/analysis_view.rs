@@ -342,6 +342,9 @@ pub(super) fn cloud_badge(deny_data_collection: Option<bool>) -> &'static str {
 
 pub(super) const PREVIEW_TITLE: &str = "Prévia do que vai sair";
 
+/// O botao da previa diz para onde vai: "Enviar" sozinho nao diz que sai do computador.
+pub(super) const PREVIEW_SEND: &str = "Enviar ao OpenRouter";
+
 pub(super) const PREVIEW_INTRO: &str = "Este é o texto exato que vai para o OpenRouter: o resumo desta conta e a pergunta de abertura, além das instruções fixas do assistente. Só depois de você enviar é que algo sai do computador.";
 
 /// Conversa que ja tinha mensagens (por exemplo, respondidas pelo modelo local antes de trocar
@@ -419,7 +422,7 @@ fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, 
             .padding([6, 14])
             .style(theme::outline_divider(t))
             .on_press(cancel_preview_message(open)),
-        button(text("Enviar").size(13).font(fonts::INTER_MEDIUM))
+        button(text(PREVIEW_SEND).size(13).font(fonts::INTER_MEDIUM))
             .padding([6, 14])
             .style(theme::outline_accent(t))
             .on_press(Message::ApproveCloudSend),
@@ -449,10 +452,11 @@ fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, 
     .into()
 }
 
+/// Secundario, e nao de perigo: tentar de novo nao apaga nem envia nada novo.
 fn retry_button(t: &'static Tokens) -> Element<'static, Message> {
     button(text("Tentar de novo").size(13).font(fonts::INTER_MEDIUM))
         .padding([4, 10])
-        .style(theme::danger_outline(t))
+        .style(theme::outline_divider(t))
         .on_press(Message::ChatRetry)
         .into()
 }
@@ -950,6 +954,27 @@ mod tests {
                 "Ligado, o resumo de achados e totais desta conta vai para o OpenRouter"
             )
         );
+    }
+
+    /// Lista "Baixo" do relatorio de 25/11: programa de mesa, painel acima dos achados, comando
+    /// sem crase literal e o destino no botao de envio.
+    #[test]
+    fn textos_do_assistente_falam_de_programa_de_mesa() {
+        use assistant_settings_view::{ASSISTANT_OFF, MODELS_NOT_LISTED, NO_MODELS_HINT};
+        for text in [
+            ASSISTANT_OFF,
+            MODELS_NOT_LISTED,
+            NO_MODELS_HINT,
+            PREVIEW_SEND,
+        ] {
+            assert!(!text.contains("  "), "{text:?}");
+            assert!(!text.contains('`'), "{text:?}");
+            assert!(!text.contains("Toque"), "{text:?}");
+        }
+        assert!(MODELS_NOT_LISTED.starts_with("Clique em Atualizar modelos"));
+        assert!(ASSISTANT_OFF.contains("achados abaixo"));
+        assert!(NO_MODELS_HINT.contains("ollama pull llama3.1:8b no terminal"));
+        assert_eq!(PREVIEW_SEND, "Enviar ao OpenRouter");
     }
 
     #[test]

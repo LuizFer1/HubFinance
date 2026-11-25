@@ -9,6 +9,7 @@ pub mod envelope;
 pub mod fake;
 pub mod prompt;
 pub mod provider;
+pub mod settings;
 pub mod sse;
 
 /// Cada falha vira uma mensagem em pt-BR na conversa, com "Tentar de novo" (spec 6). Nenhuma

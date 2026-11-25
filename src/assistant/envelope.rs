@@ -13,7 +13,7 @@ use crate::dashboard::aggregate::{
 use crate::dashboard::budgets::budget_report;
 use crate::dashboard::contract::Book;
 use crate::dashboard::dataset::Dataset;
-use crate::dashboard::money::{MINUS, format_brl, signed_brl};
+use crate::dashboard::money::{format_brl, signed_brl};
 use crate::dashboard::periods::{last_months, month_of, shift_month};
 use crate::dashboard::reserves::{balance_until, emergency_view, ordered};
 
@@ -191,6 +191,7 @@ mod tests {
         BOOKS, BUDGETS, CATEGORIES, PAYMENT_METHODS, RECURRENCES, RESERVE_MOVEMENTS, RESERVES,
         TRANSACTIONS, USERS,
     };
+    use crate::dashboard::money::MINUS;
     use crate::dashboard::{GRAFITE_TODAY, dataset_of, fixtures, fixtures_grafite};
     use serde_json::{Value, json};
 

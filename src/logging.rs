@@ -18,10 +18,11 @@ use std::path::{Path, PathBuf};
 
 use time::format_description::well_known::Rfc3339;
 use tracing_appender::rolling::{InitError, RollingFileAppender, Rotation};
+use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::fmt::time::OffsetTime;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{EnvFilter, fmt};
+use tracing_subscriber::{EnvFilter, Layer, fmt};
 
 use crate::config;
 
@@ -117,6 +118,16 @@ pub fn build_filter(spec: Option<&str>) -> EnvFilter {
     filter
 }
 
+/// Segunda trava, por camada, independente do `EnvFilter`: uma diretiva mais especifica do usuario
+/// (`ureq_proto::client=trace`) vence `ureq_proto=info` na especificidade e reabriria o TRACE "NOT
+/// REDACTED" do cliente HTTP. Aqui nenhum evento DEBUG/TRACE de `ureq*`/`rustls*` passa para o
+/// arquivo nem para o console, diga o `RUST_LOG` o que disser.
+fn allowed_target(meta: &tracing::Metadata<'_>) -> bool {
+    let target = meta.target();
+    let wire = target.starts_with("ureq") || target.starts_with("rustls");
+    !wire || *meta.level() <= tracing::Level::INFO
+}
+
 /// Instala o subscriber global. Devolve a pasta de logs quando o arquivo esta ativo; `None`
 /// quando caiu para console (ja avisado por `warn!`). Chamado uma vez, em `main`.
 pub fn init(data_dir: &Path, offset: time::UtcOffset) -> Option<PathBuf> {
@@ -137,7 +148,8 @@ pub fn init(data_dir: &Path, offset: time::UtcOffset) -> Option<PathBuf> {
                     .with_ansi(false)
                     .with_target(false)
                     .with_timer(timer.clone())
-                    .with_writer(appender),
+                    .with_writer(appender)
+                    .with_filter(filter_fn(allowed_target)),
             ),
             None,
         ),
@@ -146,7 +158,12 @@ pub fn init(data_dir: &Path, offset: time::UtcOffset) -> Option<PathBuf> {
     tracing_subscriber::registry()
         .with(filter)
         .with(file_layer)
-        .with(fmt::layer().with_timer(timer).with_writer(std::io::stderr))
+        .with(
+            fmt::layer()
+                .with_timer(timer)
+                .with_writer(std::io::stderr)
+                .with_filter(filter_fn(allowed_target)),
+        )
         .init();
 
     tracing::info!(
@@ -214,12 +231,20 @@ mod tests {
         let capture = Capture::default();
         let subscriber = tracing_subscriber::registry()
             .with(build_filter(Some(spec)))
-            .with(fmt::layer().with_ansi(false).with_writer(capture.clone()));
+            .with(
+                fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(capture.clone())
+                    .with_filter(filter_fn(allowed_target)),
+            );
         tracing::subscriber::with_default(subscriber, || {
             tracing::trace!(target: "ureq", "WIRE-ureq Authorization: Bearer segredo");
             tracing::debug!(target: "ureq", "WIRE-ureq-debug");
             tracing::trace!(target: "ureq_proto", "WIRE-proto");
             tracing::trace!(target: "rustls", "WIRE-rustls");
+            tracing::trace!(target: "ureq_proto::client::flow", "WIRE-proto-mod");
+            tracing::debug!(target: "ureq::unversioned::transport", "WIRE-ureq-mod");
+            tracing::trace!(target: "rustls::client::hs", "WIRE-rustls-mod");
             tracing::debug!(target: "hub_finance", "HUB-debug");
             tracing::info!(target: "ureq", "WIRE-ureq-info");
         });
@@ -233,6 +258,10 @@ mod tests {
             "trace",
             "debug",
             "ureq=trace,ureq_proto=trace,rustls=trace",
+            "ureq_proto::client=trace",
+            "ureq::unversioned=trace",
+            "rustls::client=trace",
+            "ureq_proto::client::flow=trace,ureq::unversioned::transport=debug,rustls::client::hs=trace",
             "hub_finance=trace",
         ] {
             let out = captured(spec);
@@ -240,6 +269,9 @@ mod tests {
             assert!(!out.contains("WIRE-ureq-debug"), "{spec}: {out}");
             assert!(!out.contains("WIRE-proto"), "{spec}: {out}");
             assert!(!out.contains("WIRE-rustls"), "{spec}: {out}");
+            assert!(!out.contains("WIRE-proto-mod"), "{spec}: {out}");
+            assert!(!out.contains("WIRE-ureq-mod"), "{spec}: {out}");
+            assert!(!out.contains("WIRE-rustls-mod"), "{spec}: {out}");
             assert!(!out.contains("segredo"), "{spec}: {out}");
             assert!(out.contains("WIRE-ureq-info"), "{spec}: {out}");
         }

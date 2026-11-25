@@ -39,6 +39,13 @@ com um hub de verdade por curl.
   checagem de versão **pelo processo do hub**: abrir o navegador numa URL fixa é ação do
   usuário executada pelo sistema. A bandeja, o mutex de instância única e a chave `Run` são
   Win32 local.
+  **Única exceção: o assistente de análise** (spec 2026-11-25). É o usuário quem decide ligar ou
+  não a nuvem: ela vem desligada e só envia algo depois que ele liga o interruptor e informa a
+  própria chave do OpenRouter. O que sai é o envelope de achados e agregados
+  (`assistant::envelope::render`), visto na prévia antes do primeiro envio de cada conversa —
+  nunca lançamentos individuais, descrições, nomes de pessoa, de aparelho ou de forma de
+  pagamento, nem datas exatas. O destino é `config::OPENROUTER_BASE_URL`, fixo. O modelo local
+  só fala com loopback (`assistant::destination`) e não conta como saída da máquina.
 - **Opcional.** App com sync desligado é completo; hub desligado não degrada nenhum celular.
 - **Uma regra para todas as tabelas.** Linhas são JSON opaco; tabela ou campo novo no celular
   sincroniza sem código novo aqui.
@@ -70,7 +77,10 @@ com um hub de verdade por curl.
 
 `protocol/` é puro (sem rusqlite, axum, tokio, iced). `store/` é o único módulo com rusqlite;
 `server/` o único com axum; `ui/` o único com iced. `dashboard/` é puro (sem rusqlite, axum,
-tokio, iced): contrato de campos, dataset e agregações; a UI deriva as telas dele. `hub/` liga
+tokio, iced): contrato de campos, dataset e agregações; a UI deriva as telas dele. `advisor/` é puro como `dashboard/` (lê só `dashboard/`).
+`assistant/` é o único módulo além de `store/` com rusqlite, e só abre o `assistant.db` (nunca
+o banco de sync; `store/` nunca abre o dele); é o único com `ureq`. `ui/` fala com o assistente
+só por `Command::Assistant` e `Snapshot.assistant`. `hub/` liga
 tudo numa thread com runtime tokio e publica `Snapshot` por `watch`; a UI só renderiza o
 snapshot e envia `Command`. `desktop/` é o único com `tray-icon`, `image` e `windows-sys`
 (bandeja, instância única, chave `Run`), sem iced, rusqlite, axum nem tokio; fala com `ui/` por

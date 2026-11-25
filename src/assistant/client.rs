@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::AssistantError;
-use super::destination::Destination;
+use super::destination::{Destination, is_ollama_cloud_model};
 use super::provider::{CancelFlag, ChatOutcome, ChatRequest, Provider};
 use super::secret::Secret;
 use super::sse::{Event, SseParser};
@@ -376,6 +376,8 @@ impl Provider for OpenAiCompatible {
             .map(|a| {
                 a.iter()
                     .filter_map(|m| m["id"].as_str().map(String::from))
+                    // Rodam em ollama.com: oferecer como "local" vazaria o envelope sem previa.
+                    .filter(|name| !is_ollama_cloud_model(name))
                     .collect()
             })
             .unwrap_or_default();

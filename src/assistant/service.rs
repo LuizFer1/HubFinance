@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::AssistantError;
 use super::client::OpenAiCompatible;
-use super::destination::Destination;
+use super::destination::{Destination, is_ollama_cloud_model};
 use super::history::{History, HistoryError};
 use super::prompt::{MAX_OUTPUT_TOKENS, OPENING_REQUEST};
 use super::provider::{CancelFlag, ChatOutcome, ChatRequest, Provider};
@@ -312,6 +312,14 @@ impl AssistantService {
         }
         let provider = self.provider()?;
         let model = self.view.settings.model()?;
+        // Modelo "-cloud" do Ollama roda em ollama.com: no destino local ele levaria o envelope
+        // para fora sem a previa da nuvem. Vira erro na conversa (com "Tentar de novo") e nada
+        // sai.
+        if !to_cloud && is_ollama_cloud_model(&model) {
+            self.refuse_cloud_model();
+            return None;
+        }
+        let open = self.view.open.as_ref()?;
         let request = ChatRequest {
             model: model.clone(),
             messages: open.payload(),
@@ -334,6 +342,30 @@ impl AssistantService {
             cancel,
             reply_id: new_id(),
         })
+    }
+
+    fn refuse_cloud_model(&mut self) {
+        let Some(open) = self.view.open.as_mut() else {
+            return;
+        };
+        let content = AssistantError::CloudModelOnLocal.to_string();
+        // Um reenvio sem trocar o modelo nao empilha o mesmo aviso.
+        if open
+            .messages
+            .last()
+            .is_some_and(|m| m.role == MessageRole::Error && m.content == content)
+        {
+            return;
+        }
+        let msg = MessageView {
+            id: new_id(),
+            role: MessageRole::Error,
+            content,
+            ..user_message("")
+        };
+        open.messages.push(msg.clone());
+        let id = open.id.clone();
+        self.persist_message(&id, &msg);
     }
 
     /// O pedaco so aparece se a conversa aberta ainda e a que esta sendo respondida.
@@ -825,6 +857,31 @@ mod tests {
                 .is_none()
         );
         assert!(!s.view().busy);
+    }
+
+    #[test]
+    fn modelo_cloud_do_ollama_no_destino_local_nao_gera_job_e_vira_erro() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = svc(dir.path());
+        let mut st = s.view().settings.clone();
+        st.local.model = Some("gpt-oss:120b-cloud".into());
+        s.save_settings(st);
+        s.new_conversation(Book::Personal, "t".into(), "E".into());
+        assert!(s.prepare_send().is_none());
+        assert!(!s.view().busy);
+        let open = s.view().open.as_ref().unwrap();
+        let last = open.messages.last().unwrap();
+        assert_eq!(last.role, MessageRole::Error);
+        assert!(last.content.contains("fora do seu PC"), "{}", last.content);
+        // Repetir sem trocar o modelo nao empilha o aviso.
+        assert!(s.prepare_send().is_none());
+        assert_eq!(s.view().open.as_ref().unwrap().messages.len(), 2);
+        // Trocando por um modelo local, "Tentar de novo" envia.
+        let mut st = s.view().settings.clone();
+        st.local.model = Some("llama3.1:8b".into());
+        s.save_settings(st);
+        s.drop_last_error();
+        assert!(s.prepare_send().is_some());
     }
 
     #[test]

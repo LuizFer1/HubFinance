@@ -46,6 +46,18 @@ impl Destination {
     }
 }
 
+/// Modelos do Ollama cuja tag termina em `cloud` (`gpt-oss:120b-cloud`, `foo:cloud`) sao
+/// executados em ollama.com: o Ollama local so repassa o pedido. Tratar um deles como "local"
+/// mandaria o envelope para fora do PC sem a previa e o consentimento da nuvem, que e justamente
+/// o que o destino local promete nao exigir.
+pub fn is_ollama_cloud_model(name: &str) -> bool {
+    let Some((_, tag)) = name.rsplit_once(':') else {
+        return false;
+    };
+    let tag = tag.to_ascii_lowercase();
+    tag == "cloud" || tag.ends_with("-cloud")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,6 +74,22 @@ mod tests {
         let d = Destination::cloud();
         assert_eq!(d.base_url(), crate::config::OPENROUTER_BASE_URL);
         assert!(d.is_cloud());
+    }
+
+    #[test]
+    fn reconhece_modelos_cloud_do_ollama() {
+        for (name, cloud) in [
+            ("llama3.1:8b", false),
+            ("gpt-oss:120b-cloud", true),
+            ("qwen3-coder:480b-cloud", true),
+            ("deepseek-v3.1:671b-cloud", true),
+            ("foo:cloud", true),
+            ("cloudy:7b", false),
+            ("mycloud", false),
+            ("cloud:7b", false),
+        ] {
+            assert_eq!(is_ollama_cloud_model(name), cloud, "{name}");
+        }
     }
 
     #[test]

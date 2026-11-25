@@ -38,6 +38,10 @@ pub enum AssistantError {
     Malformed,
     #[error("Falta configurar a chave do OpenRouter.")]
     MissingKey,
+    #[error(
+        "Modelos “-cloud” do Ollama rodam fora do seu PC; escolha um modelo local ou use a opção Nuvem."
+    )]
+    CloudModelOnLocal,
     #[error("{0}")]
     Other(String),
 }

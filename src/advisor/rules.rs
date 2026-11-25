@@ -330,6 +330,8 @@ pub(super) fn emergency(ds: &Dataset, today: &str) -> Option<Finding> {
         ),
         // `remaining_label` vira "Meta alcancada" quando o saldo ja passa da meta; isso nao e acao
         // e contradiria o "so" do titulo.
+        // Com multiplo acima de 6 o GoodSign (>= 6 meses) ainda pode estar abaixo da meta: ai o
+        // "Faltam R$ X" e util e fica.
         action: (view.balance_minor < view.goal_minor).then(|| view.remaining_label.clone()),
         figures: vec![
             Figure::money("Saldo da reserva", view.balance_minor),
@@ -463,12 +465,16 @@ mod tests {
         /// Reserva de emergencia com custo essencial informado (meta = 6 x custo) e um
         /// deposito em outubro.
         fn emergency(self, cost: i64, deposit: i64) -> Self {
+            self.emergency_multiple(cost, deposit, 6)
+        }
+
+        fn emergency_multiple(self, cost: i64, deposit: i64, multiple: u8) -> Self {
             self.push(
                 RESERVES,
                 "RE",
                 json!({
                     "kind": "emergency", "name": "Reserva de emergência", "icon": "lifebuoy",
-                    "color": "violet", "targetMinor": null, "multiple": 6,
+                    "color": "violet", "targetMinor": null, "multiple": multiple,
                     "essentialCategoryIds": null, "essentialOverrideMinor": cost,
                     "deadline": null, "recurring": null
                 }),
@@ -928,6 +934,21 @@ mod tests {
     fn emergencia_de_tres_a_seis_meses_nao_vira_achado() {
         let ds = Build::default().emergency(100_000, 350_000).build();
         assert!(emergency(&ds, TODAY).is_none());
+    }
+
+    #[test]
+    fn emergencia_bom_sinal_abaixo_de_meta_maior_mantem_a_acao() {
+        // Multiplo 12: meta 12.000; saldo 7.000 = 7,0 meses (bom sinal), mas faltam 5.000.
+        let ds = Build::default()
+            .emergency_multiple(100_000, 700_000, 12)
+            .build();
+        let f = emergency(&ds, TODAY).expect("7 meses e bom sinal");
+        assert_eq!(f.severity, Severity::GoodSign);
+        assert!(
+            f.action.as_deref().is_some_and(|a| a.starts_with("Faltam")),
+            "{f:?}"
+        );
+        assert_eq!(f.impact_minor, 1_200_000 - 700_000);
     }
 
     #[test]

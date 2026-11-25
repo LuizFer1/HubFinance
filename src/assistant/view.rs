@@ -16,6 +16,10 @@ pub struct MessageView {
     pub role: MessageRole,
     pub content: String,
     pub sent_to_cloud: bool,
+    /// Politica de retencao que valia **no envio** (`Some(true)` = o provedor foi instruido a
+    /// nao guardar nem treinar). `None` = nao foi para a nuvem. Fica na mensagem e nao na
+    /// configuracao: trocar o interruptor depois nao pode reescrever o que ja aconteceu.
+    pub deny_data_collection: Option<bool>,
     pub tokens_in: Option<u32>,
     pub tokens_out: Option<u32>,
     pub interrupted: bool,
@@ -80,6 +84,7 @@ mod tests {
             role: MessageRole::Assistant,
             content: String::new(),
             sent_to_cloud: false,
+            deny_data_collection: None,
             tokens_in: i,
             tokens_out: o,
             interrupted: false,

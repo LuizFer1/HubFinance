@@ -30,6 +30,10 @@ struct Inflight {
     conversation_id: String,
     cancel: CancelFlag,
     to_cloud: bool,
+    /// A politica de retencao que foi mandada ao provedor neste envio (`None` no local). Capturada
+    /// aqui, junto do `to_cloud`: reler a configuracao em `record` registraria a politica de
+    /// depois, nao a que de fato valeu.
+    deny_data_collection: Option<bool>,
 }
 
 pub struct AssistantService {
@@ -255,6 +259,7 @@ impl AssistantService {
             conversation_id: open.id.clone(),
             cancel: cancel.clone(),
             to_cloud,
+            deny_data_collection: to_cloud.then_some(self.view.settings.cloud.deny_data_collection),
         });
         self.view.busy = true;
         self.view.streaming = Some(String::new());
@@ -314,6 +319,7 @@ impl AssistantService {
                 role: MessageRole::Assistant,
                 content: o.text,
                 sent_to_cloud: inflight.to_cloud,
+                deny_data_collection: inflight.deny_data_collection,
                 tokens_in: o.tokens_in,
                 tokens_out: o.tokens_out,
                 interrupted: o.interrupted,
@@ -323,6 +329,7 @@ impl AssistantService {
                 role: MessageRole::Error,
                 content: e.to_string(),
                 sent_to_cloud: false,
+                deny_data_collection: None,
                 tokens_in: None,
                 tokens_out: None,
                 interrupted: false,
@@ -418,6 +425,7 @@ fn user_message(text: &str) -> MessageView {
         role: MessageRole::User,
         content: text.to_string(),
         sent_to_cloud: false,
+        deny_data_collection: None,
         tokens_in: None,
         tokens_out: None,
         interrupted: false,
@@ -710,6 +718,65 @@ mod tests {
         assert!(!s.has_unanswered_question());
         s.push_user("e agora?");
         assert!(s.has_unanswered_question());
+    }
+
+    #[test]
+    fn resposta_da_nuvem_grava_a_politica_do_envio_e_a_local_nao_grava_nenhuma() {
+        let dir = tempfile::tempdir().unwrap();
+        for deny in [true, false] {
+            let mut s = cloud_svc(dir.path());
+            let mut st = s.view().settings.clone();
+            st.cloud.deny_data_collection = deny;
+            s.save_settings(st);
+            s.new_conversation(Book::Personal, "t".into(), "E".into());
+            let id = s.view().open.as_ref().unwrap().id.clone();
+            assert!(s.grant_cloud_consent(&id));
+            run(&mut s, &FakeProvider::answering(&["ok"]));
+            let answer = s.view().open.as_ref().unwrap().messages[1].clone();
+            assert!(answer.sent_to_cloud);
+            assert_eq!(answer.deny_data_collection, Some(deny));
+        }
+        let mut s = svc(dir.path());
+        s.new_conversation(Book::Personal, "t".into(), "E".into());
+        run(&mut s, &FakeProvider::answering(&["ok"]));
+        let answer = s.view().open.as_ref().unwrap().messages[1].clone();
+        assert!(!answer.sent_to_cloud);
+        assert_eq!(answer.deny_data_collection, None);
+    }
+
+    #[test]
+    fn politica_registrada_e_a_do_envio_mesmo_se_mudar_antes_da_resposta() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = cloud_svc(dir.path());
+        s.new_conversation(Book::Personal, "t".into(), "E".into());
+        let id = s.view().open.as_ref().unwrap().id.clone();
+        assert!(s.grant_cloud_consent(&id));
+        let job = s.prepare_send().expect("job");
+        // Com a resposta a caminho, a pessoa afrouxa a politica e ate volta ao modelo local.
+        let mut st = s.view().settings.clone();
+        st.cloud.deny_data_collection = false;
+        st.provider = ProviderChoice::Local;
+        s.save_settings(st);
+        s.finish(job.reply_id, Ok(ChatOutcome::default()));
+        let answer = s.view().open.as_ref().unwrap().messages[1].clone();
+        assert!(answer.sent_to_cloud);
+        assert_eq!(answer.deny_data_collection, Some(true));
+    }
+
+    #[test]
+    fn erro_da_nuvem_nao_leva_selo_nem_politica() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = cloud_svc(dir.path());
+        s.new_conversation(Book::Personal, "t".into(), "E".into());
+        let id = s.view().open.as_ref().unwrap().id.clone();
+        assert!(s.grant_cloud_consent(&id));
+        let mut p = FakeProvider::answering(&[]);
+        p.fail = Some(AssistantError::Offline);
+        run(&mut s, &p);
+        let last = s.view().open.as_ref().unwrap().messages[1].clone();
+        assert_eq!(last.role, MessageRole::Error);
+        assert!(!last.sent_to_cloud);
+        assert_eq!(last.deny_data_collection, None);
     }
 
     #[test]

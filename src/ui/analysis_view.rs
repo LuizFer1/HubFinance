@@ -241,7 +241,7 @@ fn message_bubble<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Elemen
                 notes.push("interrompida".to_string());
             }
             if m.sent_to_cloud {
-                notes.push("enviado à nuvem".to_string());
+                notes.push(cloud_badge(m.deny_data_collection).to_string());
             }
             row![
                 column![
@@ -270,6 +270,16 @@ fn message_bubble<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Elemen
             ]
             .into()
         }
+    }
+}
+
+/// Selo da resposta que passou pela nuvem, com a politica de retencao valendo no envio (spec 7).
+/// `None` = registro sem a politica: so diz que foi a nuvem.
+pub(super) fn cloud_badge(deny_data_collection: Option<bool>) -> &'static str {
+    match deny_data_collection {
+        Some(true) => "enviado à nuvem · sem retenção",
+        Some(false) => "enviado à nuvem · retenção permitida",
+        None => "enviado à nuvem",
     }
 }
 
@@ -691,6 +701,16 @@ mod tests {
         assert_eq!(app.current_envelope(), full);
         assert_eq!(app.envelope_preview.as_deref(), Some(full.as_str()));
         assert!(envelope_dialog(&app).is_some());
+    }
+
+    #[test]
+    fn selo_da_nuvem_diz_a_politica_do_envio() {
+        assert_eq!(cloud_badge(Some(true)), "enviado à nuvem · sem retenção");
+        assert_eq!(
+            cloud_badge(Some(false)),
+            "enviado à nuvem · retenção permitida"
+        );
+        assert_eq!(cloud_badge(None), "enviado à nuvem");
     }
 
     #[test]

@@ -3284,6 +3284,7 @@ pub(super) mod tests {
             role,
             content: content.into(),
             sent_to_cloud: false,
+            deny_data_collection: None,
             tokens_in: None,
             tokens_out: None,
             interrupted: false,
@@ -3938,6 +3939,7 @@ pub(super) mod tests {
         answered.tokens_in = Some(120);
         answered.tokens_out = Some(30);
         answered.sent_to_cloud = true;
+        answered.deny_data_collection = Some(true);
         let mut cut = msg(MessageRole::Assistant, "parcial");
         cut.interrupted = true;
         app.snapshot.assistant.open = Some(open_conv(

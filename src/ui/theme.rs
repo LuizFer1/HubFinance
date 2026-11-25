@@ -465,6 +465,10 @@ pub fn scrim() -> impl Fn(&Theme) -> container::Style {
     }
 }
 
+/// Atraso dos tooltips: sem ele a dica pisca sob o mouse que so atravessa o icone a caminho de
+/// outro lugar.
+pub const TOOLTIP_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
+
 // ---- botoes ----
 
 /// Item de navegacao Grafite: ativo em `surface` com texto `fg`; inativo sem fundo, texto de

@@ -371,6 +371,7 @@ fn info<'a>(t: &'static Tokens, tip: &str) -> Element<'a, Message> {
         tooltip::Position::Bottom,
     )
     .gap(2)
+    .delay(theme::TOOLTIP_DELAY)
     .into()
 }
 

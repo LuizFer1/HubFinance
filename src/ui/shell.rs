@@ -665,6 +665,7 @@ fn hide_values_button(app: &App) -> Element<'_, Message> {
         tooltip::Position::Bottom,
     )
     .gap(4)
+    .delay(theme::TOOLTIP_DELAY)
     .into()
 }
 

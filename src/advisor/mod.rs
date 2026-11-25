@@ -85,7 +85,11 @@ pub struct Finding {
     pub detail: String,
     pub action: Option<String>,
     pub figures: Vec<Figure>,
-    /// Peso em centavos para ordenar dentro da mesma severidade (maior primeiro).
+    /// Peso em centavos para ordenar dentro da mesma severidade (maior primeiro). Tem de ser
+    /// comparavel entre regras: e o **excesso em R$ sobre a linha saudavel** de cada uma (fixo
+    /// acima de 60% da renda, comprometido acima de 70%, gasto acima do normal, meta estourada,
+    /// folga que falta na previsao, distancia a 20% de poupanca, falta para a meta da reserva).
+    /// Faturas e meta "perto do limite" pesam o proprio valor, por ser dinheiro a sair.
     pub impact_minor: i64,
 }
 

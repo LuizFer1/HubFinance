@@ -158,20 +158,30 @@ mod win {
     }
 
     impl Tray {
-        pub fn set_tooltip(&self, text: &str) {
-            if let Err(e) = self.icon.set_tooltip(Some(text)) {
-                tracing::warn!("tooltip da bandeja: {e}");
+        /// `false` = o sistema recusou; a UI tenta de novo no proximo snapshot ou tique.
+        pub fn set_tooltip(&self, text: &str) -> bool {
+            match self.icon.set_tooltip(Some(text)) {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::warn!("tooltip da bandeja: {e}");
+                    false
+                }
             }
         }
 
-        pub fn set_icon(&self, kind: Kind) {
+        /// `false` = o sistema recusou (Explorer reiniciando, por exemplo).
+        pub fn set_icon(&self, kind: Kind) -> bool {
             let icon = match kind {
                 Kind::Normal => &self.normal,
                 Kind::Attention => &self.attention,
                 Kind::Error => &self.error,
             };
-            if let Err(e) = self.icon.set_icon(Some(icon.clone())) {
-                tracing::warn!("icone da bandeja: {e}");
+            match self.icon.set_icon(Some(icon.clone())) {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::warn!("icone da bandeja: {e}");
+                    false
+                }
             }
         }
     }

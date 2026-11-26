@@ -645,13 +645,13 @@ impl App {
     fn sync_tray(&mut self) {
         let active = self.snapshot.devices.iter().filter(|d| !d.revoked).count();
         let text = crate::desktop::tray::tooltip(&self.snapshot.status, active);
-        if text != self.tooltip {
-            self.desktop.set_tooltip(&text);
+        // O cache so guarda o que o sistema aceitou: recusado, o proximo snapshot ou tique
+        // tenta de novo, em vez de a bandeja ficar presa no estado velho.
+        if text != self.tooltip && self.desktop.set_tooltip(&text) {
             self.tooltip = text;
         }
         let icon = crate::desktop::tray::icon_for(&self.snapshot.status);
-        if icon != self.tray_icon {
-            self.desktop.set_icon(icon);
+        if icon != self.tray_icon && self.desktop.set_icon(icon) {
             self.tray_icon = icon;
         }
     }
@@ -1230,6 +1230,9 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 app.confirm_delete_all = None;
             }
             app.set_today(local_today(app.offset));
+            // Tooltip ou icone que a bandeja recusou antes tenta de novo; sem pendencia, nada vai
+            // ao sistema.
+            app.sync_tray();
             // No Windows a troca do tema do sistema nao chega pelo iced (ver
             // `desktop::appearance`): com "Sistema" ativo, o tique confere.
             if app.theme == ThemeMode::System
@@ -4049,6 +4052,39 @@ pub(super) mod tests {
             *fake.icons.borrow(),
             [TrayIcon::Attention, TrayIcon::Error, TrayIcon::Normal]
         );
+    }
+
+    #[test]
+    fn bandeja_que_recusa_tenta_de_novo_no_tique() {
+        use crate::desktop::tray::TrayIcon;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        fake.fail_tray.set(true);
+        let snap = Snapshot {
+            status: Status::NoNetwork,
+            ..Snapshot::default()
+        };
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert_eq!(*fake.icons.borrow(), [TrayIcon::Attention]);
+        assert_eq!(
+            app.tray_icon,
+            TrayIcon::Normal,
+            "recusado nao entra no cache"
+        );
+        // Recusou de novo no tique: tenta, sem guardar.
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(fake.icons.borrow().len(), 2);
+        fake.fail_tray.set(false);
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(app.tray_icon, TrayIcon::Attention);
+        assert_eq!(
+            fake.tooltip.borrow().as_str(),
+            "HubFinance — ligado, sem rede"
+        );
+        assert_eq!(app.tooltip, "HubFinance — ligado, sem rede");
+        // Aceito, o tique seguinte nao manda nada.
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(fake.icons.borrow().len(), 3);
     }
 
     #[test]

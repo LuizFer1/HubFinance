@@ -47,6 +47,10 @@ pub fn subscription() -> Subscription<Message> {
 ///   nuvem (pelo caminho do "Cancelar"), "Configurar assistente" e menu de categoria (nessa
 ///   ordem). O menu so na tela dele.
 /// - Com dialogo aberto, so o Esc: atalho por baixo do scrim mexeria numa tela escondida.
+///   Limite conhecido: isso inclui o Tab, entao no "Configurar assistente" ele nao anda entre
+///   porta, chave e modelo (o painel antigo andava). O `focus_next` do iced percorre a janela
+///   inteira e levaria o foco ao campo do chat por baixo do scrim; um Tab preso ao dialogo
+///   precisa de foco por id, que fica para depois.
 /// - Tab e Shift+Tab andam entre os campos.
 /// - Ctrl+1..N troca de tela na ordem da navegacao.
 /// - Alt+setas mudam o mes, onde ha seletor de mes.

@@ -1427,7 +1427,7 @@ fn mask_str(s: &str) -> String {
     while i < b.len() {
         if s[i..].starts_with("R$") {
             let after = i + 2;
-            let number = s.len() - s[after..].trim_start().len();
+            let number = s.len() - s[after..].trim_start_matches(same_line_space).len();
             if b.get(number).is_some_and(u8::is_ascii_digit) {
                 let n = scan_number(s, number);
                 let end = magnitude_end(s, n.end).unwrap_or(n.end);
@@ -1461,6 +1461,13 @@ fn mask_str(s: &str) -> String {
     }
     out.push_str(&s[copied..]);
     out
+}
+
+/// Espaco que ainda liga o numero ao que vem antes ou depois: qualquer espaco Unicode, menos a
+/// quebra de linha. Sem isso "R$" no fim de uma linha comeria o numero da lista seguinte, e um
+/// "3" no fim de uma linha leria "Real" da proxima como unidade.
+fn same_line_space(c: char) -> bool {
+    c.is_whitespace() && !matches!(c, '\n' | '\r')
 }
 
 /// Um numero lido por `scan_number`.
@@ -1534,7 +1541,7 @@ fn scan_number(s: &str, start: usize) -> Number {
 /// inteira: "5 kg" le "kg", e nao "k".
 fn next_word(s: &str, at: usize) -> Option<(String, usize)> {
     let rest = s.get(at..)?;
-    let start = at + (rest.len() - rest.trim_start().len());
+    let start = at + (rest.len() - rest.trim_start_matches(same_line_space).len());
     let len: usize = s[start..]
         .chars()
         .take_while(|c| c.is_alphanumeric())
@@ -1556,7 +1563,10 @@ fn magnitude_end(s: &str, at: usize) -> Option<usize> {
 /// Fim do trecho a mascarar se o numero solto `n` tem cara de dinheiro; `None` para o resto
 /// ("12,5%", "0,5 mês", "3 meses").
 fn bare_money_end(s: &str, n: &Number) -> Option<usize> {
-    if s[n.end..].trim_start().starts_with('%') {
+    if s[n.end..]
+        .trim_start_matches(same_line_space)
+        .starts_with('%')
+    {
         return None;
     }
     if let Some(end) = magnitude_end(s, n.end) {
@@ -1794,6 +1804,14 @@ mod tests {
                 "{input:?} -> {masked:?}"
             );
         }
+    }
+
+    #[test]
+    fn mascara_nao_atravessa_quebra_de_linha() {
+        assert_eq!(mask_str("Fundo R$\n1. Mercado"), "Fundo R$\n1. Mercado");
+        assert_eq!(mask_str("meses: 3\nReal mesmo"), "meses: 3\nReal mesmo");
+        assert_eq!(mask_str("faltam 5\nmil coisas"), "faltam 5\nmil coisas");
+        assert_eq!(mask_str("subiu 12,5\n% do total"), "subiu 12,5\n% do total");
     }
 
     #[test]

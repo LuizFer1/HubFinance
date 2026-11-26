@@ -13,7 +13,7 @@ use iced::{Alignment, Color, Element, Length, Padding};
 use super::app::{App, Message};
 use super::rows::{author_cell, category_tile, hover_row, value_cell};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, alpha, mix};
-use super::widgets::SegmentedVariant;
+use super::widgets::{ChipShape, SegmentedVariant};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::list::{
     ALL_CATEGORIES_COLOR, CategoryOption, Filters, ListRow, NONE_KEY, TypeFilter,
@@ -108,23 +108,19 @@ fn category_button(app: &App) -> Element<'_, Message> {
     };
     let active = v.selected_category.is_some();
     let text_color = if active { t.accent_200 } else { t.text };
-    button(
-        container(
-            row![
-                widgets::dot(dot, 8.0),
-                text(label).size(13),
-                // Seta a 70 % da cor do texto do botao (`opacity: .7` do prototipo).
-                icons::icon(icons::CARET_DOWN, 13.0, alpha(text_color, 0.7)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        )
-        .height(Length::Fill)
+    widgets::chip(
+        t,
+        row![
+            widgets::dot(dot, 8.0),
+            text(label).size(13),
+            // Seta a 70 % da cor do texto do botao (`opacity: .7` do prototipo).
+            icons::icon(icons::CARET_DOWN, 13.0, alpha(text_color, 0.7)),
+        ]
+        .spacing(8)
         .align_y(Alignment::Center),
+        active,
+        ChipShape::Rounded,
     )
-    .height(36)
-    .padding([0, 12])
-    .style(theme::filter_button(t, active))
     .on_press(Message::ToggleCategoryMenu)
     .into()
 }
@@ -219,21 +215,15 @@ fn author_chips(app: &App) -> Vec<Element<'_, Message>> {
     let v = &app.transactions;
     let authors = &app.filters.authors;
     let chip = |content: Element<'static, Message>, padding_left: f32, active: bool, msg| {
-        button(
-            container(content)
-                .height(Length::Fill)
-                .align_y(Alignment::Center),
-        )
-        .height(36)
-        .padding(Padding {
-            top: 0.0,
-            right: 12.0,
-            bottom: 0.0,
-            left: padding_left,
-        })
-        .style(theme::chip(t, active))
-        .on_press(msg)
-        .into()
+        widgets::chip(t, content, active, ChipShape::Pill)
+            .padding(Padding {
+                top: 0.0,
+                right: 12.0,
+                bottom: 0.0,
+                left: padding_left,
+            })
+            .on_press(msg)
+            .into()
     };
     let mut chips: Vec<Element<'_, Message>> = vec![chip(
         text("Todos").size(13).into(),

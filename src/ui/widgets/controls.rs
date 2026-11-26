@@ -163,6 +163,35 @@ pub fn segmented<'a, M: Clone + 'a>(
     }
 }
 
+/// Forma do chip: pilula (autor) ou raio 8 (categoria da barra de filtros, que abre menu).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChipShape {
+    Pill,
+    Rounded,
+}
+
+/// Chip de filtro de 36 px: ativo em `accent_900` com borda `accent` e texto `accent_200`,
+/// inativo em `surface` com borda no divisor. Respiro 12 dos lados; o chip com avatar troca o
+/// da esquerda pelo `padding` do `Button` devolvido.
+pub fn chip<'a, M: 'a>(
+    t: &'static Tokens,
+    content: impl Into<Element<'a, M>>,
+    active: bool,
+    shape: ChipShape,
+) -> Button<'a, M> {
+    let b = button(
+        container(content)
+            .height(Length::Fill)
+            .align_y(Alignment::Center),
+    )
+    .height(size::CTRL_M)
+    .padding([0.0, space::M]);
+    match shape {
+        ChipShape::Pill => b.style(theme::chip(t, active)),
+        ChipShape::Rounded => b.style(theme::filter_button(t, active)),
+    }
+}
+
 fn label_text<'a>(size: ButtonSize, label: impl text::IntoFragment<'a>) -> text::Text<'a> {
     text(label)
         .size(size.text_size())
@@ -216,6 +245,18 @@ mod tests {
                             [("A", false, 1), ("B", true, 2), ("C", false, 3)],
                         );
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chip_monta_ativo_e_inativo_nas_duas_formas() {
+        for t in [&DARK, &LIGHT] {
+            for shape in [ChipShape::Pill, ChipShape::Rounded] {
+                for active in [true, false] {
+                    let _: Element<'_, ()> =
+                        chip(t, text("Todos"), active, shape).on_press(()).into();
                 }
             }
         }

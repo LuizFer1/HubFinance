@@ -14,7 +14,8 @@ mod controls;
 mod surface;
 
 pub use controls::{
-    SegmentedVariant, action_button, action_button_icon, action_button_with, icon_button, segmented,
+    ChipShape, SegmentedVariant, action_button, action_button_icon, action_button_with, chip,
+    icon_button, segmented,
 };
 pub use surface::{card, divider, inset, section_heading, vdivider};
 

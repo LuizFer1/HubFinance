@@ -83,8 +83,7 @@ pub fn shortcut(app: &App, press: &KeyPress) -> Option<Message> {
             // A mesma tela: nada a fazer (e nao manda a remocao pendente antes da hora).
             return (screen != app.screen).then_some(Message::SelectScreen(screen));
         }
-        let eye = matches!(app.screen, Screen::Dashboard | Screen::Analysis);
-        if eye && press.key.to_latin(press.physical) == Some('h') {
+        if app.screen.shows_values() && press.key.to_latin(press.physical) == Some('h') {
             return Some(Message::ToggleHideValues);
         }
     }
@@ -320,16 +319,16 @@ mod tests {
     #[test]
     fn ctrl_h_so_onde_o_olho_existe_e_sem_repeticao() {
         let (mut app, _dir) = app();
-        for screen in [Screen::Dashboard, Screen::Analysis] {
+        for screen in [
+            Screen::Dashboard,
+            Screen::Transactions,
+            Screen::Reserves,
+            Screen::Analysis,
+        ] {
             app.screen = screen;
             assert!(is(shortcut(&app, &ctrl_h()), "Some(ToggleHideValues)"));
         }
-        for screen in [
-            Screen::Transactions,
-            Screen::Reserves,
-            Screen::Connection,
-            Screen::Settings,
-        ] {
+        for screen in [Screen::Connection, Screen::Settings] {
             app.screen = screen;
             assert!(shortcut(&app, &ctrl_h()).is_none());
         }

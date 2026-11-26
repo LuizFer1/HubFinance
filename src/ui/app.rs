@@ -138,6 +138,19 @@ pub enum Screen {
     Settings,
 }
 
+impl Screen {
+    /// Tela de dados da conta, com valores em R$: e onde o olho "Ocultar valores" aparece e
+    /// onde Ctrl+H alterna (decisao do dono de 25/11: ocultar vale em toda tela de dados).
+    /// Aparelhos e Ajustes sao do hub e nao mostram dinheiro. Um lugar so para o botao e o
+    /// atalho nao divergirem.
+    pub(super) fn shows_values(self) -> bool {
+        matches!(
+            self,
+            Screen::Dashboard | Screen::Transactions | Screen::Reserves | Screen::Analysis
+        )
+    }
+}
+
 pub struct App {
     pub(super) handle: HubHandle,
     pub(super) snapshot: Snapshot,

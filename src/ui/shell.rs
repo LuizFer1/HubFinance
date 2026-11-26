@@ -652,6 +652,24 @@ pub(super) fn header_inline(width: f32) -> bool {
     width >= HEADER_WRAP_WIDTH
 }
 
+/// Quais controles da direita do cabecalho uma tela mostra (o seletor de conta depende tambem
+/// dos dados: `book_switch`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct HeaderControls {
+    pub month: bool,
+    pub eye: bool,
+}
+
+pub(super) fn header_controls(screen: Screen) -> HeaderControls {
+    HeaderControls {
+        // Reservas nao tem seletor de mes: saldos sao acumulados ate hoje.
+        month: matches!(screen, Screen::Dashboard | Screen::Transactions),
+        // Em toda tela de dados: com o olho so no Resumo, "Ver reservas" e o link dos ultimos
+        // lancamentos levavam a telas sem como mostrar de novo sem voltar.
+        eye: screen.shows_values(),
+    }
+}
+
 /// Cabecalho fixo, fora da rolagem: titulo 30 e uma linha 13 `text_muted` a esquerda
 /// (`header_line`); a direita, conforme a tela, o seletor de conta, o de mes e o olho de
 /// ocultar valores. Abaixo de `HEADER_WRAP_WIDTH` os controles descem para baixo do titulo.
@@ -662,8 +680,8 @@ fn header(app: &App) -> Element<'_, Message> {
     if let Some(switch) = book_switch(app) {
         controls = controls.push(switch);
     }
-    // Reservas nao tem seletor de mes: saldos sao acumulados ate hoje.
-    if matches!(app.screen, Screen::Dashboard | Screen::Transactions) {
+    let shown = header_controls(app.screen);
+    if shown.month {
         let prev = (app.month_idx > 0).then_some(Message::PrevMonth);
         let next = (app.month_idx + 1 < app.months.len()).then_some(Message::NextMonth);
         controls = controls.push(widgets::month_picker(
@@ -673,9 +691,7 @@ fn header(app: &App) -> Element<'_, Message> {
             next,
         ));
     }
-    // Na Analise o olho tambem aparece: os cartoes mascaram os valores, e sem ele quem ocultou
-    // no Dashboard nao teria como mostrar de novo sem voltar la.
-    if matches!(app.screen, Screen::Dashboard | Screen::Analysis) {
+    if shown.eye {
         controls = controls.push(hide_values_button(app));
     }
     let title = widgets::page_title(t, title, &line);
@@ -1265,6 +1281,36 @@ mod tests {
                 app.screen = screen;
                 let _ = root(&app);
             }
+        }
+    }
+
+    #[test]
+    fn olho_nas_quatro_telas_de_dados_e_fora_de_aparelhos_e_ajustes() {
+        let eye = |s: Screen| header_controls(s).eye;
+        for s in [
+            Screen::Dashboard,
+            Screen::Transactions,
+            Screen::Reserves,
+            Screen::Analysis,
+        ] {
+            assert!(eye(s), "{s:?}");
+        }
+        for s in [Screen::Connection, Screen::Settings] {
+            assert!(!eye(s), "{s:?}");
+        }
+        assert!(header_controls(Screen::Transactions).month);
+        assert!(!header_controls(Screen::Reserves).month);
+    }
+
+    #[test]
+    fn cabecalho_monta_em_toda_tela_com_valores_ocultos() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        let _ = crate::ui::app::update(&mut app, Message::ToggleHideValues);
+        assert!(app.hide_values);
+        for screen in nav_entries(&app).map(|e| e.screen) {
+            app.screen = screen;
+            let _ = root(&app);
         }
     }
 

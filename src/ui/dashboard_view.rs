@@ -771,21 +771,18 @@ fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
                 ),
             ]
             .spacing(14);
-            let mut segments = row![].spacing(4);
+            // Segmentos de 5 px, vao 4 e raio 2,5 (meia altura); os rotulos embaixo usam o mesmo
+            // vao e a mesma divisao em partes iguais para ficar cada um sob o seu segmento.
+            let segments = widgets::bar(
+                Bar::Segments {
+                    values: &e.segments,
+                    color: t.accent,
+                    track: t.neutral_800,
+                },
+                5.0,
+            );
             let mut labels = row![].spacing(4);
-            for (k, f) in e.segments.iter().enumerate() {
-                segments = segments.push(
-                    container(widgets::bar(
-                        Bar::Fraction {
-                            value: *f,
-                            color: t.accent,
-                            track: Some(t.neutral_800),
-                            outlined: false,
-                        },
-                        5.0,
-                    ))
-                    .width(Length::FillPortion(1)),
-                );
+            for k in 0..e.segments.len() {
                 let label = e.segment_labels.get(k).cloned().unwrap_or_default();
                 labels = labels.push(
                     container(txt(label, 11.0, t.text_muted))
@@ -1388,6 +1385,9 @@ fn upcoming_card(app: &App) -> Element<'_, Message> {
                 t,
                 column![
                     row![
+                        // Fica fora de `widgets::tile`: o tile tinge a cor a 16 % sobre a
+                        // superficie, e este e o degrau `accent_900` com o icone em `accent_400`
+                        // do design do Resumo, sobre a caixa interna e nao sobre o card.
                         container(icons::icon(icons::glyph(&inv.icon), 16.0, t.accent_400))
                             .center(32)
                             .style(theme::fill(t.accent_900, 6.0)),

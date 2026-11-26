@@ -26,6 +26,7 @@ use crate::dashboard::reserves::{
     DEFAULT_MULTIPLE, EmergencyView, EssentialCost, EssentialPart, MovementRow, Pace, PotRow,
     ReserveColor,
 };
+use crate::dashboard::view::ReservesView;
 
 /// Entre os blocos da tela: o espaco entre cards de toda tela (7.4).
 const GAP: f32 = space::BETWEEN_CARDS;
@@ -308,21 +309,63 @@ fn year_card(app: &App) -> Element<'_, Message> {
 
 // ---- linha 2: emergencia e caixinhas ----
 
+/// Titulo da secao da reserva de emergencia, fora do card.
+const EMERGENCY_TITLE: &str = "Reserva de emergência";
+/// Entre o titulo de secao e o card dele: menor que o espaco entre cards, para o titulo ficar
+/// colado ao bloco que nomeia e nao boiar no meio do vao.
+const HEADING_GAP: f32 = space::M;
+
+/// Titulo de secao 16 (fora do card) e o card embaixo.
+fn titled<'a>(heading: Element<'a, Message>, card: Element<'a, Message>) -> Element<'a, Message> {
+    column![heading, card].spacing(HEADING_GAP).into()
+}
+
 /// Lado a lado (alinhados ao topo, como o `align-items: start` do prototipo) quando os dois
-/// cabem com 440 cada; senao empilhados.
+/// cabem com 440 cada; senao empilhados. Cada um com o titulo de secao em cima, fora do card:
+/// "Reserva de emergência" e "Caixinhas" com quantas tem meta ao lado.
 fn cards_row(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let v = &app.reserves;
     let width = shell::content_width(app);
+    let emergency_heading = widgets::section_heading(t, EMERGENCY_TITLE, "", None, 0.0);
+    let pots_heading = widgets::section_heading(t, "Caixinhas", pots_question(v), None, 0.0);
     if width >= 2.0 * CARD_MIN + GAP {
         let card_inner = (width - GAP) / 2.0 - CARD_PADDING_X;
-        row![emergency_card(app, card_inner), pots_card(app)]
-            .spacing(GAP)
-            .align_y(Alignment::Start)
-            .into()
+        row![
+            titled(emergency_heading, emergency_card(app, card_inner)),
+            titled(pots_heading, pots_card(app)),
+        ]
+        .spacing(GAP)
+        .align_y(Alignment::Start)
+        .into()
     } else {
-        column![emergency_card(app, width - CARD_PADDING_X), pots_card(app)]
-            .spacing(GAP)
-            .into()
+        column![
+            titled(
+                emergency_heading,
+                emergency_card(app, width - CARD_PADDING_X)
+            ),
+            titled(pots_heading, pots_card(app)),
+        ]
+        .spacing(GAP)
+        .into()
     }
+}
+
+/// O aparte do titulo "Caixinhas" ("3 com objetivo · 1 sem meta", do modelo); sem caixinha,
+/// nada: o card ja diz "Nenhuma caixinha ainda".
+fn pots_question(v: &ReservesView) -> &str {
+    if v.pots.is_empty() {
+        ""
+    } else {
+        v.pots_note.as_str()
+    }
+}
+
+/// O nome que a pessoa deu a reserva de emergencia, se nao for o padrao: com o titulo de secao
+/// "Reserva de emergência" fora do card, repetir o mesmo nome no cabecalho do card seria eco.
+fn custom_emergency_name(name: &str) -> Option<&str> {
+    let name = name.trim();
+    (!name.is_empty() && name.to_lowercase() != EMERGENCY_TITLE.to_lowercase()).then_some(name)
 }
 
 /// Caixa de 36 com borda no acento e a boia: o simbolo da emergencia.
@@ -335,46 +378,43 @@ fn lifebuoy_box<'a>(t: &'static Tokens) -> Element<'a, Message> {
 
 fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
     let t = app.tokens;
-    let padding = pad(18.0, 20.0, 20.0);
     let Some(e) = &app.reserves.emergency else {
-        let header = row![
-            lifebuoy_box(t),
-            text("Reserva de emergência")
-                .size(15)
-                .font(fonts::INTER_MEDIUM)
-                .color(t.text),
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center);
+        // O titulo da secao, fora do card, ja diz o que falta; aqui so a boia e o motivo.
         return widgets::card(
             t,
-            column![
-                header,
-                Space::new().height(16),
+            row![
+                lifebuoy_box(t),
                 text("Nenhuma reserva de emergência sincronizada")
-                    .size(13)
+                    .size(type_scale::LABEL)
                     .color(t.text_muted),
-            ],
+            ]
+            .spacing(space::M)
+            .align_y(Alignment::Center),
         )
-        .padding(padding)
         .into();
     };
+    let goal = text(format!("Meta: {} × custo essencial", e.multiple));
+    let mut about = column![].width(Length::Fill);
+    if let Some(name) = custom_emergency_name(&e.name) {
+        about = about
+            .push(
+                container(
+                    text(name.to_string())
+                        .size(type_scale::SUPPORT)
+                        .font(fonts::INTER_MEDIUM)
+                        .wrapping(Wrapping::None)
+                        .color(t.text),
+                )
+                .clip(true),
+            )
+            .push(goal.size(type_scale::META).color(t.text_muted));
+    } else {
+        // Sem nome proprio, a meta vira a linha principal ao lado da boia.
+        about = about.push(goal.size(type_scale::LABEL).color(t.text_soft()));
+    }
     let header = row![
         lifebuoy_box(t),
-        column![
-            container(
-                text(e.name.clone())
-                    .size(15)
-                    .font(fonts::INTER_MEDIUM)
-                    .wrapping(Wrapping::None)
-                    .color(t.text)
-            )
-            .clip(true),
-            text(format!("Meta: {} × custo essencial", e.multiple))
-                .size(12)
-                .color(t.text_muted),
-        ]
-        .width(Length::Fill),
+        about,
         widgets::tag(t, TagTone::Accent, &e.pct_label),
     ]
     .spacing(12)
@@ -426,7 +466,7 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
         .push(essential_section(app, e.cost.as_ref(), inner_width))
         .push(Space::new().height(14))
         .push(eta);
-    widgets::card(t, col).padding(padding).into()
+    widgets::card(t, col).into()
 }
 
 /// "1", "2", …, "6 meses": um rotulo sob cada segmento, com a mesma largura.
@@ -576,20 +616,26 @@ fn essential_section<'a>(
 fn pots_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.reserves;
-    let aside = (!v.pots.is_empty()).then(|| v.pots_note.clone());
-    let mut col = column![
-        widgets::card_title(t, "Caixinhas", aside),
-        Space::new().height(8)
-    ];
+    // O titulo saiu para fora do card: as linhas comecam no topo, com divisor so entre elas. O
+    // respiro de 6 em cima e embaixo soma aos 14 de cada linha os 20 de todo card.
+    let mut col = column![];
     if v.pots.is_empty() {
-        col = col.push(widgets::divider(t)).push(
-            container(text("Nenhuma caixinha ainda").size(13).color(t.text_muted)).padding([14, 0]),
+        col = col.push(
+            container(
+                text("Nenhuma caixinha ainda")
+                    .size(type_scale::LABEL)
+                    .color(t.text_muted),
+            )
+            .padding([14, 0]),
         );
     }
-    for p in &v.pots {
-        col = col.push(widgets::divider(t)).push(pot_row(app, p));
+    for (i, p) in v.pots.iter().enumerate() {
+        if i > 0 {
+            col = col.push(widgets::divider(t));
+        }
+        col = col.push(pot_row(app, p));
     }
-    widgets::card(t, col).padding(pad(18.0, 20.0, 8.0)).into()
+    widgets::card(t, col).padding(pad(6.0, 20.0, 6.0)).into()
 }
 
 /// Icone e cor da linha de ritmo (tabela de `Pace` da spec).
@@ -1009,6 +1055,28 @@ mod tests {
         app.reserves.pots.clear();
         app.reserves.movements.clear();
         app.reserves.series.clear();
+        let _ = view(&app);
+    }
+
+    #[test]
+    fn nome_da_emergencia_so_no_card_quando_e_proprio() {
+        assert_eq!(custom_emergency_name("Reserva de emergência"), None);
+        assert_eq!(custom_emergency_name("  reserva de EMERGÊNCIA "), None);
+        assert_eq!(custom_emergency_name(""), None);
+        assert_eq!(
+            custom_emergency_name("Colchão da casa"),
+            Some("Colchão da casa")
+        );
+    }
+
+    #[test]
+    fn aparte_das_caixinhas_vem_do_modelo_e_some_sem_caixinha() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_reserves(dir.path());
+        assert!(!app.reserves.pots.is_empty());
+        assert_eq!(pots_question(&app.reserves), app.reserves.pots_note);
+        app.reserves.pots.clear();
+        assert_eq!(pots_question(&app.reserves), "");
         let _ = view(&app);
     }
 

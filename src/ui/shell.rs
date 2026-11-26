@@ -4,9 +4,10 @@
 use std::net::Ipv4Addr;
 
 use iced::widget::{
-    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text, tooltip,
+    Space, button, column, container, float, mouse_area, opaque, row, scrollable, stack, text,
+    tooltip,
 };
-use iced::{Alignment, Element, Length, Padding, mouse, window};
+use iced::{Alignment, Element, Length, Padding, Vector, mouse, window};
 
 use super::app::{App, Message, Screen};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, space};
@@ -60,12 +61,15 @@ pub fn root(app: &App) -> Element<'_, Message> {
     layers.into()
 }
 
-/// Altura do toast mais a margem de baixo: o quanto ele sobe da borda da janela.
-const TOAST_SLOT: f32 = 40.0 + 24.0;
+/// Margem do toast para a borda de baixo.
+const TOAST_MARGIN: f32 = 24.0;
+/// Altura do toast mais a margem: o quanto ele desce para sair inteiro da janela.
+const TOAST_TRAVEL: f32 = 40.0 + TOAST_MARGIN;
 
 /// Toast de 40 px centralizado embaixo, com "Desfazer" quando `undo`. `progress` (0 a 1) e a
-/// subida: uma faixa de `TOAST_SLOT * progress` presa a borda de baixo, que corta o toast, e o
-/// faz nascer da borda. O que desce (`live` falso) ja saiu do estado: o "Desfazer" fica sem
+/// subida: o toast fica no lugar de sempre e o `float` o desloca para baixo do resto que falta,
+/// desenhado numa camada recortada pela janela, entao ele desliza da borda inteiro, sem
+/// espremer. Parado no lugar (deslocamento zero) o `float` desenha normal. O que desce (`live` falso) ja saiu do estado: o "Desfazer" fica sem
 /// clique, porque a remocao ja foi enviada.
 fn toast<'a>(
     t: &'static Tokens,
@@ -98,15 +102,17 @@ fn toast<'a>(
         })
         .align_y(Alignment::Center)
         .style(theme::toast(t));
-    let slot = container(opaque(toast_box))
-        .height(TOAST_SLOT * progress.clamp(0.0, 1.0))
-        .align_y(Alignment::Start)
-        .clip(true);
-    container(slot)
+    let offset = TOAST_TRAVEL * (1.0 - progress.clamp(0.0, 1.0));
+    let sliding = float(opaque(toast_box)).translate(move |_, _| Vector::new(0.0, offset));
+    container(sliding)
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(Alignment::Center)
         .align_y(Alignment::End)
+        .padding(Padding {
+            bottom: TOAST_MARGIN,
+            ..Padding::ZERO
+        })
         .into()
 }
 

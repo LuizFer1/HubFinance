@@ -179,6 +179,16 @@ mod win {
     /// Texto na area de transferencia pelo Win32. Nao pelo iced: o `Clipboard` do iced_winit
     /// nasce desconectado e volta a isso quando a janela fecha, e ai a escrita some calada; o
     /// "Copiar endereco" da bandeja e justamente o caso sem janela.
+    ///
+    /// O bloco e alocado e preenchido **antes** de abrir a area: uma falha de memoria nao pode
+    /// chegar ao `EmptyClipboard` e apagar o que a pessoa tinha copiado.
+    ///
+    /// HWND nulo: a documentacao de `OpenClipboard` diz que, aberta sem janela, o
+    /// `EmptyClipboard` deixa o dono nulo e "isso faz o `SetClipboardData` falhar". Na pratica o
+    /// Windows 10/11 aceita (e o que a `clipboard-win` faz por padrao), e o hub nao tem um HWND
+    /// proprio a mao: o da bandeja e interno da `tray-icon`. **Conferir na validacao** (copiar
+    /// com a janela fechada e colar); se falhar, o erro vai para o log e o caminho e criar uma
+    /// janela so de mensagens para ser a dona.
     pub fn copy_text(text: &str) -> Result<(), String> {
         use windows_sys::Win32::Foundation::GlobalFree;
         use windows_sys::Win32::System::DataExchange::{
@@ -189,37 +199,53 @@ mod win {
         };
         use windows_sys::Win32::System::Ole::CF_UNICODETEXT;
 
+        /// Outro programa pode estar com a area aberta por um instante (gerenciadores de
+        /// historico, por exemplo): algumas tentativas curtas antes de desistir.
+        const OPEN_TRIES: u32 = 5;
+        const OPEN_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
+
         let wide = crate::desktop::wide(text);
         let bytes = std::mem::size_of_val(wide.as_slice());
         // SAFETY: chamadas Win32 na ordem documentada. O bloco tem o tamanho exato do texto com
-        // NUL e e copiado enquanto travado; se o `SetClipboardData` aceitar, passa a ser do
-        // sistema (nao se libera), e so se ele recusar volta para nos e e liberado. A area de
-        // transferencia e sempre fechada depois de aberta.
+        // NUL e e copiado enquanto travado. Ate o `SetClipboardData` aceitar ele e nosso e e
+        // liberado em todo caminho de erro; depois passa a ser do sistema e nao se libera. A
+        // area de transferencia e sempre fechada depois de aberta.
         unsafe {
-            if OpenClipboard(std::ptr::null_mut()) == 0 {
+            let block = GlobalAlloc(GMEM_MOVEABLE, bytes);
+            if block.is_null() {
+                return Err("sem memoria para copiar".into());
+            }
+            let target = GlobalLock(block).cast::<u16>();
+            if target.is_null() {
+                GlobalFree(block);
+                return Err("sem memoria para copiar".into());
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), target, wide.len());
+            GlobalUnlock(block);
+
+            let mut opened = false;
+            for attempt in 0..OPEN_TRIES {
+                if attempt > 0 {
+                    std::thread::sleep(OPEN_WAIT);
+                }
+                if OpenClipboard(std::ptr::null_mut()) != 0 {
+                    opened = true;
+                    break;
+                }
+            }
+            if !opened {
+                GlobalFree(block);
                 return Err("area de transferencia ocupada".into());
             }
-            let result = (|| {
-                if EmptyClipboard() == 0 {
-                    return Err("nao deu para limpar a area de transferencia".to_string());
-                }
-                let block = GlobalAlloc(GMEM_MOVEABLE, bytes);
-                if block.is_null() {
-                    return Err("sem memoria para copiar".to_string());
-                }
-                let target = GlobalLock(block).cast::<u16>();
-                if target.is_null() {
-                    GlobalFree(block);
-                    return Err("sem memoria para copiar".to_string());
-                }
-                std::ptr::copy_nonoverlapping(wide.as_ptr(), target, wide.len());
-                GlobalUnlock(block);
-                if SetClipboardData(u32::from(CF_UNICODETEXT), block).is_null() {
-                    GlobalFree(block);
-                    return Err("o sistema recusou a copia".to_string());
-                }
+            let result = if EmptyClipboard() == 0 {
+                GlobalFree(block);
+                Err("nao deu para limpar a area de transferencia".to_string())
+            } else if SetClipboardData(u32::from(CF_UNICODETEXT), block).is_null() {
+                GlobalFree(block);
+                Err("o sistema recusou a copia".to_string())
+            } else {
                 Ok(())
-            })();
+            };
             CloseClipboard();
             result
         }

@@ -453,7 +453,7 @@ mod tests {
             (v.total.whole.as_str(), v.total.cents.as_str()),
             (MASK_DIGITS, "")
         );
-        assert!(v.saved_note.starts_with(MASK), "{}", v.saved_note);
+        assert_eq!(v.saved_note, format!("{MASK} guardados em setembro"));
         assert_eq!([&v.deposits, &v.withdrawals], [MASK; 2]);
         // Emergencia: saldo, meta, faltam, projecao e custo essencial; % e meses ficam.
         let e = v.emergency.as_ref().expect("emergencia");
@@ -478,10 +478,16 @@ mod tests {
             .find(|p| p.meta_right.is_some())
             .expect("meta");
         let right = with_goal.meta_right.as_deref().unwrap_or_default();
-        assert!(
-            right.starts_with("de R$ ••••• · ") && right.ends_with('%'),
-            "{right}"
-        );
+        // A porcentagem fica visivel: so o "de R$ X" vira a mascara.
+        let shown_right = shown
+            .pots
+            .iter()
+            .find(|p| p.id == with_goal.id)
+            .and_then(|p| p.meta_right.clone())
+            .unwrap_or_default();
+        let pct = shown_right.rsplit(" · ").next().unwrap_or_default();
+        assert!(pct.ends_with('%'), "{pct}");
+        assert_eq!(right, format!("de {MASK} · {pct}"));
         // Grafico e movimentos.
         assert_eq!(v.y_labels, [AXIS_MASK; 3]);
         assert!(v.month_totals.iter().all(|t| t == MASK));
@@ -498,12 +504,9 @@ mod tests {
     fn reservas_visiveis_com_sinal_e_zero_sem_sinal() {
         use crate::dashboard::fixtures_with_reserves;
         let v = build_reserves(&fixtures_with_reserves(), "2026-09-24", false);
-        assert!(v.deposits.starts_with("+R$ "), "{}", v.deposits);
-        assert!(
-            v.withdrawals.starts_with("\u{2212}R$ "),
-            "{}",
-            v.withdrawals
-        );
+        assert_eq!(v.deposits, "+R$ 6.280,00");
+        assert_eq!(v.withdrawals, "\u{2212}R$ 250,00");
+        assert_eq!(v.saved_note, "R$ 2.380,00 guardados em setembro");
         assert_eq!(v.total.text(), "R$ 6.030,00");
         assert_eq!(v.y_labels, ["R$ 12 mil", "R$ 6 mil", "R$ 0"]);
         assert_eq!(

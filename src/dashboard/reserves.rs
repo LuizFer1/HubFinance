@@ -1725,6 +1725,24 @@ mod tests {
     }
 
     #[test]
+    fn meta_ao_lado_do_saldo_so_quando_existe() {
+        let mut ds = Dataset::default();
+        add_reserve(&mut ds, "RE1", informed_json(json!([]), json!(3), 250_000));
+        let e = emergency_view(&ds, &ds.reserves["RE1"], NOW, Money::SHOWN);
+        assert_eq!(e.goal_note.as_deref(), Some("de R$ 7.500,00"));
+        let hidden = emergency_view(&ds, &ds.reserves["RE1"], NOW, Money::new(true));
+        assert_eq!(hidden.goal_note.as_deref(), Some("de R$ •••••"));
+        // Custo informado zero ou negativo e "sem base": meta 0, sem a nota (a pilula do
+        // cabecalho ja diz "Sem meta").
+        for o in [0, -5_000] {
+            add_reserve(&mut ds, "RE1", informed_json(json!([]), json!(3), o));
+            let e = emergency_view(&ds, &ds.reserves["RE1"], NOW, Money::SHOWN);
+            assert!(e.goal_minor <= 0, "{o}");
+            assert_eq!(e.goal_note, None, "{o}");
+        }
+    }
+
+    #[test]
     fn rotulos_como_o_app() {
         assert_eq!(months_label(3.96), "3,9");
         assert_eq!(months_label(4.0), "4,0");

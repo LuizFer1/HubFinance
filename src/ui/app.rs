@@ -1926,7 +1926,7 @@ pub(super) mod tests {
         assert_eq!(app.dashboard.header.hide_toggle, "Ocultar valores");
         let shown = format!("{:?}", app.dashboard.how_am_i);
         assert!(shown.contains("R$ "), "{shown}");
-        assert!(app.transactions.list.income_label.starts_with("+R$ "));
+        assert_eq!(app.transactions.list.income_label, "+R$ 6.500,00");
         assert_eq!(app.transactions.synced_devices, 1);
         let shown_transactions = app.transactions.clone();
 

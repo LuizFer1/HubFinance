@@ -1575,7 +1575,7 @@ mod tests {
         let last = shown.months.len() - 1;
         let tip = stack_tooltip(&shown.series, &shown.month_totals, last);
         assert!(!tip.rows.is_empty());
-        assert!(tip.total.starts_with("R$ "), "{}", tip.total);
+        assert_eq!(tip.total, "R$ 6.030,00");
         // So reservas com saldo no mes entram, com o valor do modelo.
         let with_balance = shown.series.iter().filter(|s| s.balances[last] > 0).count();
         assert_eq!(tip.rows.len(), with_balance);

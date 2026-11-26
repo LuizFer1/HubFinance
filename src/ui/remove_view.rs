@@ -13,7 +13,7 @@ use super::app::{App, Message, RemoveStep};
 // As contagens usam o "4.688" do resto da UI: numero grande sem separador e dificil de ler justo
 // no dialogo em que a pessoa decide o que apagar.
 use super::shell::{plural, thousands};
-use super::theme::{self, ButtonKind, ButtonSize, Tokens};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone};
 use super::{fonts, icons, widgets};
 use crate::hub::snapshot::DeviceView;
 use crate::store::erase::{Area, AreaSet, DeviceData};
@@ -422,22 +422,14 @@ pub(super) fn orphan_banner(app: &App) -> Option<Element<'_, Message>> {
         .on_press(Message::PostponeOrphans);
     let decide = widgets::action_button(t, ButtonKind::Primary, ButtonSize::Compact, "Decidir")
         .on_press(Message::DecideOrphan);
-    Some(
-        container(
-            row![
-                icons::icon(icons::WARNING_CIRCLE, 18.0, t.warning),
-                text(message).size(13).color(t.text).width(Length::Fill),
-                later,
-                decide,
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
-        )
-        .padding([10, 14])
-        .width(Length::Fill)
-        .style(theme::outlined(t.warning, 10.0))
-        .into(),
-    )
+    Some(widgets::banner(
+        t,
+        Tone::Warning,
+        t.bg,
+        icons::WARNING_CIRCLE,
+        message,
+        vec![later.into(), decide.into()],
+    ))
 }
 
 #[cfg(test)]

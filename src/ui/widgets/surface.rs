@@ -3,10 +3,10 @@
 
 use iced::widget::text::Wrapping;
 use iced::widget::{Container, Space, container, row, text};
-use iced::{Alignment, Element, Length, Padding};
+use iced::{Alignment, Color, Element, Length, Padding};
 
-use crate::ui::fonts;
-use crate::ui::theme::{self, Tokens, size, space, type_scale};
+use crate::ui::theme::{self, Tokens, Tone, radius, size, space, type_scale};
+use crate::ui::{fonts, icons};
 
 /// Card (nivel 0): `surface`, raio 8, borda `card_border`, padding 20 e largura cheia. Devolve o
 /// `Container` para a tela trocar o padding (os cards do Dashboard tem respiros proprios) ou
@@ -98,6 +98,62 @@ pub fn section_heading<'a, M: 'a>(
         .into()
 }
 
+/// Cor do icone de um tom: a de texto de cada um (`accent` cru nao vira texto nem icone).
+fn tone_fg(t: &Tokens, tone: Tone) -> Color {
+    match tone {
+        Tone::Accent => t.text_accent(),
+        Tone::Income => t.income_fg,
+        Tone::Expense => t.expense_fg,
+        Tone::Warning => t.warning,
+    }
+}
+
+/// Estilo do banner: a tinta de 10 % do tom sobre o `parent` (opaca, entao o pai precisa ser o
+/// fundo de verdade: `bg` no topo da pagina, `surface` dentro de card), raio 8, sem contorno.
+pub fn banner_style(
+    t: &'static Tokens,
+    tone: Tone,
+    parent: Color,
+) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(t.tint(tone, parent).into()),
+        border: iced::Border {
+            radius: radius::CONTROL.into(),
+            ..iced::Border::default()
+        },
+        text_color: Some(t.text),
+        ..container::Style::default()
+    }
+}
+
+/// Banner: icone no tom, mensagem 13 em `fg` e as acoes a direita, sobre a tinta do tom.
+pub fn banner<'a, M: 'a>(
+    t: &'static Tokens,
+    tone: Tone,
+    parent: Color,
+    glyph: &'static str,
+    message: impl text::IntoFragment<'a>,
+    actions: Vec<Element<'a, M>>,
+) -> Element<'a, M> {
+    let mut line = row![
+        icons::icon(glyph, 18.0, tone_fg(t, tone)),
+        text(message)
+            .size(type_scale::LABEL)
+            .color(t.text)
+            .width(Length::Fill),
+    ]
+    .spacing(space::M)
+    .align_y(Alignment::Center);
+    for action in actions {
+        line = line.push(action);
+    }
+    container(line)
+        .padding([10.0, 14.0])
+        .width(Length::Fill)
+        .style(banner_style(t, tone, parent))
+        .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +168,29 @@ mod tests {
             let _: Element<'_, ()> = vdivider(t);
             let _: Element<'_, ()> = section_heading(t, "Título", "pergunta", Some("aparte"), 8.0);
             let _: Element<'_, ()> = section_heading(t, "Título", "", None, 0.0);
+            let _: Element<'_, ()> = banner(
+                t,
+                Tone::Warning,
+                t.bg,
+                icons::WARNING_CIRCLE,
+                "Os dados mudaram",
+                vec![text("Ação").into()],
+            );
+        }
+    }
+
+    #[test]
+    fn banner_tinge_o_pai_a_10_por_cento_sem_contorno() {
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            for tone in [Tone::Accent, Tone::Income, Tone::Expense, Tone::Warning] {
+                for parent in [t.bg, t.surface] {
+                    let s = banner_style(t, tone, parent)(&theme);
+                    assert_eq!(s.background, Some(t.tint(tone, parent).into()));
+                    assert_eq!(s.border.width, 0.0);
+                    assert_eq!(s.border.radius, radius::CONTROL.into());
+                }
+            }
         }
     }
 }

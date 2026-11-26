@@ -22,7 +22,7 @@ pub use controls::{
 pub use marks::{
     Bar, TagTone, bar, color_tag, neutral_tile, partial_tag, tag, tag_icon, tile, token_tile,
 };
-pub use surface::{card, divider, inset, section_heading, vdivider};
+pub use surface::{banner, card, divider, inset, section_heading, vdivider};
 pub use values::{StatSize, baseline_pad, money, stat, value_line};
 
 /// Rotulo em frase normal ("Saldo do mês"), 12 Medium em `text_muted`. Desvio do handoff, que pede

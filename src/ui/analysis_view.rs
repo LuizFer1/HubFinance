@@ -10,8 +10,8 @@ use iced::{Alignment, Color, Element, Length};
 
 use super::app::{App, Message, awaiting_cloud_consent};
 use super::assistant_settings_view;
-use super::theme::{self, ButtonKind, ButtonSize, Tokens};
-use super::{fonts, rows, time, widgets};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone};
+use super::{fonts, icons, rows, time, widgets};
 use crate::advisor::{Finding, Severity};
 use crate::assistant::prompt::Role;
 use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
@@ -186,28 +186,23 @@ fn chat_area(app: &App) -> Option<Element<'_, Message>> {
     .align_y(Alignment::Center);
     let mut col = column![header].spacing(12).width(Length::Fill);
     if data_changed(app) {
-        col = col.push(
-            container(
-                row![
-                    text("Os dados mudaram desde o início desta conversa")
-                        .size(13)
-                        .color(t.warning),
-                    Space::new().width(Length::Fill),
-                    widgets::action_button(
-                        t,
-                        ButtonKind::Primary,
-                        ButtonSize::Compact,
-                        "Nova conversa"
-                    )
-                    .on_press(Message::StartConversation),
-                ]
-                .spacing(12)
-                .align_y(Alignment::Center),
-            )
-            .padding([8, 12])
-            .width(Length::Fill)
-            .style(theme::outlined(t.warning, 8.0)),
-        );
+        col = col.push(widgets::banner(
+            t,
+            Tone::Warning,
+            t.surface,
+            icons::WARNING_CIRCLE,
+            "Os dados mudaram desde o início desta conversa",
+            vec![
+                widgets::action_button(
+                    t,
+                    ButtonKind::Primary,
+                    ButtonSize::Compact,
+                    "Nova conversa",
+                )
+                .on_press(Message::StartConversation)
+                .into(),
+            ],
+        ));
     }
     // Nuvem sem a previa aprovada: nada saiu, e o "Tentar de novo" sob a pergunta de abertura
     // reenviaria sem a pessoa ver o que vai. A previa toma o lugar dele e do campo de pergunta.

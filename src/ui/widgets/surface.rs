@@ -2,7 +2,9 @@
 //! largura padrao, para cada tela parar de montar o proprio `container` com o estilo.
 
 use iced::widget::text::Wrapping;
-use iced::widget::{Column, Container, Space, column, container, row, text};
+use iced::widget::{
+    Column, Container, Space, column, container, mouse_area, opaque, row, stack, text,
+};
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use crate::ui::theme::{self, Tokens, Tone, radius, size, space, type_scale};
@@ -170,6 +172,41 @@ pub fn empty_state<'a, M: 'a>(
     col.into()
 }
 
+/// Dialogo sobre o scrim (nivel 2): caixa `surface` de raio 12 com `shadow_lg` e padding 24,
+/// `width` de largura e, com `height`, altura fixa. A caixa engole o clique com `noop` (sem
+/// isso, clicar dentro dela chegaria ao fundo e fecharia); o scrim a 55 % fecha com `dismiss`.
+pub fn dialog<'a, M: Clone + 'a>(
+    t: &'static Tokens,
+    content: impl Into<Element<'a, M>>,
+    width: f32,
+    height: Option<f32>,
+    noop: M,
+    dismiss: M,
+) -> Element<'a, M> {
+    let dialog_box = container(content)
+        .width(width)
+        .padding(space::DIALOG)
+        .style(theme::dialog(t));
+    let dialog_box = match height {
+        Some(h) => dialog_box.height(h),
+        None => dialog_box,
+    };
+    let dialog_box = opaque(mouse_area(dialog_box).on_press(noop));
+    let scrim = opaque(
+        mouse_area(
+            container(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(theme::scrim()),
+        )
+        .on_press(dismiss),
+    );
+    stack![scrim, container(dialog_box).center(Length::Fill)]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
 /// Cor do icone de um tom: a de texto de cada um (`accent` cru nao vira texto nem icone).
 fn tone_fg(t: &Tokens, tone: Tone) -> Color {
     match tone {
@@ -248,6 +285,8 @@ mod tests {
                 Some(text("Ação").into()),
             );
             let _: Element<'_, ()> = empty_copy(t, "Nada", "Corpo", false).into();
+            let _: Element<'_, u8> = dialog(t, text("Corpo"), 460.0, None, 0, 1);
+            let _: Element<'_, u8> = dialog(t, text("Corpo"), 720.0, Some(640.0), 0, 1);
             let _: Element<'_, ()> = banner(
                 t,
                 Tone::Warning,
@@ -271,6 +310,16 @@ mod tests {
                     assert_eq!(s.border.radius, radius::CONTROL.into());
                 }
             }
+        }
+    }
+
+    /// Diálogo com raio 12 (eram 14) e a sombra grande; o contorno e o da sombra.
+    #[test]
+    fn caixa_do_dialogo_tem_raio_12_e_sombra_grande() {
+        for t in [&DARK, &LIGHT] {
+            let s = theme::dialog(t)(&t.iced_theme());
+            assert_eq!(s.border.radius, radius::DIALOG.into());
+            assert_eq!(s.shadow, t.shadow_lg().1);
         }
     }
 }

@@ -3,9 +3,7 @@
 
 use std::borrow::Cow;
 
-use iced::widget::{
-    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text, text_input,
-};
+use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Color, Element, Length};
 
 use super::app::{App, Message, awaiting_cloud_consent};
@@ -594,7 +592,8 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
         .on_press(Message::CloseEnvelope);
     let width = (app.window_size.width - 48.0).clamp(280.0, 720.0);
     let height = (app.window_size.height - 96.0).clamp(240.0, 640.0);
-    let dialog_box = container(
+    Some(widgets::dialog(
+        t,
         column![
             header,
             intro,
@@ -603,27 +602,11 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
         ]
         .spacing(12)
         .height(Length::Fill),
-    )
-    .width(width)
-    .height(height)
-    .padding(24)
-    .style(theme::dialog(t));
-    let dialog_box = opaque(mouse_area(dialog_box).on_press(Message::Noop));
-    let scrim = opaque(
-        mouse_area(
-            container(Space::new())
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(theme::scrim()),
-        )
-        .on_press(Message::CloseEnvelope),
-    );
-    Some(
-        stack![scrim, container(dialog_box).center(Length::Fill)]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into(),
-    )
+        width,
+        Some(height),
+        Message::Noop,
+        Message::CloseEnvelope,
+    ))
 }
 
 fn severity_color(t: &'static Tokens, s: Severity) -> Color {

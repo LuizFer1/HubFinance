@@ -118,7 +118,6 @@ pub mod space {
 }
 
 /// Raio. Saem 5, 10 e 14.
-#[cfg_attr(not(test), expect(dead_code, reason = "as telas migram na Fase 7"))]
 pub mod radius {
     /// Barra de progresso.
     pub const BAR: f32 = 4.0;
@@ -489,7 +488,7 @@ impl Tokens {
             Border {
                 color: self.shadow_lg_ring,
                 width: 1.0,
-                radius: 14.0.into(),
+                radius: radius::DIALOG.into(),
             },
             Shadow {
                 color: self.shadow_lg_color,

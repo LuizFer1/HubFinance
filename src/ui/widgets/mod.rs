@@ -23,7 +23,8 @@ pub use marks::{
     Bar, TagTone, bar, color_tag, neutral_tile, partial_tag, tag, tag_icon, tile, token_tile,
 };
 pub use surface::{
-    banner, card, divider, empty_copy, empty_icon, empty_state, inset, section_heading, vdivider,
+    banner, card, dialog, divider, empty_copy, empty_icon, empty_state, inset, section_heading,
+    vdivider,
 };
 pub use values::{StatSize, baseline_pad, money, stat, value_line};
 

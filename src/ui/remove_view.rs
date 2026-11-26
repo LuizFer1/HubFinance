@@ -6,7 +6,7 @@
 //! do plano que a escrita tambem usa; (2) confirmacao em vermelho com as contagens e um botao
 //! que nomeia a acao. Nada marcado e "Manter tudo", o padrao, e nao exige o passo 2.
 
-use iced::widget::{Space, button, column, container, mouse_area, opaque, row, stack, text};
+use iced::widget::{Space, button, column, row, text};
 use iced::{Alignment, Element, Length};
 
 use super::app::{App, Message, RemoveStep};
@@ -260,7 +260,8 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
     };
 
     let width = (app.window_size.width - 48.0).clamp(240.0, 460.0);
-    let dialog_box = container(
+    Some(widgets::dialog(
+        t,
         column![
             header,
             Space::new().height(14),
@@ -269,27 +270,11 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
             buttons
         ]
         .width(Length::Fill),
-    )
-    .width(width)
-    .padding(24)
-    .style(theme::dialog(t));
-    // A caixa engole o clique: sem isso, clicar dentro dela chegaria ao fundo e cancelaria.
-    let dialog_box = opaque(mouse_area(dialog_box).on_press(Message::Noop));
-    let scrim = opaque(
-        mouse_area(
-            container(Space::new())
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(theme::scrim()),
-        )
-        .on_press(Message::CancelRemove),
-    );
-    Some(
-        stack![scrim, container(dialog_box).center(Length::Fill)]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into(),
-    )
+        width,
+        None,
+        Message::Noop,
+        Message::CancelRemove,
+    ))
 }
 
 fn choose_body<'a>(app: &'a App, who: &Subject<'a>, selected: AreaSet) -> Element<'a, Message> {

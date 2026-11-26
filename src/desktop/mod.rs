@@ -20,6 +20,10 @@ use std::rc::Rc;
 pub enum DesktopEvent {
     /// Clique no icone, "Abrir o HubFinance" no menu, ou o programa aberto de novo.
     OpenWindow,
+    /// "Conectar um celular" no menu: abre a janela, se fechada, e o fluxo de Aparelhos.
+    ConnectPhone,
+    /// "Copiar endereco" no menu: a UI resolve o endereco e copia por `Desktop::copy_text`.
+    CopyAddress,
     /// "Desligar o hub" no menu da bandeja.
     Quit,
 }
@@ -40,6 +44,10 @@ pub trait Desktop {
     /// desliga, como na 1.0.0.
     fn has_tray(&self) -> bool;
     fn set_tooltip(&self, text: &str);
+    /// Troca o desenho do icone. A UI so chama quando o estado muda.
+    fn set_icon(&self, icon: tray::TrayIcon);
+    /// Copia para a area de transferencia sem depender da janela (ver `tray::copy_text`).
+    fn copy_text(&self, text: &str) -> Result<(), String>;
     /// `None` = sistema sem a opcao (a linha nao aparece no card).
     fn autostart(&self) -> Option<bool>;
     fn set_autostart(&self, enabled: bool) -> Result<(), String>;
@@ -58,6 +66,11 @@ impl Desktop for Headless {
         false
     }
     fn set_tooltip(&self, _text: &str) {}
+    fn set_icon(&self, _icon: tray::TrayIcon) {}
+    /// Sem bandeja nao ha menu que peca a copia; a janela copia pelo iced.
+    fn copy_text(&self, _text: &str) -> Result<(), String> {
+        Err("sem suporte neste sistema".into())
+    }
     fn autostart(&self) -> Option<bool> {
         None
     }
@@ -100,6 +113,12 @@ impl Desktop for Windows {
     fn set_tooltip(&self, text: &str) {
         self.tray.set_tooltip(text);
     }
+    fn set_icon(&self, icon: tray::TrayIcon) {
+        self.tray.set_icon(icon);
+    }
+    fn copy_text(&self, text: &str) -> Result<(), String> {
+        tray::copy_text(text)
+    }
     fn autostart(&self) -> Option<bool> {
         autostart::is_enabled()
     }
@@ -118,6 +137,10 @@ pub(crate) fn wide(s: &str) -> Vec<u16> {
 pub(crate) struct Fake {
     pub tray: bool,
     pub tooltip: std::cell::RefCell<String>,
+    /// Cada troca de icone pedida, na ordem: o teste confere que a UI nao repete.
+    pub icons: std::cell::RefCell<Vec<tray::TrayIcon>>,
+    /// O que foi copiado pela bandeja, na ordem.
+    pub copied: std::cell::RefCell<Vec<String>>,
     pub autostart: std::cell::Cell<Option<bool>>,
     pub fail_autostart: std::cell::Cell<bool>,
     /// O tema do sistema que o teste escolhe; nunca le o registro da maquina.
@@ -130,6 +153,8 @@ impl Fake {
         Fake {
             tray: true,
             tooltip: Default::default(),
+            icons: Default::default(),
+            copied: Default::default(),
             autostart: std::cell::Cell::new(Some(false)),
             fail_autostart: Default::default(),
             system_dark: Default::default(),
@@ -144,6 +169,13 @@ impl Desktop for Fake {
     }
     fn set_tooltip(&self, text: &str) {
         *self.tooltip.borrow_mut() = text.to_string();
+    }
+    fn set_icon(&self, icon: tray::TrayIcon) {
+        self.icons.borrow_mut().push(icon);
+    }
+    fn copy_text(&self, text: &str) -> Result<(), String> {
+        self.copied.borrow_mut().push(text.to_string());
+        Ok(())
     }
     fn autostart(&self) -> Option<bool> {
         self.autostart.get()
@@ -180,6 +212,8 @@ mod tests {
         assert_eq!(d.system_dark(), None);
         assert!(d.set_autostart(true).is_err());
         d.set_tooltip("ignorado");
+        d.set_icon(tray::TrayIcon::Error);
+        assert!(d.copy_text("x").is_err());
     }
 
     #[test]
@@ -198,11 +232,32 @@ mod tests {
     }
 
     #[test]
+    fn fake_guarda_icones_e_copias_na_ordem() {
+        let d = Fake::with_tray();
+        d.set_icon(tray::TrayIcon::Attention);
+        d.set_icon(tray::TrayIcon::Normal);
+        assert_eq!(
+            *d.icons.borrow(),
+            [tray::TrayIcon::Attention, tray::TrayIcon::Normal]
+        );
+        d.copy_text("https://192.168.0.12:7777").unwrap();
+        assert_eq!(*d.copied.borrow(), ["https://192.168.0.12:7777"]);
+    }
+
+    #[test]
     fn canal_entrega_na_ordem() {
         let (tx, mut rx) = channel();
-        tx.unbounded_send(DesktopEvent::OpenWindow).unwrap();
-        tx.unbounded_send(DesktopEvent::Quit).unwrap();
-        assert_eq!(rx.try_recv().unwrap(), DesktopEvent::OpenWindow);
-        assert_eq!(rx.try_recv().unwrap(), DesktopEvent::Quit);
+        let sent = [
+            DesktopEvent::OpenWindow,
+            DesktopEvent::ConnectPhone,
+            DesktopEvent::CopyAddress,
+            DesktopEvent::Quit,
+        ];
+        for e in sent {
+            tx.unbounded_send(e).unwrap();
+        }
+        for e in sent {
+            assert_eq!(rx.try_recv().unwrap(), e);
+        }
     }
 }

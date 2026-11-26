@@ -263,6 +263,8 @@ pub struct App {
     pub(super) desktop: Rc<dyn Desktop>,
     /// Ultimo texto mandado ao tooltip da bandeja.
     pub(super) tooltip: String,
+    /// Ultimo desenho mandado ao icone da bandeja; nasce `Normal`, que e o do `install`.
+    pub(super) tray_icon: crate::desktop::tray::TrayIcon,
     /// "Iniciar com o Windows" como o sistema diz (cache do registro, lido no boot e depois de
     /// cada troca); `None` = sistema sem a opcao, e a secao some de Ajustes.
     pub(super) autostart: Option<bool>,
@@ -542,9 +544,10 @@ impl App {
             notice: None,
             desktop,
             tooltip: String::new(),
+            tray_icon: crate::desktop::tray::TrayIcon::Normal,
         };
         app.refresh_people();
-        app.sync_tooltip();
+        app.sync_tray();
         app.set_today(local_today(offset));
         app.refresh_replies();
         app
@@ -594,14 +597,19 @@ impl App {
         }
     }
 
-    /// Tooltip da bandeja a partir do snapshot; so manda ao sistema quando o texto muda
-    /// (`Shell_NotifyIcon` a cada snapshot seria desperdicio).
-    fn sync_tooltip(&mut self) {
+    /// Tooltip e icone da bandeja a partir do snapshot; cada um so vai ao sistema quando muda
+    /// (`Shell_NotifyIcon` a cada snapshot seria desperdicio, e trocar o icone pisca a barra).
+    fn sync_tray(&mut self) {
         let active = self.snapshot.devices.iter().filter(|d| !d.revoked).count();
         let text = crate::desktop::tray::tooltip(&self.snapshot.status, active);
         if text != self.tooltip {
             self.desktop.set_tooltip(&text);
             self.tooltip = text;
+        }
+        let icon = crate::desktop::tray::icon_for(&self.snapshot.status);
+        if icon != self.tray_icon {
+            self.desktop.set_icon(icon);
+            self.tray_icon = icon;
         }
     }
 
@@ -1136,7 +1144,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 app.refresh_people();
                 app.rebuild();
             }
-            app.sync_tooltip();
+            app.sync_tray();
             if stopped && app.closing {
                 return exit();
             }
@@ -1237,6 +1245,27 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::Desktop(DesktopEvent::Quit) => begin_shutdown(app),
         Message::Desktop(DesktopEvent::OpenWindow) => open_or_focus(app),
+        Message::Desktop(DesktopEvent::ConnectPhone) => {
+            // Desligando: nao abre janela nem gera codigo que ninguem vai usar.
+            if app.closing {
+                return Task::none();
+            }
+            // A janela primeiro: o `ConnectPhone` le o estado da tela, nao da janela, entao
+            // vale com ela fechada, e o dialogo ja esta montado quando ela aparece.
+            let open = open_or_focus(app);
+            let connect = update(app, Message::ConnectPhone);
+            Task::batch([open, connect])
+        }
+        Message::Desktop(DesktopEvent::CopyAddress) => {
+            // Sem endereco (sem rede local) nao ha o que copiar; o icone ja esta com o ponto
+            // de atencao e o tooltip diz "sem rede".
+            if let Some(url) = connection_view::hub_url(&app.snapshot)
+                && let Err(err) = app.desktop.copy_text(&url)
+            {
+                tracing::warn!("copiar endereco pela bandeja: {err}");
+            }
+            Task::none()
+        }
         Message::ForceExit => exit(),
         Message::WindowOpened(id) => {
             if app.window == Some(id) {
@@ -3862,6 +3891,81 @@ pub(super) mod tests {
             "",
             "texto igual nao e reenviado"
         );
+    }
+
+    #[test]
+    fn icone_da_bandeja_segue_o_estado_e_so_troca_quando_muda() {
+        use crate::desktop::tray::TrayIcon;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        assert!(
+            fake.icons.borrow().is_empty(),
+            "o boot ja nasce com o normal"
+        );
+        let snap = |status| Snapshot {
+            status,
+            ..Snapshot::default()
+        };
+        for status in [
+            Status::Running,
+            Status::NoNetwork,
+            Status::NoNetwork,
+            Status::Failed("porta".into()),
+            Status::Failed("outra".into()),
+            Status::Running,
+        ] {
+            let _ = update(&mut app, Message::Snapshot(Box::new(snap(status))));
+        }
+        assert_eq!(
+            *fake.icons.borrow(),
+            [TrayIcon::Attention, TrayIcon::Error, TrayIcon::Normal]
+        );
+    }
+
+    #[test]
+    fn conectar_pela_bandeja_abre_a_janela_e_o_fluxo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        app.window = None;
+        app.screen = Screen::Dashboard;
+        let _ = update(&mut app, Message::Desktop(DesktopEvent::ConnectPhone));
+        let id = app.window.expect("janela aberta");
+        assert_eq!(app.screen, Screen::Connection);
+        assert!(app.connect.is_some());
+        // Com a janela aberta, a mesma janela, e o fluxo nao recomeca.
+        let _ = update(&mut app, Message::Desktop(DesktopEvent::ConnectPhone));
+        assert_eq!(app.window, Some(id));
+        assert!(app.connect.is_some());
+    }
+
+    #[test]
+    fn conectar_pela_bandeja_desligando_nao_faz_nada() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        app.window = None;
+        app.closing = true;
+        let _ = update(&mut app, Message::Desktop(DesktopEvent::ConnectPhone));
+        assert!(app.window.is_none());
+        assert!(app.connect.is_none());
+    }
+
+    #[test]
+    fn copiar_endereco_pela_bandeja_usa_o_sistema_e_sem_rede_nao_copia() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        app.window = None;
+        let _ = update(&mut app, Message::Desktop(DesktopEvent::CopyAddress));
+        assert!(fake.copied.borrow().is_empty(), "sem endereco, nada");
+        let snap = Snapshot {
+            status: Status::Running,
+            addresses: vec![std::net::Ipv4Addr::new(192, 168, 0, 12)],
+            https_port: 7777,
+            ..Snapshot::default()
+        };
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        let _ = update(&mut app, Message::Desktop(DesktopEvent::CopyAddress));
+        assert_eq!(*fake.copied.borrow(), ["https://192.168.0.12:7777"]);
+        assert!(app.window.is_none(), "copiar nao abre a janela");
     }
 
     #[test]

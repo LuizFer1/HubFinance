@@ -842,9 +842,10 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
     .spacing(6)
     .align_y(Alignment::Center);
     if m.recurring {
+        // Neutra, como nos Lancamentos: recorrencia nao e o foco da tela.
         meta = meta.push(widgets::tag_icon(
             t,
-            TagTone::Accent,
+            TagTone::Neutral,
             icons::REPEAT,
             "Mensal",
         ));

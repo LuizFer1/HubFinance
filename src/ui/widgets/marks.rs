@@ -242,9 +242,10 @@ fn tile_box<'a, M: 'a>(
 /// Altura da tag (relatorio 9).
 pub(super) const TAG_HEIGHT: f32 = 20.0;
 
-/// Tom da tag. Neutra (`text_soft` sobre `neutral_800`) para estado que nao conta ("Oculto",
-/// "Transferência"); acento (`accent_300` sobre `accent_900`) para o que e do mes ("hoje",
-/// "Mensal"); receita, despesa e atencao na cor do tom sobre a tinta de 10 % da superficie.
+/// Tom da tag. Neutra (`text_soft` sobre `neutral_800`) para estado ou fato da linha ("Oculto",
+/// "Transferência", "Mensal"); acento (`accent_300` sobre `accent_900`) so para o que marca o
+/// agora ("hoje", a % da meta da emergencia): o dourado e o foco do bloco, nunca enfeite;
+/// receita, despesa e atencao na cor do tom sobre a tinta de 10 % da superficie.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TagTone {
     Neutral,

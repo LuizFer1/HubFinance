@@ -26,8 +26,11 @@ const GRID_MIN: f32 = 420.0;
 const GAP: f32 = 14.0;
 /// Padding dos cards de endereco e do fluxo.
 const CARD_PAD: f32 = 24.0;
-/// O QR do passo 3: 220 px de quadro (spec 8.4), com a zona de silencio dentro.
-const QR_FRAME: f32 = 220.0;
+/// O QR do passo 3: 220 px (spec 8.4), contando a zona de silencio que o widget do iced
+/// desenha (2 modulos de cada lado).
+const QR_SIZE: f32 = 220.0;
+/// O quadro claro em volta do QR: 5 px de cada lado.
+const QR_FRAME: f32 = QR_SIZE + 10.0;
 /// Moldura do campo em volta do valor: padding 14 + icone 15 + dois espacos de 10 + o botao
 /// na largura de "Copiado" (10 + 12 + 6 + 48 + 10) + padding 6.
 const FIELD_CHROME: f32 = 141.0;
@@ -764,7 +767,7 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
             // O widget do iced desenha a propria zona de silencio (2 modulos); o quadro poe so
             // a borda de 5 px em volta.
             let code: Element<'_, Message> = qr_code(qr)
-                .total_size(QR_FRAME - 10.0)
+                .total_size(QR_SIZE)
                 .style(|_: &Theme| qr_code::Style {
                     cell: theme::DARK.bg,
                     background: theme::DARK.neutral_100,
@@ -815,7 +818,7 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
     col.into()
 }
 
-/// O quadro de 220 px do QR (ou do aviso no lugar dele).
+/// O quadro do QR (ou do aviso no lugar dele).
 fn qr_frame<'a>(
     t: &'static Tokens,
     content: Element<'a, Message>,
@@ -991,6 +994,31 @@ mod tests {
                 }
                 app.connect = None;
             }
+        }
+        // Passo 3 com codigo valido (QR, codigo, contagem) e com codigo expirado, na tela e no
+        // dialogo: o snapshot passa pelo `update`, que monta o QR.
+        for (expires_at, devices) in [
+            (SystemTime::now() + Duration::from_secs(300), vec![]),
+            (
+                SystemTime::now() - Duration::from_secs(1),
+                vec![device("D1")],
+            ),
+        ] {
+            let mut snap = running(devices);
+            snap.pairing = Some(crate::hub::snapshot::PairingView {
+                token: "ABC123".into(),
+                display: "ABC-123".into(),
+                expires_at,
+                qr_url: "http://192.168.0.12:7778/p/ABC123".into(),
+            });
+            let _ = super::super::app::update(&mut app, Message::Snapshot(Box::new(snap)));
+            assert!(app.qr.is_some());
+            app.connect = Some(ConnectFlow {
+                step: ConnectStep::Pair,
+                ..ConnectFlow::new(!app.snapshot.devices.is_empty())
+            });
+            let _ = view(&app);
+            let _ = connect_dialog(&app);
         }
         // Sem rede local: o passo 3 mostra o aviso no quadro.
         app.snapshot.addresses.clear();

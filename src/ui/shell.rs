@@ -530,7 +530,7 @@ fn status_card(app: &App) -> Element<'_, Message> {
     container(col)
         .padding(14)
         .width(Length::Fill)
-        .style(theme::fill(t.surface, 8.0))
+        .style(theme::card(t))
         .into()
 }
 

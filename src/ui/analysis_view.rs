@@ -664,7 +664,7 @@ fn finding_card<'a>(app: &'a App, f: &'a Finding) -> Element<'a, Message> {
     if let Some(action) = &f.action {
         body = body
             .push(Space::new().height(4))
-            .push(text(mask(app, action)).size(14).color(t.accent));
+            .push(text(mask(app, action)).size(14).color(t.text_accent()));
     }
     card(t, body)
 }

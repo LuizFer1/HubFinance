@@ -321,6 +321,16 @@ impl Tokens {
         }
     }
 
+    /// Cursor da rolagem em repouso: o degrau abaixo de `idle()` (2,9:1 no escuro, 2,0:1 no
+    /// claro sobre `bg`). Fica abaixo de 3 de proposito: parado ele nao e controle a achar, e
+    /// mais forte disputaria com o conteudo; sob o mouse vira `idle()`, que passa 3.
+    fn scroller_rest(&self) -> Color {
+        match self.mode {
+            Mode::Dark => self.neutral_700,
+            Mode::Light => self.neutral_600,
+        }
+    }
+
     /// Avatar de quem nao tem cor de perfil: (preenchimento, inicial). O #C4C4C4 do design e o
     /// `neutral_300` com a inicial em `bg` no escuro; no claro o cinza claro equivalente e o
     /// `neutral_700`, com a inicial em `fg` (o `neutral_300` com `bg` daria 2,2:1). Escolha da
@@ -330,6 +340,46 @@ impl Tokens {
             Mode::Dark => (self.neutral_300, self.bg),
             Mode::Light => (self.neutral_700, self.text),
         }
+    }
+
+    /// Borda de 1 px de todo card (B2): `surface` sobre `bg` fica em 1,1:1 e o card some perto do
+    /// brilho do canto. Nao chega a 3:1 (1,2:1 de cada lado), e ganho de percepcao, nao de
+    /// contraste; no claro e o mesmo cinza da divisoria.
+    pub fn card_border(&self) -> Color {
+        match self.mode {
+            Mode::Dark => self.neutral_900,
+            Mode::Light => self.neutral_800,
+        }
+    }
+
+    /// Contorno de controle (input, toggle desligado, checkbox): `idle()`, que passa 3:1 sobre
+    /// `bg` e `surface`. A divisoria antiga dava 1,3:1 e o campo nao se via (B1).
+    pub fn border_control(&self) -> Color {
+        self.idle()
+    }
+
+    /// Tinta de 10 % de um tom, opaca sobre o pai (banner, tile de severidade).
+    #[allow(dead_code, reason = "banner e tile da Fase 7")]
+    pub fn tint(&self, tone: Tone, parent: Color) -> Color {
+        let color = match tone {
+            Tone::Accent => self.accent,
+            Tone::Income => self.income,
+            Tone::Expense => self.expense,
+            Tone::Warning => self.warning,
+        };
+        mix(parent, color, 0.10)
+    }
+
+    /// Todo texto no acento. O `accent` cru do claro cai a 4,3:1 sobre `surface_2` e sobre linha
+    /// pressionada; o `accent_300` passa em todo fundo dos dois temas.
+    pub fn text_accent(&self) -> Color {
+        self.accent_300
+    }
+
+    /// Texto e icone desabilitados: `idle()`. Fica abaixo de 4,5 de proposito (WCAG isenta
+    /// controle inativo), e e o que separa "desabilitado" de "secundario".
+    pub fn text_disabled(&self) -> Color {
+        self.idle()
     }
 
     /// Divisoria opaca: o hex da paleta sobre `surface` (sobre `bg` fica um tom mais clara que
@@ -420,6 +470,17 @@ impl Tokens {
     }
 }
 
+/// Tom de uma tinta (`Tokens::tint`). Nao e o `dashboard::grafite::Tone`: aquele e o tom
+/// semantico de um texto do modelo, sem acento; este so escolhe a cor da tinta.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code, reason = "banner e tile da Fase 7 usam os outros tons")]
+pub enum Tone {
+    Accent,
+    Income,
+    Expense,
+    Warning,
+}
+
 pub fn alpha(color: Color, a: f32) -> Color {
     Color { a, ..color }
 }
@@ -472,7 +533,7 @@ fn disabled(t: &Tokens, style: button::Style) -> button::Style {
     };
     button::Style {
         background: None,
-        text_color: t.idle(),
+        text_color: t.text_disabled(),
         border,
         shadow: Shadow::default(),
         ..style
@@ -496,11 +557,12 @@ fn disabled_aware(
 
 // ---- containers ----
 
-/// Card: superficie solida, raio 8.
+/// Card: superficie solida, raio 8 e borda de 1 px `card_border` (nivel 0 de elevacao: borda,
+/// sem sombra).
 pub fn card(t: &'static Tokens) -> impl Fn(&Theme) -> container::Style {
     move |_| container::Style {
         background: bg(t.surface),
-        border: rounded(8.0),
+        border: outline(t.card_border(), radius::CARD),
         text_color: Some(t.text),
         ..container::Style::default()
     }
@@ -669,7 +731,7 @@ pub fn seg_option(
 pub fn ghost(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
     disabled_aware(t, move |_, status| button::Style {
         background: hovered(status).then(|| Background::Color(alpha(t.accent, 0.12))),
-        text_color: t.accent_300,
+        text_color: t.text_accent(),
         border: rounded(6.0),
         ..button::Style::default()
     })
@@ -682,7 +744,7 @@ pub fn link(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::St
         text_color: if hovered(status) {
             t.accent_200
         } else {
-            t.accent_300
+            t.text_accent()
         },
         ..button::Style::default()
     })
@@ -692,7 +754,7 @@ pub fn link(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::St
 pub fn outline_accent(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
     disabled_aware(t, move |_, status| button::Style {
         background: bg(alpha(t.accent, if hovered(status) { 0.16 } else { 0.08 })),
-        text_color: t.accent_300,
+        text_color: t.text_accent(),
         border: outline(t.accent, 8.0),
         ..button::Style::default()
     })
@@ -813,22 +875,27 @@ pub fn plain(color: Color) -> impl Fn(&Theme, button::Status) -> button::Style {
     }
 }
 
-/// Lista de modelos (`pick_list`): a mesma cara do campo de texto (fundo da janela, borda no
-/// divisor, acento aberta), para nao ser a unica peca com as cores derivadas do iced.
+/// Lista de modelos (`pick_list`): a mesma cara do campo de texto (fundo da janela, contorno
+/// `border_control`, `text_soft` sob o mouse e acento de 2 px aberta), para nao ser a unica peca
+/// com as cores derivadas do iced.
 pub fn pick(t: &'static Tokens) -> impl Fn(&Theme, pick_list::Status) -> pick_list::Style {
-    move |_, status| pick_list::Style {
-        text_color: t.text,
-        placeholder_color: t.text_muted,
-        handle_color: t.text_soft(),
-        background: Background::Color(t.bg),
-        border: outline(
-            if matches!(status, pick_list::Status::Opened { .. }) {
-                t.accent
-            } else {
-                t.divider()
+    move |_, status| {
+        let (color, width) = match status {
+            pick_list::Status::Opened { .. } => (t.accent, size::FOCUS_BORDER),
+            pick_list::Status::Hovered => (t.text_soft(), size::BORDER),
+            pick_list::Status::Active => (t.border_control(), size::BORDER),
+        };
+        pick_list::Style {
+            text_color: t.text,
+            placeholder_color: t.text_muted,
+            handle_color: t.text_soft(),
+            background: Background::Color(t.bg),
+            border: Border {
+                color,
+                width,
+                radius: radius::CONTROL.into(),
             },
-            8.0,
-        ),
+        }
     }
 }
 
@@ -848,17 +915,24 @@ pub fn pick_menu(t: &'static Tokens) -> impl Fn(&Theme) -> menu::Style {
     }
 }
 
-/// Campo de texto: fundo da janela com a borda no divisor (a mesma cara de `field`), borda no
-/// acento com foco. Desabilitado, o texto esmaece para mostrar que nao aceita digitacao.
+/// Campo de texto: fundo da janela com contorno `border_control` (3,9:1 ou mais; o divisor
+/// antigo dava 1,3:1 e o campo sumia, B1), `text_soft` sob o mouse e acento de 2 px com foco.
+/// Desabilitado, o contorno volta ao divisor e o texto esmaece, como o botao desabilitado.
 pub fn input(t: &'static Tokens) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
     move |_, status| {
-        let border_color = match status {
-            text_input::Status::Focused { .. } => t.accent,
-            _ => t.divider(),
+        let (color, width) = match status {
+            text_input::Status::Focused { .. } => (t.accent, size::FOCUS_BORDER),
+            text_input::Status::Hovered => (t.text_soft(), size::BORDER),
+            text_input::Status::Active => (t.border_control(), size::BORDER),
+            text_input::Status::Disabled => (t.divider(), size::BORDER),
         };
         text_input::Style {
             background: Background::Color(t.bg),
-            border: outline(border_color, 8.0),
+            border: Border {
+                color,
+                width,
+                radius: radius::CONTROL.into(),
+            },
             icon: t.text_muted,
             placeholder: t.text_muted,
             value: if matches!(status, text_input::Status::Disabled) {
@@ -871,8 +945,9 @@ pub fn input(t: &'static Tokens) -> impl Fn(&Theme, text_input::Status) -> text_
     }
 }
 
-/// Barra de rolagem discreta: sem trilho, so o cursor em texto a 18 % (32 % sob o mouse). A
-/// padrao do iced pinta o trilho com a paleta derivada, que nao e a do design.
+/// Barra de rolagem discreta: sem trilho, so o cursor opaco (`scroller_rest`, `idle()` sob o
+/// mouse ou arrastado, B3). A padrao do iced pinta o trilho com a paleta derivada, que nao e a
+/// do design; o texto a 18 % que estava aqui ficava em 1,7:1 e o cursor quase nao se via.
 pub fn scrollbar(t: &'static Tokens) -> impl Fn(&Theme, scrollable::Status) -> scrollable::Style {
     move |theme, status| {
         let active = matches!(
@@ -889,7 +964,7 @@ pub fn scrollbar(t: &'static Tokens) -> impl Fn(&Theme, scrollable::Status) -> s
             background: None,
             border: Border::default(),
             scroller: scrollable::Scroller {
-                background: Background::Color(t.text_alpha(if active { 0.32 } else { 0.18 })),
+                background: Background::Color(if active { t.idle() } else { t.scroller_rest() }),
                 border: rounded(3.0),
             },
         };
@@ -1350,7 +1425,7 @@ mod tests {
             ];
             for (name, style) in styles {
                 let s = style(&theme, button::Status::Disabled);
-                assert_eq!(s.text_color, t.idle(), "{name} {:?}", t.mode);
+                assert_eq!(s.text_color, t.text_disabled(), "{name} {:?}", t.mode);
                 assert!(s.background.is_none(), "{name} {:?}", t.mode);
                 if s.border.width > 0.0 {
                     assert_eq!(s.border.color, t.divider(), "{name} {:?}", t.mode);
@@ -1359,6 +1434,110 @@ mod tests {
                 let active = style(&theme, button::Status::Active);
                 assert_ne!(active.text_color, t.idle(), "{name} {:?}", t.mode);
             }
+        }
+    }
+
+    #[test]
+    fn papeis_derivados_saem_da_paleta() {
+        assert_eq!(DARK.card_border(), DARK.neutral_900);
+        assert_eq!(LIGHT.card_border(), LIGHT.neutral_800);
+        for t in [&DARK, &LIGHT] {
+            assert_eq!(t.border_control(), t.idle(), "{:?}", t.mode);
+            assert_eq!(t.text_disabled(), t.idle(), "{:?}", t.mode);
+            assert_eq!(t.text_accent(), t.accent_300, "{:?}", t.mode);
+            assert_eq!(
+                t.tint(Tone::Warning, t.surface),
+                mix(t.surface, t.warning, 0.10),
+                "{:?}",
+                t.mode
+            );
+        }
+    }
+
+    /// Relatorio 7.3: a borda do card nao e contraste, e percepcao (1,29 e 1,16 no escuro, 1,17
+    /// e 1,27 no claro). Fixado para quem mexer saber que nao e erro de piso.
+    #[test]
+    fn borda_do_card_separa_sem_chegar_a_3() {
+        let near = |got: f64, want: f64| (got - want).abs() < 0.01;
+        assert!(near(contrast(DARK.card_border(), DARK.bg), 1.29));
+        assert!(near(contrast(DARK.card_border(), DARK.surface), 1.16));
+        assert!(near(contrast(LIGHT.card_border(), LIGHT.bg), 1.17));
+        assert!(near(contrast(LIGHT.card_border(), LIGHT.surface), 1.27));
+    }
+
+    /// Relatorio 7.3, input (nao texto, piso 3): contorno sobre `surface` e `bg`, hover e foco
+    /// sobre `bg`. Valor e placeholder continuam no piso de texto.
+    #[test]
+    fn campo_de_texto_tem_contorno_visivel() {
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            let style = input(t);
+            let rest = style(&theme, text_input::Status::Active);
+            let hover = style(&theme, text_input::Status::Hovered);
+            let focus = style(&theme, text_input::Status::Focused { is_hovered: false });
+            assert_eq!(rest.border.color, t.border_control(), "{:?}", t.mode);
+            assert_eq!(hover.border.color, t.text_soft(), "{:?}", t.mode);
+            assert_eq!(focus.border.color, t.accent, "{:?}", t.mode);
+            assert_eq!(rest.border.width, size::BORDER);
+            assert_eq!(focus.border.width, size::FOCUS_BORDER);
+            for (name, fg, bg) in [
+                ("contorno/card", rest.border.color, t.surface),
+                ("contorno/bg", rest.border.color, t.bg),
+                ("hover/bg", hover.border.color, t.bg),
+                ("foco/bg", focus.border.color, t.bg),
+                ("foco/card", focus.border.color, t.surface),
+            ] {
+                let c = contrast(fg, bg);
+                assert!(c >= 3.0, "{name} {:?}: {c:.2}", t.mode);
+            }
+            assert!(contrast(t.text, t.bg) >= 4.5);
+            assert!(contrast(t.text_muted, t.bg) >= 4.5);
+            // A lista de modelos acompanha o campo.
+            let pick = pick(t)(&theme, pick_list::Status::Active);
+            assert_eq!(pick.border.color, t.border_control(), "{:?}", t.mode);
+        }
+        let near = |got: f64, want: f64| (got - want).abs() < 0.01;
+        assert!(near(contrast(DARK.border_control(), DARK.surface), 3.88));
+        assert!(near(contrast(LIGHT.border_control(), LIGHT.surface), 4.67));
+    }
+
+    /// B3: o cursor da rolagem em repouso fica abaixo de 3 de proposito (2,87 e 2,03 sobre `bg`,
+    /// lacuna registrada); sob o mouse ou arrastado vira `idle()` e passa.
+    #[test]
+    fn cursor_da_rolagem_segue_b3() {
+        let near = |got: f64, want: f64| (got - want).abs() < 0.01;
+        assert!(near(contrast(DARK.scroller_rest(), DARK.bg), 2.87));
+        assert!(near(contrast(LIGHT.scroller_rest(), LIGHT.bg), 2.03));
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            let style = scrollbar(t);
+            let scroller = |status| match style(&theme, status).vertical_rail.scroller.background {
+                Background::Color(c) => c,
+                Background::Gradient(_) => panic!("cursor com gradiente"),
+            };
+            let rest = scroller(scrollable::Status::Active {
+                is_horizontal_scrollbar_disabled: false,
+                is_vertical_scrollbar_disabled: false,
+            });
+            assert_eq!(rest, t.scroller_rest(), "{:?}", t.mode);
+            let active = scroller(scrollable::Status::Dragged {
+                is_horizontal_scrollbar_dragged: false,
+                is_vertical_scrollbar_dragged: true,
+                is_horizontal_scrollbar_disabled: false,
+                is_vertical_scrollbar_disabled: false,
+            });
+            assert_eq!(active, t.idle(), "{:?}", t.mode);
+            assert!(contrast(active, t.bg) >= 3.0, "{:?}", t.mode);
+        }
+    }
+
+    #[test]
+    fn card_tem_borda_de_1_px() {
+        for t in [&DARK, &LIGHT] {
+            let style = card(t)(&t.iced_theme());
+            assert_eq!(style.border.color, t.card_border(), "{:?}", t.mode);
+            assert_eq!(style.border.width, size::BORDER);
+            assert_eq!(style.border.radius, radius::CARD.into());
         }
     }
 

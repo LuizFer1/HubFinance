@@ -569,8 +569,16 @@ fn status_card(app: &App) -> Element<'_, Message> {
         .padding(14)
         .width(Length::Fill)
         .style(theme::status_card(t))
-        .on_press(Message::SelectScreen(Screen::Connection))
+        .on_press(status_card_press())
         .into()
+}
+
+/// Para onde o card de status leva: Aparelhos, onde estao o endereco e quem esta conectado.
+pub(super) const STATUS_CARD_TARGET: Screen = Screen::Connection;
+
+/// A mensagem do clique no card, a unica que `status_card` usa.
+pub(super) fn status_card_press() -> Message {
+    Message::SelectScreen(STATUS_CARD_TARGET)
 }
 
 // ---- conteudo ----
@@ -1181,8 +1189,14 @@ mod tests {
             app.screen = screen;
             let _ = root(&app);
         }
+        assert_eq!(STATUS_CARD_TARGET, Screen::Connection);
+        assert!(matches!(
+            status_card_press(),
+            Message::SelectScreen(STATUS_CARD_TARGET)
+        ));
         app.screen = Screen::Dashboard;
-        let _ = super::super::app::update(&mut app, Message::SelectScreen(Screen::Connection));
+        let _ = super::super::app::update(&mut app, status_card_press());
+        assert_eq!(app.screen, STATUS_CARD_TARGET);
         assert_eq!(titles(&app).0, "Aparelhos");
     }
 

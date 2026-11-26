@@ -1978,8 +1978,17 @@ pub(super) mod tests {
         );
         assert_eq!(app.reserves.totals, shown_reserves.totals);
         // O envelope e os achados guardam os valores reais: a Analise mascara so ao desenhar.
+        // `rebuild` com o olho ligado e o caminho de snapshot novo, mes ou conta: recalcula os
+        // achados e o envelope, que tem de sair igual (a meta da emergencia no envelope e o
+        // "Faltam R$ ..." do achado vem do `emergency_view`, que eles pedem sempre visivel).
+        assert!(findings.contains("R$ "), "{findings}");
+        assert!(envelope.contains("R$ "), "{envelope}");
+        app.rebuild();
         assert_eq!(app.current_envelope(), envelope);
+        assert!(!envelope.contains('•'));
         assert_eq!(format!("{:?}", app.analysis), findings);
+        assert_eq!(leaks(&format!("{:#?}", app.reserves)), None);
+        assert_eq!(leaks(&format!("{:#?}", app.transactions)), None);
 
         let _ = update(&mut app, Message::ToggleHideValues);
         assert_eq!(app.reserves, shown_reserves);

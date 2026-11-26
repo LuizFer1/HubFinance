@@ -916,8 +916,11 @@ mod tests {
             (FindingKind::Emergency, Severity::Attention)
         );
         assert_eq!(f.title, "Reserva de emergência cobre só 0,5 mês");
-        assert!(
-            f.action.as_deref().is_some_and(|a| a.starts_with("Faltam")),
+        // O valor real, nunca a mascara: o achado vai no envelope do assistente, e "Ocultar
+        // valores" e so da tela (`emergency_view` recebe o `Money` visivel aqui).
+        assert_eq!(
+            f.action.as_deref(),
+            Some("Faltam R$ 5.500,00 para a meta"),
             "{f:?}"
         );
         assert_eq!(f.impact_minor, 600_000 - 50_000);

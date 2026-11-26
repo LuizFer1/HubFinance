@@ -13,75 +13,10 @@ use super::theme::{self, Tokens};
 mod controls;
 mod surface;
 
-pub use controls::{action_button, action_button_icon, action_button_with, icon_button};
+pub use controls::{
+    SegmentedVariant, action_button, action_button_icon, action_button_with, icon_button, segmented,
+};
 pub use surface::{card, divider, inset, section_heading, vdivider};
-
-/// Controle segmentado de duas opcoes (o "toggle" do hub): `(glifo opcional, rotulo, ativo,
-/// mensagem)` para cada lado.
-pub fn seg_switch<'a, M: Clone + 'a>(
-    t: &'static Tokens,
-    options: [(Option<&'static str>, &'static str, bool, M); 2],
-) -> Element<'a, M> {
-    let option =
-        |(glyph, label, active, message): (Option<&'static str>, &'static str, bool, M)| {
-            let mut content = row![].spacing(6).align_y(Alignment::Center);
-            if let Some(glyph) = glyph {
-                content = content.push(text(glyph).font(fonts::PHOSPHOR).size(12).line_height(1.0));
-            }
-            content = content.push(text(label).size(12).font(fonts::INTER_MEDIUM));
-            button(
-                container(content)
-                    .center_x(Length::Fill)
-                    .height(26)
-                    .align_y(Alignment::Center),
-            )
-            .padding(0)
-            .width(Length::Fill)
-            .style(theme::seg_option(t, active))
-            .on_press(message)
-        };
-    let [a, b] = options;
-    container(row![option(a), option(b)].width(Length::Fill))
-        .padding(3)
-        .width(Length::Fill)
-        .style(theme::outlined(t.divider(), 8.0))
-        .into()
-}
-
-/// Segmentado Grafite (tema, Pessoal | Comercial): trilho `surface` raio 8 com 4 px de
-/// respiro, opcoes de 36 px em 13 Regular. `fill` divide a largura (seletor de tema da lateral);
-/// sem ele cada opcao tem o tamanho do rotulo + 14 px de cada lado (cabecalho).
-pub fn segmented<'a, M: Clone + 'a>(
-    t: &'static Tokens,
-    fill: bool,
-    options: [(&'static str, bool, M); 2],
-) -> Element<'a, M> {
-    let option = |(label, active, message): (&'static str, bool, M)| {
-        let content = container(text(label).size(13).line_height(1.0))
-            .height(36)
-            .align_y(Alignment::Center);
-        let content = if fill {
-            content.center_x(Length::Fill)
-        } else {
-            content.padding([0, 14])
-        };
-        let b = button(content)
-            .padding(0)
-            .style(theme::segment(t, active))
-            .on_press(message);
-        if fill { b.width(Length::Fill) } else { b }
-    };
-    let [a, b] = options;
-    let line = row![option(a), option(b)].spacing(4);
-    let rail = container(if fill { line.width(Length::Fill) } else { line })
-        .padding(4)
-        .style(theme::fill(t.surface, 8.0));
-    if fill {
-        rail.width(Length::Fill).into()
-    } else {
-        rail.into()
-    }
-}
 
 /// Rotulo em frase normal ("Saldo do mês"), 12 Medium em `text_muted`. Desvio do handoff, que pede
 /// caixa alta com `letter-spacing`: sem o espacamento (o iced nao tem) a caixa alta ficava

@@ -13,6 +13,7 @@ use iced::{Alignment, Color, Element, Length, Padding};
 use super::app::{App, Message};
 use super::rows::{author_cell, category_tile, hover_row, value_cell};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, alpha, mix};
+use super::widgets::SegmentedVariant;
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::list::{
     ALL_CATEGORIES_COLOR, CategoryOption, Filters, ListRow, NONE_KEY, TypeFilter,
@@ -275,26 +276,20 @@ fn author_chips(app: &App) -> Vec<Element<'_, Message>> {
 }
 
 fn type_segment(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
     let option = |kind: TypeFilter, label: &'static str| {
-        button(
-            container(text(label).size(12).font(fonts::INTER_MEDIUM))
-                .height(Length::Fill)
-                .align_y(Alignment::Center),
-        )
-        .height(28)
-        .padding([0, 12])
-        .style(theme::seg_option(t, app.filters.kind == kind))
-        .on_press(Message::SetType(kind))
+        (label, app.filters.kind == kind, Message::SetType(kind))
     };
-    container(row![
-        option(TypeFilter::All, "Todos"),
-        option(TypeFilter::Income, "Receitas"),
-        option(TypeFilter::Expense, "Despesas"),
-    ])
-    .padding(3)
-    .style(theme::outlined(t.divider(), 8.0))
-    .into()
+    widgets::segmented(
+        app.tokens,
+        SegmentedVariant::Bordered,
+        ButtonSize::Compact,
+        false,
+        [
+            option(TypeFilter::All, "Todos"),
+            option(TypeFilter::Income, "Receitas"),
+            option(TypeFilter::Expense, "Despesas"),
+        ],
+    )
 }
 
 // ---- totais ----

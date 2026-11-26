@@ -2,11 +2,12 @@
 //! Tudo que muda sai como `SaveSettings` (ou `SaveKey`) para o nucleo; o painel so mostra o que
 //! o snapshot diz estar gravado, fora os rascunhos de porta, modelo e chave.
 
-use iced::widget::{Space, button, column, container, pick_list, row, text, text_input};
+use iced::widget::{Space, column, container, pick_list, row, text, text_input};
 use iced::{Alignment, Element, Length, Padding};
 
 use super::app::{App, Message};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
+use super::widgets::SegmentedVariant;
 use super::{fonts, widgets};
 use crate::assistant::secret::Secret;
 use crate::assistant::settings::ProviderChoice;
@@ -59,46 +60,23 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-/// Nenhum / Local / Nuvem. `widgets::segmented` so tem duas opcoes, entao o trilho de tres e
-/// montado aqui com o mesmo estilo.
+/// Nenhum / Local / Nuvem: o segmentado de pilula, com o trilho de dentro de card.
 fn provider_picker(t: &'static Tokens, current: ProviderChoice) -> Element<'static, Message> {
     let option = |label: &'static str, choice: ProviderChoice| {
-        segment(
-            t,
-            label,
-            current == choice,
-            Message::SettingsProvider(choice),
-        )
+        (label, current == choice, Message::SettingsProvider(choice))
     };
-    let rail = container(
-        row![
+    let rail = widgets::segmented(
+        t,
+        SegmentedVariant::PillInset,
+        ButtonSize::Regular,
+        false,
+        [
             option("Nenhum", ProviderChoice::None),
             option("Local (Ollama)", ProviderChoice::Local),
             option("Nuvem (OpenRouter)", ProviderChoice::Cloud),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center),
-    )
-    .padding(4)
-    .style(theme::fill(t.surface_2, 8.0));
+        ],
+    );
     row![rail, Space::new().width(Length::Fill)].into()
-}
-
-fn segment(
-    t: &'static Tokens,
-    label: &'static str,
-    active: bool,
-    on_press: Message,
-) -> Element<'static, Message> {
-    let content = container(text(label).size(13).line_height(1.0))
-        .height(36)
-        .padding([0, 14])
-        .align_y(Alignment::Center);
-    button(content)
-        .padding(0)
-        .style(theme::segment(t, active))
-        .on_press(on_press)
-        .into()
 }
 
 fn local_section(app: &App) -> Element<'_, Message> {
@@ -158,7 +136,7 @@ fn local_section(app: &App) -> Element<'_, Message> {
     section.into()
 }
 
-/// Sim / Nao no estilo do hub (`seg_switch`), com o rotulo a esquerda.
+/// Sim / Nao no estilo do hub (segmentado contornado), com o rotulo a esquerda.
 fn yes_no<'a>(
     t: &'static Tokens,
     label: &'static str,
@@ -167,12 +145,12 @@ fn yes_no<'a>(
 ) -> Element<'a, Message> {
     row![
         text(label).size(13).color(t.text).width(Length::Fill),
-        container(widgets::seg_switch(
+        container(widgets::segmented(
             t,
-            [
-                (None, "Sim", on, message(true)),
-                (None, "Não", !on, message(false)),
-            ],
+            SegmentedVariant::Bordered,
+            ButtonSize::Compact,
+            true,
+            [("Sim", on, message(true)), ("Não", !on, message(false))],
         ))
         .width(140),
     ]

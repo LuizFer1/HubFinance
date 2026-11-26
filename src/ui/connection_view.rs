@@ -14,6 +14,7 @@ use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
 use super::app::{App, CopyTarget, Message};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
+use super::widgets::SegmentedVariant;
 use super::{fonts, icons, measure, shell, time, widgets};
 use crate::config;
 use crate::dashboard::people::{Person, presence};
@@ -488,11 +489,14 @@ fn about_card(app: &App) -> Element<'_, Message> {
         ]
     };
     let autostart: Option<Element<'_, Message>> = app.autostart.map(|enabled| {
-        let switch = container(widgets::seg_switch(
+        let switch = container(widgets::segmented(
             t,
+            SegmentedVariant::Bordered,
+            ButtonSize::Compact,
+            true,
             [
-                (None, "Sim", enabled, Message::SetAutostart(true)),
-                (None, "Não", !enabled, Message::SetAutostart(false)),
+                ("Sim", enabled, Message::SetAutostart(true)),
+                ("Não", !enabled, Message::SetAutostart(false)),
             ],
         ))
         .width(140);

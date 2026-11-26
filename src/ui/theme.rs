@@ -545,8 +545,15 @@ fn outline(color: Color, radius: f32) -> Border {
     }
 }
 
-fn hovered(status: button::Status) -> bool {
-    matches!(status, button::Status::Hovered | button::Status::Pressed)
+/// Camada neutra por estado: nada em repouso, `state(false)` sob o mouse e `state(true)`
+/// pressionado. E a regra dos estilos de item (lateral, segmento, icone, menu) e o que separa o
+/// clique do hover que ja estava ali.
+fn neutral_layer(t: &Tokens, status: button::Status) -> Option<Background> {
+    match status {
+        button::Status::Hovered => bg(t.state(false)),
+        button::Status::Pressed => bg(t.state(true)),
+        button::Status::Active | button::Status::Disabled => None,
+    }
 }
 
 /// Cara de botao desabilitado, igual para todos: texto `idle()`, sem tinta, e o contorno (se o
@@ -697,7 +704,8 @@ pub const TOOLTIP_DELAY: std::time::Duration = std::time::Duration::from_millis(
 // ---- botoes ----
 
 /// Item de navegacao Grafite: ativo em `surface` com texto `fg`; inativo sem fundo, texto de
-/// apoio. O design nao desenha hover; o inativo ganha o texto a 4 % para o clique ter resposta.
+/// apoio. O design nao desenha hover; o inativo ganha a camada `state` (4 % sob o mouse, 8 %
+/// pressionado) para o clique ter resposta.
 pub fn nav_item(
     t: &'static Tokens,
     active: bool,
@@ -705,10 +713,8 @@ pub fn nav_item(
     disabled_aware(t, move |_, status| {
         let background = if active {
             bg(t.surface)
-        } else if hovered(status) {
-            bg(t.text_alpha(0.04))
         } else {
-            None
+            neutral_layer(t, status)
         };
         button::Style {
             background,
@@ -720,7 +726,8 @@ pub fn nav_item(
 }
 
 /// Opcao do segmentado Grafite (tema, Pessoal | Comercial): raio 6, ativo no #333333 do
-/// design (a divisoria opaca) com texto `fg`, inativo transparente com texto de apoio.
+/// design (a divisoria opaca) com texto `fg`, inativo transparente com texto de apoio e a
+/// camada `state` sob o mouse e pressionado.
 pub fn segment(
     t: &'static Tokens,
     active: bool,
@@ -728,10 +735,8 @@ pub fn segment(
     disabled_aware(t, move |_, status| button::Style {
         background: if active {
             bg(t.divider())
-        } else if hovered(status) {
-            bg(t.text_alpha(0.05))
         } else {
-            None
+            neutral_layer(t, status)
         },
         text_color: if active { t.text } else { t.text_soft() },
         border: rounded(6.0),
@@ -739,10 +744,11 @@ pub fn segment(
     })
 }
 
-/// Botao so de icone (olho do cabecalho): 44 px, raio 8, transparente; hover texto a 6 %.
+/// Botao so de icone (olho do cabecalho): raio 8, transparente; camada `state` sob o mouse e
+/// pressionado.
 pub fn icon_button(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
     disabled_aware(t, move |_, status| button::Style {
-        background: hovered(status).then(|| Background::Color(t.text_alpha(0.06))),
+        background: neutral_layer(t, status),
         text_color: t.text_soft(),
         border: rounded(8.0),
         ..button::Style::default()
@@ -750,7 +756,7 @@ pub fn icon_button(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> but
 }
 
 /// Opcao de segmentado (tipo): raio 6, ativo `accent_900` + `accent_200`, inativo no texto de
-/// apoio (o texto a 60 % fica abaixo de 4,5:1 no claro).
+/// apoio (o texto a 60 % fica abaixo de 4,5:1 no claro) com a camada `state`.
 pub fn seg_option(
     t: &'static Tokens,
     active: bool,
@@ -758,10 +764,8 @@ pub fn seg_option(
     disabled_aware(t, move |_, status| button::Style {
         background: if active {
             bg(t.accent_900)
-        } else if hovered(status) {
-            bg(t.text_alpha(0.05))
         } else {
-            None
+            neutral_layer(t, status)
         },
         text_color: if active { t.accent_200 } else { t.text_soft() },
         border: rounded(6.0),
@@ -963,19 +967,23 @@ pub fn danger_filled(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> b
     button(t, ButtonKind::DangerFilled, ButtonSize::Regular)
 }
 
-/// Botoes da barra de titulo: icone no texto de apoio, hover texto a 8 %; o fechar fica vermelho
-/// do Windows.
+/// Botoes da barra de titulo: icone no texto de apoio, texto a 8 % sob o mouse e 12 %
+/// pressionado; o fechar fica no vermelho do Windows e escurece 15 % pressionado (mais escuro, o
+/// texto claro so ganha contraste).
 pub fn titlebar_button(
     t: &'static Tokens,
     close: bool,
 ) -> impl Fn(&Theme, button::Status) -> button::Style {
     disabled_aware(t, move |_, status| {
-        let hover = hovered(status);
+        let press = Press::of(status);
+        let hover = press != Press::Rest;
         button::Style {
-            background: match (hover, close) {
-                (true, true) => bg(t.close_hover),
-                (true, false) => bg(t.text_alpha(0.08)),
-                (false, _) => None,
+            background: match (press, close) {
+                (Press::Rest, _) => None,
+                (Press::Hover, true) => bg(t.close_hover),
+                (Press::Down, true) => bg(mix(t.close_hover, Color::BLACK, 0.15)),
+                (Press::Hover, false) => bg(t.text_alpha(0.08)),
+                (Press::Down, false) => bg(t.text_alpha(0.12)),
             },
             text_color: if hover && close {
                 t.close_hover_text
@@ -989,15 +997,14 @@ pub fn titlebar_button(
 }
 
 /// Chip pilula (autor): ativo borda `accent` + `accent_900` + `accent_200`; inativo superficie
-/// com borda no divisor e hover texto a 5 % pre-misturado.
+/// com borda no divisor e o texto pre-misturado a 5 % sob o mouse e 10 % pressionado.
 pub fn chip(t: &'static Tokens, active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     disabled_aware(t, move |_, status| {
         let (background, border, text_color) = if active {
             (t.accent_900, t.accent, t.accent_200)
-        } else if hovered(status) {
-            (mix(t.surface, t.text, 0.05), t.divider(), t.text)
         } else {
-            (t.surface, t.divider(), t.text)
+            let amount = Press::of(status).pick(0.0, 0.05, 0.10);
+            (mix(t.surface, t.text, amount), t.divider(), t.text)
         };
         button::Style {
             background: bg(background),
@@ -1019,18 +1026,17 @@ pub fn filter_button(
     })
 }
 
-/// Item do menu de categoria: raio 6, escolhido com o acento a 10 %, hover texto a 6 %.
+/// Item do menu de categoria: raio 6, escolhido com o acento a 10 %, camada `state` sob o
+/// mouse e pressionado (por cima da escolha: o clique responde ate no item ja escolhido).
 pub fn menu_item(
     t: &'static Tokens,
     selected: bool,
 ) -> impl Fn(&Theme, button::Status) -> button::Style {
     disabled_aware(t, move |_, status| button::Style {
-        background: if hovered(status) {
-            bg(t.text_alpha(0.06))
-        } else if selected {
-            bg(alpha(t.accent, 0.10))
-        } else {
-            None
+        background: match neutral_layer(t, status) {
+            Some(layer) => Some(layer),
+            None if selected => bg(alpha(t.accent, 0.10)),
+            None => None,
         },
         text_color: t.text,
         border: rounded(6.0),
@@ -1804,6 +1810,59 @@ mod tests {
                     assert_eq!(s.border.radius, size.radius().into(), "{kind:?}");
                 }
             }
+        }
+    }
+
+    /// Os oito estilos de item tambem separam `Pressed` de `Hovered`, e o repouso do hover.
+    /// Ativos sem camada (item da lateral ativo, segmento ativo) ficam de fora: neles o clique
+    /// nao muda nada.
+    #[test]
+    fn pressionado_difere_do_hover_nos_estilos_de_item() {
+        type Style = Box<dyn Fn(&Theme, button::Status) -> button::Style>;
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            let styles: Vec<(&str, Style)> = vec![
+                ("nav", Box::new(nav_item(t, false))),
+                ("segment", Box::new(segment(t, false))),
+                ("icone", Box::new(icon_button(t))),
+                ("seg_option", Box::new(seg_option(t, false))),
+                ("titlebar", Box::new(titlebar_button(t, false))),
+                ("fechar", Box::new(titlebar_button(t, true))),
+                ("chip", Box::new(chip(t, false))),
+                ("filtro", Box::new(filter_button(t, false))),
+                ("menu_item", Box::new(menu_item(t, false))),
+                ("menu_item escolhido", Box::new(menu_item(t, true))),
+            ];
+            for (name, style) in styles {
+                let rest = style(&theme, button::Status::Active);
+                let hover = style(&theme, button::Status::Hovered);
+                let down = style(&theme, button::Status::Pressed);
+                assert_ne!(hover, down, "{name} {:?}", t.mode);
+                assert_ne!(rest, hover, "{name} {:?}", t.mode);
+            }
+            // Camada neutra: 4 % sob o mouse, 8 % pressionado.
+            let nav = nav_item(t, false);
+            assert_eq!(
+                nav(&theme, button::Status::Hovered).background,
+                bg(t.state(false))
+            );
+            assert_eq!(
+                nav(&theme, button::Status::Pressed).background,
+                bg(t.state(true))
+            );
+        }
+    }
+
+    /// O fechar pressionado escurece: o texto claro continua acima de 4,5 por cima dele.
+    #[test]
+    fn fechar_pressionado_mantem_o_contraste() {
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            let s = titlebar_button(t, true)(&theme, button::Status::Pressed);
+            let Some(Background::Color(fill)) = s.background else {
+                panic!("fechar pressionado sem fundo");
+            };
+            assert!(contrast(s.text_color, fill) >= 4.5, "{:?}", t.mode);
         }
     }
 

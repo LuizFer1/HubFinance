@@ -345,12 +345,14 @@ fn users_card(app: &App) -> Element<'_, Message> {
     .padding([0, 8]);
     let mut col = column![title, Space::new().height(8)];
     if count == 0 {
-        // So com o nucleo fora do ar (com ele no ar e sem aparelho, o fluxo ocupa a tela).
+        // Nucleo fora do ar, ou o ultimo aparelho com a remocao pendente (o fluxo so ocupa a
+        // tela depois que ela sai).
         let body = widgets::empty_state(
             t,
             widgets::empty_icon(t, icons::DEVICE_MOBILE),
             "Nenhum aparelho conectado",
-            "Quando um celular parear, ele aparece aqui com o nome e a cor que a pessoa escolheu              no app.",
+            "Quando um celular parear, ele aparece aqui com o nome e a cor que a pessoa \
+             escolheu no app.",
             None,
         );
         col = col.push(widgets::divider(t)).push(
@@ -518,9 +520,14 @@ pub(super) fn connect_dialog(app: &App) -> Option<Element<'_, Message>> {
         flow_body(app, flow, true),
         app.window_size.width,
         FLOW_WIDTH,
-        Some(DIALOG_HEIGHT),
+        Some(dialog_height(app.window_size.height)),
         Message::ConnectClose,
     ))
+}
+
+/// Altura do dialogo: a fixa, ou a janela menos a margem de 24 de cada lado se ela for menor.
+fn dialog_height(window_height: f32) -> f32 {
+    DIALOG_HEIGHT.min(window_height - 48.0)
 }
 
 /// "Certificado, passo 2 de 3".
@@ -808,7 +815,8 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
                     15.0,
                 ))
                 .push(Space::new().height(4));
-            if pairing.is_some() {
+            // So o que venceu de fato: um codigo valido sem QR (hub fora do ar) nao e expirado.
+            if pairing.as_ref().is_some_and(|p| p.expires_at <= now) {
                 col = col.push(text("Código expirado").size(12).color(t.warning));
             }
             let mut generate =
@@ -889,6 +897,12 @@ mod tests {
         assert!(two_columns(854.0));
         // Com espaco, fica no tamanho do design.
         assert_eq!(field_value_size(url, 600.0), 15.0);
+    }
+
+    #[test]
+    fn dialogo_nunca_passa_da_janela() {
+        assert_eq!(dialog_height(900.0), DIALOG_HEIGHT);
+        assert_eq!(dialog_height(600.0), 552.0);
     }
 
     #[test]

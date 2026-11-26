@@ -42,9 +42,10 @@ pub fn subscription() -> Subscription<Message> {
 
 /// O que a tecla faz agora, ou `None`.
 ///
-/// - Esc fecha o que estiver por cima: dialogo de remocao, "Conectar um celular", previa do assistente, menu de
-///   categoria, painel do assistente (nessa ordem). Menu e painel so na tela deles: o painel
-///   continua "aberto" ao trocar de tela, e Esc em outra tela o fecharia sem ninguem ver.
+/// - Esc fecha o que estiver por cima: dialogo de remocao, "Conectar um celular", previa do
+///   assistente, menu de categoria, painel do assistente (nessa ordem). Menu e painel so na
+///   tela deles: o painel continua "aberto" ao trocar de tela, e Esc em outra tela o fecharia
+///   sem ninguem ver.
 /// - Com dialogo aberto, so o Esc: atalho por baixo do scrim mexeria numa tela escondida.
 /// - Tab e Shift+Tab andam entre os campos.
 /// - Ctrl+1..N troca de tela na ordem da navegacao.

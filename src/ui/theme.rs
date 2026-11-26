@@ -19,9 +19,9 @@ use crate::dashboard::colors::{self, Mode, Rgb};
 /// Cores de um tema. Os nomes seguem a paleta §4.1; `text` e o `fg` da paleta (o nome antigo
 /// ficou porque e lido em quase cem lugares da UI).
 ///
-/// So entram os degraus que alguma tela usa: `accent-100/500/600/800`, `on-accent` e
-/// `neutral-200` da paleta ficaram de fora na H4b (nenhum uso no hub). Quem precisar de um deles
-/// copia o hex da paleta e acrescenta a linha no teste da tabela.
+/// A tabela §4.1 entra inteira: `accent-100/500/600/800`, `on-accent` e `neutral-200`, que
+/// sairam na H4b por falta de uso, voltaram na Fase 7 (toggle, link pressionado, variantes de
+/// botao). Degrau novo na paleta pede a linha no teste da tabela, senao o hex diverge calado.
 #[derive(Debug)]
 pub struct Tokens {
     pub mode: Mode,
@@ -35,16 +35,30 @@ pub struct Tokens {
     pub text_muted: Color,
     divider: Color,
     pub accent: Color,
+    /// Texto/icone sobre preenchimento `accent`.
+    #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
+    pub on_accent: Color,
+    #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
+    pub accent_100: Color,
     pub accent_200: Color,
     pub accent_300: Color,
     pub accent_400: Color,
+    /// No escuro e o proprio `accent`; no claro e um degrau mais claro que ele.
+    #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
+    pub accent_500: Color,
+    #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
+    pub accent_600: Color,
     pub accent_700: Color,
+    /// Trilho do toggle ligado (paleta §4.1).
+    #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
+    pub accent_800: Color,
     pub accent_900: Color,
-    /// Texto/icone sobre preenchimento `accent`.
     /// Atencao (meta estourando, "sem dados", codigo expirado). Nao e o `tag-amber` das
     /// categorias: o dourado do acento ficou quase igual a ele, entao atencao virou laranja.
     pub warning: Color,
     pub neutral_100: Color,
+    #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
+    pub neutral_200: Color,
     pub neutral_300: Color,
     pub neutral_400: Color,
     pub neutral_500: Color,
@@ -83,13 +97,19 @@ pub static DARK: Tokens = Tokens {
     // `color-mix(fg 10%)` sobre `surface`: o iced nao mistura, entao vai o hex resultante.
     divider: hex(0x333333),
     accent: hex(0xe2c15a),
+    on_accent: hex(0x131313),
+    accent_100: hex(0xf9f3dd),
     accent_200: hex(0xf8e9b8),
     accent_300: hex(0xf0d98c),
     accent_400: hex(0xe8cd78),
+    accent_500: hex(0xe2c15a),
+    accent_600: hex(0xb29947),
     accent_700: hex(0x847335),
+    accent_800: hex(0x5a4f24),
     accent_900: hex(0x332d14),
     warning: hex(0xf2994a),
     neutral_100: hex(0xf2f2f2),
+    neutral_200: hex(0xe8e8e8),
     neutral_300: hex(0xd4d4d4),
     neutral_400: hex(0xbdbdbd),
     neutral_500: hex(0x989898),
@@ -121,13 +141,19 @@ pub static LIGHT: Tokens = Tokens {
     // `color-mix(fg 12%)` sobre `surface`.
     divider: hex(0xe4e4e4),
     accent: hex(0x876c00),
+    on_accent: hex(0xffffff),
+    accent_100: hex(0x392c01),
     accent_200: hex(0x4d4014),
     accent_300: hex(0x675412),
     accent_400: hex(0x866c10),
+    accent_500: hex(0xa48402),
+    accent_600: hex(0xc0a44f),
     accent_700: hex(0xdbc276),
+    accent_800: hex(0xf0e0af),
     accent_900: hex(0xf8efd5),
     warning: hex(0x975201),
     neutral_100: hex(0x2b2b2b),
+    neutral_200: hex(0x404040),
     neutral_300: hex(0x5a5a5a),
     neutral_400: hex(0x747474),
     neutral_500: hex(0x8f8f8f),
@@ -787,7 +813,7 @@ mod tests {
 
     /// Paleta Grafite §4.1 (`docs/mobile/specs/2026-11-19-paleta-grafite-design.md`): a unica
     /// fonte dos hex. `(nome, token, escuro, claro)`.
-    fn grafite(t: &Tokens) -> [(&'static str, Color); 21] {
+    fn grafite(t: &Tokens) -> [(&'static str, Color); 27] {
         [
             ("bg", t.bg),
             ("surface", t.surface),
@@ -796,13 +822,19 @@ mod tests {
             ("text_muted", t.text_muted),
             ("divider", t.divider()),
             ("accent", t.accent),
+            ("on_accent", t.on_accent),
+            ("accent_100", t.accent_100),
             ("accent_200", t.accent_200),
             ("accent_300", t.accent_300),
             ("accent_400", t.accent_400),
+            ("accent_500", t.accent_500),
+            ("accent_600", t.accent_600),
             ("accent_700", t.accent_700),
+            ("accent_800", t.accent_800),
             ("accent_900", t.accent_900),
             ("warning", t.warning),
             ("neutral_100", t.neutral_100),
+            ("neutral_200", t.neutral_200),
             ("neutral_300", t.neutral_300),
             ("neutral_400", t.neutral_400),
             ("neutral_500", t.neutral_500),
@@ -815,7 +847,7 @@ mod tests {
 
     #[test]
     fn tokens_por_modo() {
-        let expected: [(u32, u32); 21] = [
+        let expected: [(u32, u32); 27] = [
             (0x131313, 0xf5f5f5),
             (0x1e1e1e, 0xffffff),
             (0x262626, 0xeeeeee),
@@ -823,13 +855,19 @@ mod tests {
             (0xa6a6a6, 0x6b6b6b),
             (0x333333, 0xe4e4e4),
             (0xe2c15a, 0x876c00),
+            (0x131313, 0xffffff),
+            (0xf9f3dd, 0x392c01),
             (0xf8e9b8, 0x4d4014),
             (0xf0d98c, 0x675412),
             (0xe8cd78, 0x866c10),
+            (0xe2c15a, 0xa48402),
+            (0xb29947, 0xc0a44f),
             (0x847335, 0xdbc276),
+            (0x5a4f24, 0xf0e0af),
             (0x332d14, 0xf8efd5),
             (0xf2994a, 0x975201),
             (0xf2f2f2, 0x2b2b2b),
+            (0xe8e8e8, 0x404040),
             (0xd4d4d4, 0x5a5a5a),
             (0xbdbdbd, 0x747474),
             (0x989898, 0x8f8f8f),

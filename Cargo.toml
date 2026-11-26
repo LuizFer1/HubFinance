@@ -8,7 +8,7 @@ authors = ["Luiz Fernando"]
 repository = "https://github.com/LuizFer1/HubFinance"
 
 [dependencies]
-iced = { version = "0.14", features = ["qr_code", "canvas", "image"] }
+iced = { version = "0.14", features = ["qr_code", "canvas", "image", "markdown"] }
 base64 = "0.23"
 axum = "0.8"
 axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }

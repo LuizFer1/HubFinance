@@ -1128,6 +1128,11 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
     // dos cinco dialogos (ou qual caminho, snapshot incluso) mudou o estado.
     let scene = app.scene();
     app.motion.sync(scene, Instant::now());
+    // Sem janela nao chegam quadros: o que comecou agora (um toast que expirou com a janela
+    // fechada, por exemplo) termina aqui, e nao aparece pela metade ao reabrir.
+    if app.window.is_none() {
+        app.motion.settle();
+    }
     task
 }
 
@@ -1303,6 +1308,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             // A janela primeiro: o `ConnectPhone` le o estado da tela, nao da janela, entao
             // vale com ela fechada, e o dialogo ja esta montado quando ela aparece.
             let open = open_or_focus(app);
+            // Com um dialogo aberto (remocao, previa, assistente) a pessoa esta no meio de algo:
+            // so traz a janela, sem trocar de tela por baixo dele nem fecha-lo.
+            if app.any_dialog_open() {
+                return open;
+            }
             let connect = update(app, Message::ConnectPhone);
             Task::batch([open, connect])
         }
@@ -2396,6 +2406,8 @@ pub(super) mod tests {
     fn dialogo_liga_os_quadros_so_durante_a_entrada() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        // Com janela: sem ela as animacoes terminam na hora.
+        app.window = Some(window::Id::unique());
         assert!(!app.motion.animating(), "parada, sem quadros");
         let _ = update(&mut app, Message::ShowEnvelope);
         assert!(app.any_dialog_open());
@@ -4101,6 +4113,34 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::Desktop(DesktopEvent::ConnectPhone));
         assert_eq!(app.window, Some(id));
         assert!(app.connect.is_some());
+    }
+
+    #[test]
+    fn conectar_pela_bandeja_com_dialogo_aberto_so_traz_a_janela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        app.screen = Screen::Analysis;
+        app.envelope_preview = Some("envelope".into());
+        assert!(app.any_dialog_open());
+        app.window = None;
+        let _ = update(&mut app, Message::Desktop(DesktopEvent::ConnectPhone));
+        assert!(app.window.is_some(), "a janela abre");
+        assert_eq!(app.screen, Screen::Analysis, "a tela por baixo nao muda");
+        assert!(app.connect.is_none());
+        assert!(app.envelope_preview.is_some(), "o dialogo continua");
+    }
+
+    #[test]
+    fn sem_janela_as_animacoes_terminam_na_hora() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        app.window = None;
+        app.notice = Some(("Copiado".into(), Instant::now() + Duration::from_secs(5)));
+        let _ = update(&mut app, Message::Noop);
+        assert!(!app.motion.animating());
+        app.notice = None;
+        let _ = update(&mut app, Message::Noop);
+        assert!(app.motion.toast().is_none(), "nada descendo para reabrir");
     }
 
     #[test]

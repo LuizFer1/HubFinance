@@ -415,7 +415,10 @@ impl App {
             snapshot.assistant.settings.local.port,
             snapshot_model.clone(),
         );
-        let system_dark = desktop.system_dark().unwrap_or(true);
+        // Sem resposta do sistema: o que ele dizia na ultima gravacao, ou escuro (o padrao do
+        // design) se nunca houve.
+        let saved = prefs.theme != ThemeMode::System || prefs.system_dark;
+        let system_dark = desktop.system_dark().unwrap_or(saved);
         let tokens = Tokens::for_mode(prefs.theme, system_dark);
         let mut app = App {
             handle,
@@ -488,6 +491,7 @@ impl App {
     fn prefs(&self) -> UiPrefs {
         UiPrefs {
             theme: self.theme,
+            system_dark: self.theme == ThemeMode::System && self.system_dark,
             autostart: self.autostart_pref,
             hide_values: self.hide_values,
         }
@@ -1832,9 +1836,9 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn nasce_com_o_tema_do_sistema_ou_escuro_se_ele_nao_diz() {
+    fn nasce_com_o_tema_do_sistema_ou_o_da_ultima_gravacao() {
         let dir = tempfile::tempdir().unwrap();
-        let boot = |system: Option<bool>| {
+        let boot = |system: Option<bool>, saved_dark: bool| {
             let fake = Fake::with_tray();
             fake.system_dark.set(system);
             let (cmd_tx, _rx) = mpsc::unbounded_channel();
@@ -1847,21 +1851,21 @@ pub(super) mod tests {
                 UtcOffset::UTC,
                 UiPrefs {
                     theme: ThemeMode::System,
+                    system_dark: saved_dark,
                     ..UiPrefs::default()
                 },
                 dir.path().to_path_buf(),
                 Rc::new(fake),
             )
         };
-        assert!(std::ptr::eq(
-            boot(Some(false)).tokens,
-            &super::super::theme::LIGHT
-        ));
-        assert!(std::ptr::eq(
-            boot(Some(true)).tokens,
-            &super::super::theme::DARK
-        ));
-        assert!(std::ptr::eq(boot(None).tokens, &super::super::theme::DARK));
+        let light = &super::super::theme::LIGHT;
+        let dark = &super::super::theme::DARK;
+        // O sistema manda sobre o que foi gravado.
+        assert!(std::ptr::eq(boot(Some(false), true).tokens, light));
+        assert!(std::ptr::eq(boot(Some(true), false).tokens, dark));
+        // Sem resposta, vale o modo resolvido da ultima gravacao.
+        assert!(std::ptr::eq(boot(None, true).tokens, dark));
+        assert!(std::ptr::eq(boot(None, false).tokens, light));
     }
 
     /// Espera a thread de `save_prefs` gravar o que o teste quer ver.

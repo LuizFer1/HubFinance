@@ -72,19 +72,25 @@ impl Config {
     }
 }
 
-/// Tema da janela. Escuro e o padrao do design.
+/// Tema da janela, em memoria. Escuro e o padrao do design.
 ///
-/// `System` e so a preferencia gravada: quem decide escuro ou claro e o sistema, lido pela UI.
-/// Valor novo, e nao um campo a parte: o `ui.json` antigo ("dark"/"light") continua lendo
-/// igual, e um arquivo com "system" aberto por um hub antigo cai no padrao (o `load` trata
-/// valor desconhecido como arquivo ilegivel), sem impedir a janela de abrir.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// `System` e so a preferencia: quem decide escuro ou claro e o sistema, lido pela UI. No
+/// `ui.json` ele nao vira um terceiro valor de `theme` (ver `PrefsFile`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ThemeMode {
     #[default]
     Dark,
     Light,
     System,
+}
+
+/// O `theme` como fica no arquivo: so os dois valores que todo hub lancado conhece.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum StoredTheme {
+    #[default]
+    Dark,
+    Light,
 }
 
 impl ThemeMode {
@@ -100,20 +106,73 @@ impl ThemeMode {
 
 /// Preferencias da janela, em `<data_dir>/ui.json`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "PrefsFile", into = "PrefsFile")]
 pub struct UiPrefs {
-    #[serde(default)]
     pub theme: ThemeMode,
+    /// Com `ThemeMode::System`, o que o sistema dizia na ultima gravacao (`true` = escuro). E o
+    /// `theme` escrito no arquivo e o palpite do boot quando o sistema nao responde. Fora do
+    /// `System` fica `false` e nao pesa.
+    pub system_dark: bool,
+    pub autostart: Option<bool>,
+    pub hide_values: bool,
+}
+
+/// O `ui.json` como esta no disco.
+///
+/// "Sistema" e `follow_system: true` ao lado de um `theme` resolvido ("dark"/"light"), e nao
+/// `"theme": "system"`: um hub 1.4.0 so conhece os dois valores e, com um terceiro, o `load`
+/// dele trataria o arquivo inteiro como ilegivel e perderia `autostart` e `hide_values`. Assim
+/// ele le o tema da ultima vez e ignora o campo que nao conhece.
+#[derive(Serialize, Deserialize)]
+struct PrefsFile {
+    #[serde(default)]
+    theme: StoredTheme,
+    /// Ausente (falso) nao vai para o arquivo, como os campos abaixo.
+    #[serde(default, skip_serializing_if = "is_false")]
+    follow_system: bool,
     /// "Iniciar com o Windows": `None` = nunca decidiu (e o que liga por padrao, uma vez);
     /// `Some(false)` = a pessoa desligou de proposito e o boot nao religa. O estado real da
     /// opcao e o registro; isto e so a memoria da decisao. Ausente nao vai para o arquivo,
     /// para o `ui.json` da 1.0.0 continuar identico ate alguem mexer na opcao.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autostart: Option<bool>,
+    autostart: Option<bool>,
     /// "Ocultar valores" do Dashboard (spec 7.4): local a este PC, nunca sincronizado, como o
     /// tema. Desligado nao vai para o arquivo, pelo mesmo motivo do `autostart`: o `ui.json`
     /// de quem nunca usou o olho fica igual ao de antes.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub hide_values: bool,
+    hide_values: bool,
+}
+
+impl From<PrefsFile> for UiPrefs {
+    fn from(file: PrefsFile) -> UiPrefs {
+        let (theme, system_dark) = match (file.follow_system, file.theme) {
+            (true, stored) => (ThemeMode::System, stored == StoredTheme::Dark),
+            (false, StoredTheme::Dark) => (ThemeMode::Dark, false),
+            (false, StoredTheme::Light) => (ThemeMode::Light, false),
+        };
+        UiPrefs {
+            theme,
+            system_dark,
+            autostart: file.autostart,
+            hide_values: file.hide_values,
+        }
+    }
+}
+
+impl From<UiPrefs> for PrefsFile {
+    fn from(prefs: UiPrefs) -> PrefsFile {
+        let stored = if prefs.theme.is_dark(prefs.system_dark) {
+            StoredTheme::Dark
+        } else {
+            StoredTheme::Light
+        };
+        PrefsFile {
+            theme: stored,
+            follow_system: prefs.theme == ThemeMode::System,
+            autostart: prefs.autostart,
+            hide_values: prefs.hide_values,
+        }
+    }
 }
 
 fn is_false(value: &bool) -> bool {
@@ -265,16 +324,60 @@ mod tests {
     }
 
     #[test]
-    fn tema_sistema_grava_e_le_de_volta() {
+    fn tema_sistema_grava_o_modo_resolvido_e_le_de_volta() {
         let dir = tempfile::tempdir().unwrap();
-        let prefs = UiPrefs {
-            theme: ThemeMode::System,
-            ..UiPrefs::default()
-        };
-        prefs.save(dir.path()).unwrap();
-        assert_eq!(UiPrefs::load(dir.path()), prefs);
+        for (system_dark, stored) in [(false, "\"light\""), (true, "\"dark\"")] {
+            let prefs = UiPrefs {
+                theme: ThemeMode::System,
+                system_dark,
+                ..UiPrefs::default()
+            };
+            prefs.save(dir.path()).unwrap();
+            assert_eq!(UiPrefs::load(dir.path()), prefs);
+            let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
+            assert!(raw.contains(stored), "{raw}");
+            assert!(raw.contains("\"follow_system\": true"), "{raw}");
+            assert!(!raw.contains("\"system\""), "{raw}");
+        }
+        // Tema fixo nao escreve `follow_system`.
+        UiPrefs::default().save(dir.path()).unwrap();
         let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
-        assert!(raw.contains("\"system\""), "{raw}");
+        assert!(!raw.contains("follow_system"), "{raw}");
+    }
+
+    /// O `UiPrefs` da 1.4.0, com o enum de dois valores: le o arquivo novo sem perder nada.
+    #[test]
+    fn hub_antigo_le_o_arquivo_com_tema_sistema() {
+        #[derive(Deserialize, Default, Debug, PartialEq)]
+        #[serde(rename_all = "lowercase")]
+        enum OldTheme {
+            #[default]
+            Dark,
+            Light,
+        }
+        #[derive(Deserialize)]
+        struct OldPrefs {
+            #[serde(default)]
+            theme: OldTheme,
+            #[serde(default)]
+            autostart: Option<bool>,
+            #[serde(default)]
+            hide_values: bool,
+        }
+        let dir = tempfile::tempdir().unwrap();
+        UiPrefs {
+            theme: ThemeMode::System,
+            system_dark: false,
+            autostart: Some(false),
+            hide_values: true,
+        }
+        .save(dir.path())
+        .unwrap();
+        let raw = std::fs::read(dir.path().join("ui.json")).unwrap();
+        let old: OldPrefs = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(old.theme, OldTheme::Light);
+        assert_eq!(old.autostart, Some(false));
+        assert!(old.hide_values);
     }
 
     #[test]

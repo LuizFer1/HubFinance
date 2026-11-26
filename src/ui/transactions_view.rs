@@ -36,7 +36,12 @@ const VALUE_WIDTH: f32 = 128.0;
 pub fn view(app: &App) -> Element<'_, Message> {
     // Altura cheia: a casca nao rola esta tela (`shell::owns_scroll`). Filtros, resumo e o
     // cabecalho da tabela ficam parados; so as linhas rolam, dentro do card (`table`).
-    let base = column![filter_bar(app), summary_line(app), table(app)]
+    let mut base = column![filter_bar(app)];
+    if shows_summary(&app.transactions) {
+        base = base.push(summary_line(app));
+    }
+    let base = base
+        .push(table(app))
         .spacing(GAP)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -307,6 +312,13 @@ fn summary_line(app: &App) -> Element<'_, Message> {
     .wrap()
     .vertical_spacing(space::S)
     .into()
+}
+
+/// O resumo do mes aparece em todo vazio menos o do hub sem nada sincronizado: la, "0
+/// lançamentos" e tres R$ 0,00 so repetiriam o vazio da tabela. No vazio por filtro e no mes
+/// sem lancamento ele fica, e diz que o zero e do filtro ou do mes.
+fn shows_summary(v: &TransactionsView) -> bool {
+    !v.is_empty_hub
 }
 
 /// "lançamento" / "lançamentos", depois do numero da contagem.
@@ -586,10 +598,13 @@ mod tests {
     #[test]
     fn tres_vazios() {
         let none = Filters::default();
+        // Hub sem nada: o vazio da issue 02 (com "Conectar um celular"), sem o resumo do mes.
         let hub = build_transactions(&Dataset::default(), "2026-09-24", "2026-09", &none, false);
         let (title, _, clear) = empty_copy(&hub, &none);
         assert_eq!(title, "Nenhum lançamento sincronizado");
         assert!(!clear);
+        assert!(!shows_summary(&hub));
+        // Mes sem lancamento: o resumo fica e diz "0 lançamentos".
         let ds = fixtures();
         let may = build_transactions(&ds, "2026-09-24", "2026-05", &none, false);
         assert_eq!(
@@ -600,6 +615,10 @@ mod tests {
                 false
             )
         );
+        assert!(shows_summary(&may));
+        assert_eq!(count_word(may.list.count), "lançamentos");
+        // Vazio por filtro: como estava, com "Limpar filtros"; o resumo conta o filtrado (0),
+        // nao os lancamentos do mes.
         let filters = Filters {
             kind: TypeFilter::Income,
             category: Some("C1".into()),
@@ -611,6 +630,10 @@ mod tests {
         assert_eq!(title, "Nada com esses filtros");
         assert!(body.contains("em setembro"));
         assert!(clear);
+        assert!(shows_summary(&sep));
+        let all = build_transactions(&ds, "2026-09-24", "2026-09", &none, false);
+        assert!(all.list.count > 0);
+        assert_eq!(count_word(1), "lançamento");
     }
 
     #[test]

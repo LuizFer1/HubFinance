@@ -1204,6 +1204,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             // veria; o tooltip diz "com erro" e a janela abre sozinha. So na transicao para
             // `Failed`: quem fechar a janela depois de ver o erro nao a ve voltar sozinha.
             let failed = matches!(app.snapshot.status, Status::Failed(_));
+            // O "Conectar um celular" aberto quando o hub cai fecha: o codigo nao vale mais, e
+            // o dialogo nao reaparece sozinho por cima do card de falha.
+            if failed && !was_failed && app.connect.is_some() {
+                app.close_connect();
+            }
             if failed && !was_failed && app.window.is_none() && !app.closing {
                 return open_or_focus(app);
             }
@@ -1296,6 +1301,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             // janela fechada, e a previa nao reaparece sozinha.
             app.close_setup();
             app.consent_preview = None;
+            // Os outros dialogos tambem, como na troca de tela: o envelope e a remocao nao
+            // reaparecem sozinhos quando a janela voltar, nem a previa agendada para depois.
+            app.preview_after = None;
+            app.envelope_preview = None;
+            app.confirm_remove = None;
             app.with_window(window::close)
         }
         Message::Desktop(DesktopEvent::Quit) => begin_shutdown(app),
@@ -1407,6 +1417,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ConnectPhone => {
             let task = update(app, Message::SelectScreen(Screen::Connection));
+            // Hub que nao subiu: a casca mostra o card de falha no lugar de Aparelhos, e um
+            // codigo nao teria quem o emitir. O fluxo nem abre.
+            if super::shell::failure(app).is_some() {
+                return task;
+            }
             let modal = !connection_view::in_screen_case(app);
             if app.connect.is_none_or(|f| f.modal != modal) {
                 app.connect = Some(ConnectFlow::new(modal));
@@ -2267,10 +2282,16 @@ pub fn subscription(app: &App) -> Subscription<Message> {
     }
     // O cursor da resposta tem relogio proprio: quadros a toda hora durante uma resposta de
     // minutos seriam 60 redesenhos por segundo para piscar um caractere.
-    if app.motion.blinking() {
+    if blink_running(app) {
         subs.push(Subscription::run(blinks).map(Message::Frame));
     }
     Subscription::batch(subs)
+}
+
+/// O relogio do cursor so roda com janela: sem ela nao ha cursor para piscar, e o relogio
+/// acordaria o laco de eventos a toda piscada durante uma resposta inteira.
+fn blink_running(app: &App) -> bool {
+    app.motion.blinking() && app.window.is_some()
 }
 
 pub fn view(app: &App, window: window::Id) -> Element<'_, Message> {
@@ -6028,5 +6049,80 @@ pub(super) mod tests {
         // Hub que nao subiu: no lugar do chat, o aviso; a tela ainda monta.
         app.snapshot.status = Status::Failed("porta ocupada".into());
         let _ = super::super::analysis_view::view(&app);
+    }
+    #[test]
+    fn com_bandeja_fechar_zera_previa_envelope_e_remocao() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = Rc::new(Fake::with_tray());
+        let (mut app, _rx, _tx) = app_with_desktop(
+            Snapshot {
+                devices: vec![view("D1", "Pixel 7", false, false, data())],
+                ..Snapshot::default()
+            },
+            dir.path().to_path_buf(),
+            fake,
+        );
+        app.window = Some(window::Id::unique());
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ShowEnvelope);
+        app.preview_after = Some(Some("C1".into()));
+        assert!(app.confirm_remove.is_some());
+        assert!(app.envelope_preview.is_some());
+        let _ = update(&mut app, Message::CloseRequested);
+        assert!(!app.closing);
+        assert!(app.confirm_remove.is_none());
+        assert!(app.envelope_preview.is_none());
+        assert!(app.preview_after.is_none());
+        assert!(!app.any_dialog_open());
+    }
+
+    #[test]
+    fn cursor_so_pisca_com_janela_aberta() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        assert!(!blink_running(&app), "sem resposta chegando nao ha piscada");
+        app.motion.sync(
+            super::super::motion::Scene {
+                streaming: true,
+                ..Default::default()
+            },
+            Instant::now(),
+        );
+        assert!(app.motion.blinking());
+        assert!(blink_running(&app));
+        // A janela fecha com a resposta ainda chegando (o `update` recalcularia a cena a partir
+        // do estado, sem resposta de verdade aqui; o que importa e so a janela).
+        app.window = None;
+        assert!(app.motion.blinking(), "a resposta segue chegando");
+        assert!(!blink_running(&app), "sem janela o relogio do cursor para");
+    }
+
+    #[test]
+    fn conectar_um_celular_nao_aparece_com_o_hub_em_falha() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with(
+            running_with(vec![phone("D1", "Pixel 7")]),
+            dir.path().to_path_buf(),
+        );
+        let _ = update(&mut app, Message::ConnectPhone);
+        assert!(connection_view::dialog_open(&app));
+        let _ = drain(&mut rx);
+        // O hub cai com o dialogo aberto: ele fecha e o codigo e cancelado.
+        let mut failed = running_with(vec![phone("D1", "Pixel 7")]);
+        failed.status = Status::Failed("porta ocupada".into());
+        let _ = update(&mut app, Message::Snapshot(Box::new(failed)));
+        assert_eq!(app.connect, None);
+        assert!(drain(&mut rx).contains(&Command::CancelPairingToken));
+        assert!(connection_view::connect_dialog(&app).is_none());
+        // Pedir de novo (bandeja, estado vazio) leva a Aparelhos, com o card de falha, sem fluxo.
+        let _ = update(&mut app, Message::ConnectPhone);
+        assert_eq!(app.screen, Screen::Connection);
+        assert_eq!(app.connect, None);
+        // Mesmo com um fluxo modal sobrando, o dialogo nao monta por cima da falha.
+        app.connect = Some(ConnectFlow::new(true));
+        assert!(!connection_view::dialog_open(&app));
+        assert!(!app.any_dialog_open());
+        assert!(connection_view::connect_dialog(&app).is_none());
+        let _ = super::super::shell::root(&app);
     }
 }

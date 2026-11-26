@@ -159,9 +159,13 @@ pub(super) fn shows_in_screen_flow(app: &App) -> bool {
 }
 
 /// O dialogo "Conectar um celular" esta aberto? E o que o Esc fecha e o que bloqueia os
-/// atalhos por baixo do scrim.
+/// atalhos por baixo do scrim. Com o hub em falha (`shell::failure`, o mesmo criterio da casca)
+/// nao: o card de falha toma a tela, e um dialogo de pareamento por cima dele pediria um codigo
+/// que ninguem emite.
 pub(super) fn dialog_open(app: &App) -> bool {
-    app.screen == Screen::Connection && app.connect.as_ref().is_some_and(|f| f.modal)
+    app.screen == Screen::Connection
+        && app.connect.as_ref().is_some_and(|f| f.modal)
+        && shell::failure(app).is_none()
 }
 
 /// Passos do certificado de cada sistema, do guia que o hub ja servia (`ca_http::guide_html`).

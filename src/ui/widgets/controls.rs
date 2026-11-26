@@ -331,6 +331,14 @@ fn copy_message<M>(value: Option<&str>, on_copy: M) -> Option<M> {
     value.map(|_| on_copy)
 }
 
+/// Medidas do `field_copy` que a tela usa para escolher o tamanho do valor
+/// (`connection_view::FIELD_CHROME`): mudar aqui muda la junto. O espaco de 10 e o validado
+/// na Fase 6, fora da regua de proposito.
+pub const FIELD_PAD_LEFT: f32 = 14.0;
+pub const FIELD_PAD_RIGHT: f32 = 6.0;
+pub const FIELD_ICON: f32 = 15.0;
+pub const FIELD_SPACING: f32 = 10.0;
+
 /// Campo de 44 px com "Copiar": icone `(glifo, cor)`, o valor em Medium no tamanho `size` (cortado na borda se
 /// ainda nao couber: o iced 0.14 nao tem reticencias) e o botao a direita. Sem valor mostra
 /// `placeholder` em `text_muted` e o botao fica desabilitado.
@@ -355,17 +363,17 @@ pub fn field_copy<'a, M: Clone + 'a>(
         .clip(true);
     let copy = copy_button(t, copied, on_copy);
     container(
-        row![icons::icon(glyph, 15.0, glyph_color), value, copy]
-            .spacing(space::M)
+        row![icons::icon(glyph, FIELD_ICON, glyph_color), value, copy]
+            .spacing(FIELD_SPACING)
             .align_y(Alignment::Center),
     )
     .height(size::CTRL_L)
     .width(Length::Fill)
     .padding(Padding {
         top: 0.0,
-        right: 6.0,
+        right: FIELD_PAD_RIGHT,
         bottom: 0.0,
-        left: 14.0,
+        left: FIELD_PAD_LEFT,
     })
     .align_y(Alignment::Center)
     .style(theme::field(t))

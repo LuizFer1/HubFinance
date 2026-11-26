@@ -31,9 +31,15 @@ const CARD_PAD: f32 = 24.0;
 const QR_SIZE: f32 = 220.0;
 /// O quadro claro em volta do QR: 5 px de cada lado.
 const QR_FRAME: f32 = QR_SIZE + 10.0;
-/// Moldura do campo em volta do valor: padding 14 + icone 15 + dois espacos de 10 + o botao
-/// na largura de "Copiado" (10 + 12 + 6 + 48 + 10) + padding 6.
-const FIELD_CHROME: f32 = 141.0;
+/// Largura do botao do campo quando mostra "Copiado" (10 + 12 + 6 + 48 + 10).
+const COPIED_BUTTON: f32 = 86.0;
+/// Moldura do campo em volta do valor: padding, icone, os dois espacos e o botao em "Copiado"
+/// (141 px). Lida das medidas do proprio widget, para as duas contas nao ficarem defasadas.
+const FIELD_CHROME: f32 = widgets::FIELD_PAD_LEFT
+    + widgets::FIELD_ICON
+    + 2.0 * widgets::FIELD_SPACING
+    + COPIED_BUTTON
+    + widgets::FIELD_PAD_RIGHT;
 /// Tamanhos do valor do campo, do design (15) para baixo.
 const FIELD_SIZES: [f32; 3] = [15.0, 14.0, 13.0];
 /// Largura do fluxo: a mesma no dialogo e na tela, para o passo 3 caber QR e passos lado a lado.
@@ -881,6 +887,9 @@ mod tests {
     #[test]
     fn endereco_mais_longo_cabe_inteiro_de_1024_a_2560() {
         let url = "https://192.168.100.200:7777";
+        // A moldura validada: o espaco do widget e o que a conta usa sao a mesma constante.
+        assert_eq!(FIELD_CHROME, 141.0);
+        assert_eq!(widgets::FIELD_SPACING, 10.0);
         for window in 1024..=2560 {
             // Mesma conta de `shell::content_width`; `address_inner` e a que a tela usa, nas
             // duas disposicoes (uma coluna ate 853 de conteudo, duas dai em diante).

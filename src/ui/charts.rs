@@ -711,10 +711,27 @@ fn dashed<'a>(color: Color, width: f32, segments: &'a [f32]) -> Stroke<'a> {
     }
 }
 
+/// Dia mais proximo do ponto (coordenadas do canvas), de 1 a `days`. Fora da area das linhas
+/// (eixo a esquerda, faixa dos rotulos a direita, abaixo dos dias) ou sem dias -> `None`. O dia
+/// `d` fica em `d / days` da largura (`day_x`), entao o dia 1 nao encosta no eixo: a faixa entre
+/// o eixo e ele conta como dia 1.
+pub fn pace_day_at(point: Point, size: Size, days: usize) -> Option<usize> {
+    let plot = pace_plot(size);
+    if days == 0 || plot.width <= 0.0 {
+        return None;
+    }
+    if point.x < plot.x || point.x > plot.x + plot.width || point.y < 0.0 || point.y > size.height {
+        return None;
+    }
+    let rel = (point.x - plot.x) / plot.width * days as f32;
+    Some((rel.round() as usize).clamp(1, days))
+}
+
 /// "Ritmo de gastos": eixo, grade, renda, area e linha do mes, normal e previsao tracejados,
-/// marcador de hoje, rotulos a direita e dias embaixo. Tudo no `Cache`: o grafico nao tem
-/// hover, e os rotulos em R$ vem prontos (mascarados) do modelo, por isso o cache e limpo
-/// quando "Ocultar valores" muda.
+/// marcador de hoje, rotulos a direita e dias embaixo, no `Cache` (os rotulos em R$ vem prontos,
+/// mascarados, do modelo; por isso o cache e limpo quando "Ocultar valores" muda). O hover e
+/// estado do `Program`, como no historico: regua no dia sob o mouse e o rotulo pronto do modelo
+/// num `Frame` sem cache, para passar o mouse nao refazer o grafico.
 pub struct PaceProgram<'a> {
     pub chart: &'a PaceChart,
     /// Mes corrente: linha vertical, marcador e rotulo "hoje".
@@ -723,12 +740,45 @@ pub struct PaceProgram<'a> {
     pub cache: &'a canvas::Cache,
 }
 
+impl PaceProgram<'_> {
+    /// Dia sob o cursor que tem rotulo (dia sem acumulado nem normal nao tem o que mostrar).
+    fn hovered_day(&self, point: Point, size: Size) -> Option<usize> {
+        pace_day_at(point, size, self.chart.days).filter(|d| {
+            self.chart
+                .tooltips
+                .get(d.saturating_sub(1))
+                .is_some_and(Option::is_some)
+        })
+    }
+}
+
 impl canvas::Program<Message> for PaceProgram<'_> {
-    type State = ();
+    /// Dia sob o cursor.
+    type State = Option<usize>;
+
+    fn update(
+        &self,
+        state: &mut Option<usize>,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<Action<Message>> {
+        if !matches!(event, Event::Mouse(_)) {
+            return None;
+        }
+        let hovered = cursor
+            .position_in(bounds)
+            .and_then(|p| self.hovered_day(p, bounds.size()));
+        if hovered == *state {
+            return None;
+        }
+        *state = hovered;
+        Some(Action::request_redraw())
+    }
 
     fn draw(
         &self,
-        _state: &(),
+        state: &Option<usize>,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
@@ -866,8 +916,36 @@ impl canvas::Program<Message> for PaceProgram<'_> {
                 });
             }
         });
-        vec![geometry]
+        let mut geometries = vec![geometry];
+        if let Some(day) = *state
+            && let Some(Some(tip)) = c.tooltips.get(day.saturating_sub(1))
+        {
+            let mut overlay = Frame::new(renderer, size);
+            let x = day_x(day, c.days, plot).round() + 0.5;
+            frame_rule(&mut overlay, t, x, plot);
+            // Pontos onde a regua cruza as linhas: o acumulado no dourado do mes, o normal no
+            // neutro da linha tracejada.
+            for (values, color) in [(&c.current, t.accent), (&c.normal, t.neutral_500)] {
+                if let Some(v) = values.get(day.saturating_sub(1)) {
+                    let p = Point::new(x, value_y(*v, plot));
+                    overlay.fill(&Path::circle(p, 4.5), t.surface);
+                    overlay.fill(&Path::circle(p, 3.0), color);
+                }
+            }
+            // Sem barra para ficar em cima: o rotulo vai ao lado da regua, no topo da area.
+            draw_text_tooltip(&mut overlay, t, tip, (x, 0.0), plot.y, plot, size);
+            geometries.push(overlay.into_geometry());
+        }
+        geometries
     }
+}
+
+/// Regua vertical de 1 px no dia sob o mouse, da altura da area das linhas.
+fn frame_rule(frame: &mut Frame, t: &'static Tokens, x: f32, plot: Rectangle) {
+    frame.stroke(
+        &polyline(&[Point::new(x, plot.y), Point::new(x, plot.y + plot.height)]),
+        Stroke::default().with_color(t.neutral_500).with_width(1.0),
+    );
 }
 
 // ---- medidor ----
@@ -1306,6 +1384,64 @@ mod tests {
         assert_eq!(pts[3].y, 6.0);
         assert_eq!(day_x(30, 30, plot), 364.0);
         assert_eq!(day_x(5, 0, plot), 64.0);
+    }
+
+    #[test]
+    fn hover_do_ritmo_pega_o_dia_mais_proximo_do_x() {
+        // Area de 64 a 364: dia 1 em 74, um dia a cada 10 px.
+        let size = Size::new(64.0 + 300.0 + 108.0, PACE_HEIGHT);
+        let at = |x: f32| pace_day_at(Point::new(x, 100.0), size, 30);
+        assert_eq!(at(74.0), Some(1));
+        assert_eq!(at(78.0), Some(1));
+        assert_eq!(at(80.0), Some(2));
+        // Entre o eixo e o dia 1 ainda e o dia 1.
+        assert_eq!(at(64.0), Some(1));
+        assert_eq!(at(364.0), Some(30));
+        // Eixo a esquerda, faixa dos rotulos a direita e fora do canvas: nada.
+        assert_eq!(at(63.0), None);
+        assert_eq!(at(365.0), None);
+        assert_eq!(pace_day_at(Point::new(200.0, -1.0), size, 30), None);
+        assert_eq!(pace_day_at(Point::new(200.0, 100.0), size, 0), None);
+    }
+
+    #[test]
+    fn hover_do_ritmo_so_em_dia_com_rotulo() {
+        let cache = canvas::Cache::new();
+        let chart = PaceChart {
+            days: 30,
+            cutoff: 2,
+            current: vec![0.1, 0.2],
+            tooltips: (1..=30)
+                .map(|d| (d <= 2).then(|| format!("{d} nov · acumulado R$ •••••")))
+                .collect(),
+            ..PaceChart::default()
+        };
+        let program = PaceProgram {
+            chart: &chart,
+            today: true,
+            tokens: &DARK,
+            cache: &cache,
+        };
+        let bounds = Rectangle::new(Point::new(0.0, 0.0), Size::new(472.0, PACE_HEIGHT));
+        let moved = |x: f32| {
+            (
+                Event::Mouse(mouse::Event::CursorMoved {
+                    position: Point::new(x, 50.0),
+                }),
+                mouse::Cursor::Available(Point::new(x, 50.0)),
+            )
+        };
+        let mut state = None;
+        let (event, cursor) = moved(84.0);
+        assert!(program.update(&mut state, &event, bounds, cursor).is_some());
+        assert_eq!(state, Some(2));
+        // Mesmo dia: nao redesenha.
+        let (event, cursor) = moved(86.0);
+        assert!(program.update(&mut state, &event, bounds, cursor).is_none());
+        // Dia sem rotulo (depois do corte, sem normal): o hover some.
+        let (event, cursor) = moved(200.0);
+        assert!(program.update(&mut state, &event, bounds, cursor).is_some());
+        assert_eq!(state, None);
     }
 
     #[test]

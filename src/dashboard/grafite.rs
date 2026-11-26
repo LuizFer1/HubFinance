@@ -260,6 +260,10 @@ pub struct PaceChart {
     pub normal_label: Option<String>,
     /// "renda R$ 3.500".
     pub income_label: Option<String>,
+    /// Rotulo do hover, um por dia (`[0]` e o dia 1): "12 nov · acumulado R$ 1.234 · normal
+    /// R$ 1.100". Vem pronto e mascarado daqui: formatar na tela passaria por cima de "Ocultar
+    /// valores". Depois do corte so ha o normal; dia sem nenhum dos dois e `None` (sem hover).
+    pub tooltips: Vec<Option<String>>,
     pub sentence: PaceSentence,
 }
 
@@ -1039,6 +1043,13 @@ fn pace_chart(
         forecast_label: expected.map(|e| format!("~{}", m.whole(round_to_tens(e)))),
         normal_label: normal_end.map(|n| format!("normal {}", m.whole(n))),
         income_label: income.map(|i| format!("renda {}", m.whole(i))),
+        tooltips: pace_tooltips(
+            month,
+            days,
+            &sp.current[..sp.cutoff.min(sp.current.len())],
+            &sp.normal,
+            m,
+        ),
         sentence: PaceSentence {
             lead: if is_current {
                 format!("{} até o dia {}", m.brl(sp.spent_minor), sp.cutoff)
@@ -1049,6 +1060,30 @@ fn pace_chart(
             tail,
         },
     }
+}
+
+/// Textos do hover do ritmo, dia a dia: o acumulado so ate o corte (depois dele o mes ainda nao
+/// aconteceu) e o normal enquanto houver mes de referencia.
+fn pace_tooltips(
+    month: &str,
+    days: usize,
+    current: &[i64],
+    normal: &[i64],
+    m: Money,
+) -> Vec<Option<String>> {
+    let short = month_short(month);
+    (0..days)
+        .map(|i| {
+            let mut parts = Vec::new();
+            if let Some(v) = current.get(i) {
+                parts.push(format!("acumulado {}", m.whole(*v)));
+            }
+            if let Some(v) = normal.get(i) {
+                parts.push(format!("normal {}", m.whole(*v)));
+            }
+            (!parts.is_empty()).then(|| format!("{} {short} · {}", i + 1, parts.join(" · ")))
+        })
+        .collect()
 }
 
 fn reserve_card(ds: &Dataset, today: &str, month: &str, m: Money) -> ReserveCard {
@@ -2106,6 +2141,44 @@ mod tests {
         assert_eq!(
             c.reserves_line.as_deref(),
             Some("R$ 200 saíram das reservas neste mês")
+        );
+    }
+
+    #[test]
+    fn rotulos_do_hover_do_ritmo_por_dia_e_mascarados() {
+        let p = nov().how_am_i.pace;
+        assert_eq!(p.tooltips.len(), 30);
+        // Ate o corte: acumulado e normal; depois dele, so o normal.
+        assert_eq!(
+            p.tooltips.get(18).cloned().flatten().as_deref(),
+            Some("19 nov · acumulado R$ 3.113 · normal R$ 2.705")
+        );
+        assert!(
+            p.tooltips
+                .get(19)
+                .cloned()
+                .flatten()
+                .is_some_and(|t| t.starts_with("20 nov · normal R$ "))
+        );
+        let hidden = build_grafite(
+            &fixtures_grafite(),
+            GRAFITE_TODAY,
+            "2026-11",
+            Book::Personal,
+            true,
+        );
+        let tips = &hidden.how_am_i.pace.tooltips;
+        assert_eq!(
+            tips.get(18).cloned().flatten().as_deref(),
+            Some("19 nov · acumulado R$ ••••• · normal R$ •••••")
+        );
+        for tip in tips.iter().flatten() {
+            assert_eq!(leaks(tip), None, "{tip}");
+        }
+        // Sem mes de referencia nem acumulado (dia no futuro): nada para mostrar.
+        assert_eq!(
+            pace_tooltips("2026-11", 3, &[100], &[], Money::SHOWN),
+            vec![Some("1 nov · acumulado R$ 1".to_string()), None, None]
         );
     }
 

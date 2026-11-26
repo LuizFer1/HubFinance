@@ -8,17 +8,19 @@
 //! nao responde (fora do Windows), vale a assinatura do iced.
 
 /// `true` = escuro; `None` = o sistema nao diz (fora do Windows, ou valor ausente).
-#[cfg(windows)]
+#[cfg(all(windows, not(test)))]
 pub fn system_dark() -> Option<bool> {
     win::apps_use_light_theme().map(|light| !light)
 }
 
-#[cfg(not(windows))]
+/// Fora do Windows, e em todo teste: teste nenhum le o registro da maquina (o resultado
+/// dependeria do tema de quem roda). Quem precisa de um valor usa o `Fake`.
+#[cfg(any(not(windows), test))]
 pub fn system_dark() -> Option<bool> {
     None
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, not(test)))]
 mod win {
     use std::ptr;
 

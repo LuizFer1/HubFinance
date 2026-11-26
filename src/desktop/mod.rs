@@ -176,6 +176,8 @@ mod tests {
         let d = Headless;
         assert!(!d.has_tray());
         assert_eq!(d.autostart(), None);
+        // Em teste o `Headless` (o de `app_with`) nunca le o tema do registro.
+        assert_eq!(d.system_dark(), None);
         assert!(d.set_autostart(true).is_err());
         d.set_tooltip("ignorado");
     }

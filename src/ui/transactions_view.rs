@@ -459,7 +459,10 @@ fn table_row<'a>(app: &'a App, r: &'a ListRow, visible: Visible) -> Element<'a, 
     .spacing(12)
     .align_y(Alignment::Center);
     if let Some(label) = &r.recurrence_label {
-        description = description.push(widgets::tag_icon(t, TagTone::Accent, icons::REPEAT, label));
+        // Neutra: recorrencia e um fato da linha, nao o foco da tela, e o dourado fica para o
+        // que marca o agora (principio 2 da direcao Grafite · Mesa).
+        description =
+            description.push(widgets::tag_icon(t, TagTone::Neutral, icons::REPEAT, label));
     }
     if let Some(state) = r.report_state {
         description = description.push(widgets::tag(t, TagTone::Neutral, state.label()));

@@ -19,7 +19,6 @@ use crate::assistant::prompt::Role;
 use crate::assistant::settings::{ProviderChoice, Settings};
 use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
 use crate::dashboard::money::{MASK, MASK_DIGITS, MINUS, group_thousands};
-use crate::hub::snapshot::Status;
 
 const GAP: f32 = 14.0;
 
@@ -286,9 +285,6 @@ fn finding_row<'a>(app: &'a App, f: &'a Finding) -> Element<'a, Message> {
 
 // ---- assistente ----
 
-/// No lugar do chat quando o nucleo nao subiu.
-const HUB_DOWN: &str = "O hub não iniciou; os achados ao lado continuam valendo.";
-
 /// "llama3.1:8b, local" sob o titulo do painel: onde o assistente roda agora.
 pub(super) fn assistant_status(settings: &Settings) -> String {
     match settings.provider {
@@ -334,12 +330,9 @@ fn assistant_panel(app: &App) -> Element<'_, Message> {
         "Configurar assistente",
         Some(Message::ConfigureAssistant),
     ));
-    let body: Element<'_, Message> = if matches!(app.snapshot.status, Status::Failed(_)) {
-        // Sem o nucleo nao ha assistente; os achados (do ultimo snapshot) seguem valendo.
-        container(text(HUB_DOWN).size(14).color(t.text_muted))
-            .padding([18, 20])
-            .into()
-    } else if let Some(open) = open {
+    // Sem `Status::Failed` aqui: com o nucleo fora do ar o card de falha da casca toma a tela
+    // inteira (`shell::failure`), e a Analise nem e montada.
+    let body: Element<'_, Message> = if let Some(open) = open {
         conversation_body(app, open)
     } else {
         idle_body(app)
@@ -614,12 +607,15 @@ fn message_view<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<
 /// a mostra nunca e desenhado com "Ocultar valores" ligado.
 fn reply_body<'a>(app: &'a App, m: &'a MessageView) -> Element<'a, Message> {
     let t = app.tokens;
+    // Sem cache valido (snapshot que ainda nao passou por `refresh_replies`): o mesmo caminho
+    // do cache, em texto puro. O fonte so mascarado deixaria passar o que o Markdown remonta.
     let fallback = || -> Element<'a, Message> {
-        text(mask(app, &m.content))
-            .size(14)
-            .line_height(1.5)
-            .color(t.text)
-            .into()
+        let r = render_reply(&m.content, app.hide_values);
+        let shown = match r.shown {
+            ReplyShown::Plain(s) => s,
+            ReplyShown::Markdown(_) => r.copy,
+        };
+        text(shown).size(14).line_height(1.5).color(t.text).into()
     };
     let Some(cached) = app
         .replies
@@ -653,8 +649,10 @@ fn streaming_view<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> {
     let t = app.tokens;
     let shown = if partial.is_empty() {
         Cow::Borrowed("…")
+    } else if app.hide_values {
+        Cow::Owned(mask_streaming(partial))
     } else {
-        mask(app, partial)
+        Cow::Borrowed(partial)
     };
     column![
         text(shown).size(14).line_height(1.5).color(t.text),
@@ -664,6 +662,25 @@ fn streaming_view<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> {
     .spacing(8)
     .max_width(REPLY_MAX)
     .into()
+}
+
+/// A mascara do texto chegando. O numero no fim do parcial pode estar pela metade ("1500,0"
+/// vira "1500,00" no proximo pedaco): incompleto, a mascara nao o reconhece como dinheiro. Por
+/// isso a ultima sequencia de digitos, "." e "," que encosta no fim fica escondida ate o texto
+/// seguir.
+pub(super) fn mask_streaming(partial: &str) -> String {
+    let tail = partial
+        .bytes()
+        .rev()
+        .take_while(|b| b.is_ascii_digit() || matches!(b, b'.' | b','))
+        .count();
+    let head = &partial[..partial.len() - tail];
+    let tail_text = &partial[head.len()..];
+    if tail_text.bytes().any(|b| b.is_ascii_digit()) {
+        mask_str(head)
+    } else {
+        mask_str(partial)
+    }
 }
 
 // ---- Markdown da resposta ----
@@ -681,8 +698,9 @@ pub(super) struct CachedReply {
     pub hidden: bool,
     pub content: String,
     pub shown: ReplyShown,
-    /// O que "Copiar" leva: o texto da resposta, mascarado com o olho ligado (coerente com a
-    /// tela: quem esconde os valores nao os quer colados num chat ou num e-mail).
+    /// O que "Copiar" leva: o texto da resposta; com o olho ligado, o texto desenhado ja
+    /// mascarado (coerente com a tela: quem esconde os valores nao os quer colados num chat ou
+    /// num e-mail, nem o fonte que o Markdown remontaria).
     pub copy: String,
 }
 
@@ -713,17 +731,47 @@ pub(super) fn render_reply(content: &str, hidden: bool) -> CachedReply {
     match (rendered_text(&raw), rendered_text(&masked)) {
         (Some(raw_text), Some(masked_text)) => {
             let expected = mask_str(&raw_text);
+            let copy = expected.trim_end().to_string();
             if masked_text == expected {
-                cached(ReplyShown::Markdown(masked), source)
+                cached(ReplyShown::Markdown(masked), copy)
             } else {
-                cached(ReplyShown::Plain(expected.clone()), expected)
+                cached(ReplyShown::Plain(copy.clone()), copy)
             }
         }
         _ => {
-            let plain = mask_str(&content.replace(['*', '_', '`'], ""));
+            let plain = mask_str(&plain_text(content));
+            let plain = plain.trim_end().to_string();
             cached(ReplyShown::Plain(plain.clone()), plain)
         }
     }
+}
+
+/// O texto que o Markdown desenharia, lido dos eventos do `pulldown-cmark` com as mesmas opcoes
+/// do iced: texto e codigo (celulas de tabela inclusive), quebras e fim de bloco viram quebra de
+/// linha, HTML some (o iced nao o desenha). E a reserva da tabela, que o iced nao deixa ler: a
+/// mascara roda sobre o texto ja interpretado, onde "1.~~234~~,56" ja e "1.234,56".
+pub(super) fn plain_text(content: &str) -> String {
+    use pulldown_cmark::{Event, Options, Parser, TagEnd};
+    let options =
+        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let mut out = String::new();
+    for event in Parser::new_ext(content, options) {
+        match event {
+            Event::Text(t) | Event::Code(t) => out.push_str(&t),
+            Event::SoftBreak | Event::HardBreak => out.push('\n'),
+            Event::End(
+                TagEnd::Paragraph
+                | TagEnd::Heading(_)
+                | TagEnd::Item
+                | TagEnd::CodeBlock
+                | TagEnd::TableRow
+                | TagEnd::TableHead,
+            ) => out.push('\n'),
+            Event::End(TagEnd::TableCell) => out.push_str(" | "),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// O texto que o Markdown desenha, bloco por bloco. `None` com tabela (celulas privadas no iced).
@@ -1705,6 +1753,10 @@ mod tests {
             "```\ntotal R$ 9.876,54\n```",
             "[R$ 10,00](https://exemplo.invalid) de link e ![R$ 20,00](img.png)",
             "| Categoria | Valor |\n|---|---|\n| Mercado | R$ 1.**234**,56 |",
+            "| x | y |\n|---|---|\n| x | 1.~~234~~,56 |",
+            "| x | y |\n|---|---|\n| x | 1.<b>234</b>,56 |",
+            "| x | y |\n|---|---|\n| a | b |\n\nTexto 1.<b>234</b>,56 fora",
+            "| x | y |\n|---|---|\n| x | 1\\.234,56 |",
         ];
         for case in cases {
             let r = render_reply(case, true);
@@ -1716,7 +1768,20 @@ mod tests {
             assert_eq!(mask_str(&shown), shown, "{case:?} -> {shown:?}");
             assert_eq!(leaks(&r.copy), None, "copia: {case:?} -> {:?}", r.copy);
             assert_eq!(mask_str(&r.copy), r.copy, "copia: {case:?}");
+            // Quem le junta "1.~~234~~,56" de cabeca: sem as marcas, continua sem valor.
+            let unmarked: String = shown
+                .replace("<b>", "")
+                .replace("</b>", "")
+                .chars()
+                .filter(|c| !matches!(c, '*' | '_' | '`' | '~' | '\\'))
+                .collect();
+            assert_eq!(leaks(&unmarked), None, "{case:?} -> {shown:?}");
+            assert_eq!(mask_str(&unmarked), unmarked, "{case:?} -> {shown:?}");
         }
+        // A reserva da tabela le as celulas: o valor da celula vira mascara, o rotulo fica.
+        let table = render_reply("| x | y |\n|---|---|\n| Mercado | 1.~~234~~,56 |", true);
+        assert!(table.copy.contains("Mercado"), "{}", table.copy);
+        assert!(table.copy.contains(MASK_DIGITS), "{}", table.copy);
         // Os casos comuns continuam em Markdown; os tortos caem no texto puro.
         assert!(matches!(
             render_reply("**Mercado:** R$ 1.234,56", true).shown,
@@ -1730,6 +1795,27 @@ mod tests {
         let shown = render_reply("**R$ 1.234,56**", false);
         assert!(matches!(shown.shown, ReplyShown::Markdown(_)));
         assert_eq!(shown.copy, "**R$ 1.234,56**");
+    }
+
+    #[test]
+    fn texto_chegando_esconde_o_numero_pela_metade_no_fim() {
+        use crate::dashboard::money::leaks;
+        for partial in ["gastou 1500,0", "gastou 1.23", "saldo 1.234,5"] {
+            let shown = mask_streaming(partial);
+            assert!(
+                !shown.bytes().any(|b| b.is_ascii_digit()),
+                "{partial:?} -> {shown:?}"
+            );
+        }
+        assert_eq!(mask_streaming("gastou 1500,0"), "gastou ");
+        // Numero terminado (com texto depois) segue a mascara de sempre; o resto fica.
+        let done = mask_streaming("gastou R$ 1.500,00 em mercado e 3");
+        assert_eq!(leaks(&done), None);
+        assert!(
+            done.starts_with(&format!("gastou {MASK} em mercado e ")),
+            "{done}"
+        );
+        assert_eq!(mask_streaming("tudo certo."), "tudo certo.");
     }
 
     #[test]
@@ -1757,7 +1843,8 @@ mod tests {
         // A troca do olho refaz o cache: nada montado com os valores a mostra fica valendo.
         let cached = &app.replies["R1"];
         assert!(cached.hidden);
-        assert_eq!(cached.copy, format!("Gastou **{MASK}** no mercado."));
+        // O texto desenhado, nao o fonte: sem as marcas do Markdown.
+        assert_eq!(cached.copy, format!("Gastou {MASK} no mercado."));
         let task = update(&mut app, Message::CopyReply("R1".into()));
         assert_eq!(task.units(), 2);
         assert!(app.is_copied(CopyTarget::Reply));

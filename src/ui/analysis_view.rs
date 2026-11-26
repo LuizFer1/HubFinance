@@ -1488,12 +1488,18 @@ mod tests {
     fn barras_dos_achados_leem_gasto_e_referencia_na_ordem_de_cada_regra() {
         use crate::dashboard::{GRAFITE_TODAY, fixtures_grafite};
         let analysis = crate::advisor::analyze(&fixtures_grafite(), GRAFITE_TODAY);
-        let label_of = |f: &Finding, v: i64| {
-            f.figures
-                .iter()
-                .find(|g| g.value == FigureValue::Money(v))
-                .map(|g| g.label.clone())
-                .unwrap()
+        // Pelo indice da cifra, e nao pelo valor: dois valores iguais (gasto igual a meta)
+        // fariam a busca por valor achar o rotulo errado e o teste passar por acaso.
+        let money_at = |f: &Finding, i: usize| match f.figures[i].value {
+            FigureValue::Money(v) => v,
+            ref other => panic!("{:?}: cifra {i} nao e dinheiro: {other:?}", f.kind),
+        };
+        let index_of = |f: &Finding, pick: &dyn Fn(&str) -> bool| {
+            let found: Vec<usize> = (0..f.figures.len())
+                .filter(|&i| pick(&f.figures[i].label))
+                .collect();
+            assert_eq!(found.len(), 1, "{:?}: {:?}", f.kind, f.figures);
+            found[0]
         };
         let mut seen = 0;
         for f in &analysis.findings {
@@ -1509,25 +1515,27 @@ mod tests {
                 continue;
             };
             seen += 1;
-            // O gasto e a cifra cujo rotulo fala de gasto, pelo texto da propria regra.
-            let real = label_of(f, c.real);
-            let reference = label_of(f, c.reference);
-            match f.kind {
-                FindingKind::Pace => {
-                    assert_eq!(
-                        (real.as_str(), reference.as_str()),
-                        ("Gasto até hoje", "Normal até hoje")
-                    );
-                }
-                FindingKind::CategoryAboveNormal => {
-                    assert!(real.ends_with(" no mês") && reference.ends_with(" normal"));
-                }
+            // O indice do gasto e o da cifra cujo rotulo fala de gasto, pelo texto da regra.
+            let (real, reference): (usize, usize) = match f.kind {
+                FindingKind::Pace => (
+                    index_of(f, &|l| l == "Gasto até hoje"),
+                    index_of(f, &|l| l == "Normal até hoje"),
+                ),
+                FindingKind::CategoryAboveNormal => (
+                    index_of(f, &|l| l.ends_with(" no mês")),
+                    index_of(f, &|l| l.ends_with(" normal")),
+                ),
                 FindingKind::Budget => {
-                    assert!(real.starts_with("Gasto ") && reference.starts_with("Meta "));
                     assert_eq!(c.reference_label, "Meta");
+                    (
+                        index_of(f, &|l| l.starts_with("Gasto ")),
+                        index_of(f, &|l| l.starts_with("Meta ")),
+                    )
                 }
                 other => panic!("{other:?}"),
-            }
+            };
+            assert_eq!(c.real, money_at(f, real), "{:?}", f.kind);
+            assert_eq!(c.reference, money_at(f, reference), "{:?}", f.kind);
         }
         assert!(seen >= 3, "a fixture tem ritmo, categoria e metas");
     }

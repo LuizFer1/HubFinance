@@ -25,8 +25,8 @@ pub use marks::{
     tag_icon, tile, token_tile,
 };
 pub use surface::{
-    banner, card, dialog, divider, empty_copy, empty_icon, empty_state, inset, section_heading,
-    settings_row, vdivider,
+    banner, card, dialog, divider, empty_copy, empty_icon, empty_sketch_card, empty_state, inset,
+    section_heading, settings_row, vdivider,
 };
 pub use values::{StatSize, baseline_pad, figure, money, stat, stat_label, value_line};
 

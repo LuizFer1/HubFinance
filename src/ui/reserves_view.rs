@@ -42,11 +42,6 @@ const LEGEND_COL_GAP: f32 = 24.0;
 /// Padding lateral dos cards da linha 2 (20 + 20).
 const CARD_PADDING_X: f32 = 40.0;
 
-/// Largura minima da coluna de texto do estado vazio, ao lado do esqueleto.
-const EMPTY_TEXT_MIN: f32 = 260.0;
-const EMPTY_GAP_X: f32 = 56.0;
-const EMPTY_PADDING_X: f32 = 32.0;
-
 pub fn view(app: &App) -> Element<'_, Message> {
     let v = &app.reserves;
     if v.is_empty {
@@ -925,8 +920,7 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
 
 // ---- estado vazio ----
 
-/// Um card so: o medidor tracejado e o texto. O `flex-wrap` do prototipo vira uma quebra manual
-/// (o iced nao tem): lado a lado quando os dois cabem, senao empilhados.
+/// O card com esboco do Resumo (`widgets::empty_sketch_card`), com o medidor tracejado.
 fn empty_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let sketch = canvas(EmptyReservesProgram {
@@ -935,29 +929,20 @@ fn empty_card(app: &App) -> Element<'_, Message> {
     })
     .width(EMPTY_RESERVES_WIDTH)
     .height(EMPTY_RESERVES_HEIGHT);
-    let mut copy = widgets::empty_copy(
+    let copy = widgets::empty_copy(
         t,
         "Nenhuma reserva sincronizada",
-        "A reserva de emergência e as caixinhas são criadas no app. Assim que um celular pareado \
-         sincronizar, saldos, metas e movimentações aparecem aqui.",
+        "A reserva de emergência e as caixinhas são criadas no app. Assim que um celular pareado          sincronizar, saldos, metas e movimentações aparecem aqui.",
         false,
     );
-    if let Some(connect) = shell::connect_phone_button(app) {
-        copy = copy.push(Space::new().height(20)).push(connect);
-    }
-    let inner = shell::content_width(app) - 2.0 * EMPTY_PADDING_X;
-    let body: Element<'_, Message> = if inner >= EMPTY_RESERVES_WIDTH + EMPTY_GAP_X + EMPTY_TEXT_MIN
-    {
-        row![sketch, copy]
-            .spacing(EMPTY_GAP_X)
-            .align_y(Alignment::Center)
-            .into()
-    } else {
-        column![sketch, copy].spacing(32).into()
-    };
-    widgets::card(t, body)
-        .padding([56.0, EMPTY_PADDING_X])
-        .into()
+    widgets::empty_sketch_card(
+        t,
+        sketch.into(),
+        EMPTY_RESERVES_WIDTH,
+        copy,
+        shell::connect_phone_button(app),
+        shell::content_width(app),
+    )
 }
 
 #[cfg(test)]

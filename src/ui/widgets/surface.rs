@@ -184,6 +184,39 @@ pub fn empty_icon<'a, M: 'a>(t: &'static Tokens, glyph: &'static str) -> Element
         .into()
 }
 
+/// Largura minima da coluna de texto do card com esboco, ao lado do desenho.
+const SKETCH_TEXT_MIN: f32 = 260.0;
+
+/// Card de primeiro uso com esboco (Resumo e Reservas): o desenho tracejado a esquerda e o texto
+/// (`copy`, com a acao abaixo) a direita, 56 entre os dois e respiro de 56 x 32. E o card do
+/// Resumo, validado; as Reservas usam o mesmo. O `flex-wrap` do prototipo vira uma quebra manual
+/// (o iced nao tem): numa area de conteudo `content_width` estreita demais para esboco, vao e
+/// 260 de texto, o texto desce para baixo do desenho. Na janela minima (728 de conteudo) os dois
+/// ainda cabem lado a lado.
+pub fn empty_sketch_card<'a, M: 'a>(
+    t: &'static Tokens,
+    sketch: Element<'a, M>,
+    sketch_width: f32,
+    copy: Column<'a, M>,
+    action: Option<Element<'a, M>>,
+    content_width: f32,
+) -> Element<'a, M> {
+    let copy = match action {
+        Some(action) => copy.push(Space::new().height(space::XL)).push(action),
+        None => copy,
+    };
+    let inner = content_width - 2.0 * space::XXXL;
+    let body: Element<'a, M> = if inner >= sketch_width + space::GIANT + SKETCH_TEXT_MIN {
+        row![sketch, copy]
+            .spacing(space::GIANT)
+            .align_y(Alignment::Center)
+            .into()
+    } else {
+        column![sketch, copy].spacing(space::XXXL).into()
+    };
+    card(t, body).padding([space::GIANT, space::XXXL]).into()
+}
+
 /// Estado vazio centrado: icone, `empty_copy` e no maximo uma acao (navegar ou limpar filtro:
 /// o hub nunca cria dado). A tela poe o respiro em volta.
 pub fn empty_state<'a, M: 'a>(

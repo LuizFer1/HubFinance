@@ -590,7 +590,7 @@ fn empty(app: &App) -> Element<'_, Message> {
     });
     let col = widgets::empty_state(
         t,
-        icons::icon(icons::FUNNEL_X, 28.0, t.accent_300),
+        widgets::empty_icon(t, icons::FUNNEL_X),
         &title,
         &body,
         action,

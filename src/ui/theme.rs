@@ -109,7 +109,6 @@ pub mod space {
     pub const XXXL: f32 = 32.0;
     #[cfg_attr(not(test), expect(dead_code, reason = "sem uso ainda"))]
     pub const HUGE: f32 = 40.0;
-    #[cfg_attr(not(test), expect(dead_code, reason = "sem uso ainda"))]
     pub const GIANT: f32 = 56.0;
     /// Entre cards de uma tela.
     pub const BETWEEN_CARDS: f32 = L;

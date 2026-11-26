@@ -1641,7 +1641,7 @@ fn empty_card(app: &App) -> Element<'_, Message> {
     })
     .width(EMPTY_WIDTH)
     .height(EMPTY_HEIGHT);
-    let mut copy = widgets::empty_copy(
+    let copy = widgets::empty_copy(
         t,
         "Nenhum dado por aqui ainda",
         "Assim que um celular pareado sincronizar, o dashboard se monta sozinho. Os dados viajam \
@@ -1657,12 +1657,14 @@ fn empty_card(app: &App) -> Element<'_, Message> {
         .spacing(8)
         .align_y(Alignment::Center),
     );
-    if let Some(connect) = shell::connect_phone_button(app) {
-        copy = copy.push(Space::new().height(20)).push(connect);
-    }
-    widgets::card(t, row![sketch, copy].spacing(56).align_y(Alignment::Center))
-        .padding([56, 32])
-        .into()
+    widgets::empty_sketch_card(
+        t,
+        sketch.into(),
+        EMPTY_WIDTH,
+        copy,
+        shell::connect_phone_button(app),
+        shell::content_width(app),
+    )
 }
 
 // ---- rodape ----

@@ -1063,23 +1063,21 @@ pub(super) fn failure(app: &App) -> Option<&str> {
 /// dados.
 fn failed_card<'a>(app: &'a App, msg: &'a str) -> Element<'a, Message> {
     let t = app.tokens;
-    widgets::card(
-        t,
-        column![
-            icons::icon(icons::WARNING_CIRCLE, 28.0, t.expense_fg),
-            text("O hub não iniciou")
-                .size(16)
-                .font(fonts::INTER_MEDIUM)
-                .color(t.text),
-            text(msg).size(13).color(t.text_muted),
-            text(format!("Dados em {}", app.snapshot.data_dir.display()))
-                .size(12)
-                .color(t.text_muted),
-        ]
-        .spacing(8),
-    )
-    .padding(24)
-    .into()
+    // O padrao dos estados vazios (titulo 18, corpo 14), com o glifo na cor do erro e a pasta
+    // de dados como nota: e ela que a pessoa procura para entender a falha.
+    let col = column![
+        icons::icon(icons::WARNING_CIRCLE, 28.0, t.expense_fg),
+        Space::new().height(space::M),
+        widgets::empty_copy(t, "O hub não iniciou", msg, true),
+        Space::new().height(space::S),
+        text(format!("Dados em {}", app.snapshot.data_dir.display()))
+            .size(theme::type_scale::META)
+            .color(t.text_muted),
+    ]
+    .align_x(Alignment::Center);
+    widgets::card(t, container(col).center_x(Length::Fill))
+        .padding([space::GIANT, space::XXL])
+        .into()
 }
 
 #[cfg(test)]

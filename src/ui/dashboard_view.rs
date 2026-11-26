@@ -20,7 +20,7 @@ use super::charts::{
     PACE_HEIGHT, PaceProgram, SwatchProgram,
 };
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
-use super::widgets::{Bar, TagTone};
+use super::widgets::{Bar, CompactTone};
 use super::{fonts, icons, shell, time, widgets};
 use crate::dashboard::grafite::{
     BusinessBlock, EmergencyBlock, HistoryBody, Line, Section, Tone, UpcomingLine,
@@ -446,7 +446,7 @@ fn business_capital<'a>(t: &'static Tokens, b: &BusinessBlock) -> Element<'a, Me
     let mut col = column![
         row![
             txt(b.capital_title.clone(), 13.0, t.text_muted).width(Length::Fill),
-            widgets::tag(t, TagTone::Accent, &b.today_chip),
+            widgets::tag_compact(t, CompactTone::Accent, &b.today_chip, [3, 9]),
         ]
         .align_y(Alignment::Center)
     ]
@@ -758,7 +758,7 @@ fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
             let mut col = column![
                 row![
                     txt(e.title.clone(), 13.0, t.text_muted).width(Length::Fill),
-                    widgets::tag(t, TagTone::Accent, &e.chip),
+                    widgets::tag_compact(t, CompactTone::Accent, &e.chip, [3, 9]),
                 ]
                 .align_y(Alignment::Center),
                 widgets::value_line(
@@ -1181,7 +1181,7 @@ fn category_row<'a>(t: &'static Tokens, r: CategoryRow<'a, '_>) -> Element<'a, M
         .spacing(10)
         .align_y(Alignment::Center);
     if let Some(chip) = r.above_normal {
-        name = name.push(widgets::tag(t, TagTone::Neutral, chip));
+        name = name.push(widgets::tag_compact(t, CompactTone::Strong, chip, [2, 8]));
     }
     let token = (!r.color.is_empty()).then_some(r.color);
     container(
@@ -1438,11 +1438,11 @@ fn recent(app: &App) -> Element<'_, Message> {
             .spacing(8)
             .align_y(Alignment::Center);
         if let Some(chip) = &l.chip {
-            title = title.push(widgets::tag(t, TagTone::Accent, chip));
+            title = title.push(widgets::tag_compact(t, CompactTone::Accent, chip, [2, 8]));
         }
         if let Some(tag) = &l.tag {
             // `text_soft`: o `text_muted` sobre o divisor fica abaixo de 4,5:1 no claro.
-            title = title.push(widgets::tag(t, TagTone::Neutral, tag));
+            title = title.push(widgets::tag_compact(t, CompactTone::Neutral, tag, [2, 8]));
         }
         let mut meta = row![].spacing(6).align_y(Alignment::Center);
         if let Some(dot) = &l.dot {

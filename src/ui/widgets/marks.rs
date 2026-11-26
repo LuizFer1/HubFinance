@@ -1,5 +1,6 @@
 //! Marcas pequenas sobre a superficie do card: tags, tiles de icone e barras.
 
+use iced::widget::text::Wrapping;
 use iced::widget::{Row, Space, container, row, text};
 use iced::{Alignment, Color, Element, Length};
 
@@ -290,6 +291,7 @@ fn tag_text<'a>(label: &str, color: Color) -> text::Text<'a> {
         .size(type_scale::MICRO)
         .font(fonts::INTER_MEDIUM)
         .line_height(1.0)
+        .wrapping(Wrapping::None)
         .color(color)
 }
 
@@ -335,6 +337,47 @@ pub fn color_tag<'a, M: 'a>(t: &'static Tokens, token: &str) -> Element<'a, M> {
         TAG_HEIGHT,
         space::S,
     )
+}
+
+/// Tom da tag compacta do Resumo. Os tres pares sao os que o design do dono desenha: acento
+/// ("hoje", recorrencia), neutro no divisor (tag do lancamento) e forte, `fg` no divisor
+/// ("↑ 38% do normal", que precisa pesar mais que a neutra).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompactTone {
+    Accent,
+    Neutral,
+    Strong,
+}
+
+/// (texto, fundo) da tag compacta.
+fn compact_colors(t: &Tokens, tone: CompactTone) -> (Color, Color) {
+    match tone {
+        CompactTone::Accent => (t.text_accent(), t.accent_900),
+        // `text_soft`: o `text_muted` sobre o divisor fica abaixo de 4,5:1 no claro.
+        CompactTone::Neutral => (t.text_soft(), t.divider()),
+        CompactTone::Strong => (t.text, t.divider()),
+    }
+}
+
+/// Tag compacta do Resumo: 11 Regular, sem altura fixa (o respiro faz a altura: 18 px com
+/// `[2, 8]`, 20 com `[3, 9]` no "hoje"). Fica fora da regua da `tag` pelo mesmo motivo do
+/// `partial_tag`: o Resumo do dono nao muda de tamanho nem de peso na Fase 7.
+pub fn tag_compact<'a, M: 'a>(
+    t: &'static Tokens,
+    tone: CompactTone,
+    label: &str,
+    padding: [u16; 2],
+) -> Element<'a, M> {
+    let (fg, bg) = compact_colors(t, tone);
+    container(
+        text(label.to_string())
+            .size(type_scale::MICRO)
+            .wrapping(Wrapping::None)
+            .color(fg),
+    )
+    .padding(padding)
+    .style(theme::fill(bg, radius::PILL))
+    .into()
 }
 
 /// Chip "Parcial · até 19 nov" do cabecalho (texto pronto do modelo): a pilula de acento maior,
@@ -433,6 +476,35 @@ mod tests {
             assert_eq!(step_color(t, 2, 1), t.neutral_800);
             for total in [0, 1, 3] {
                 let _: Element<'_, ()> = progress_steps(t, 1, total);
+            }
+        }
+    }
+
+    /// O Resumo do dono continua com as tags de antes da Fase 7: forte e neutra no divisor,
+    /// acento em `accent_900`, todas passando 4,5.
+    #[test]
+    fn tag_compacta_mantem_as_cores_do_resumo() {
+        for t in [&DARK, &LIGHT] {
+            assert_eq!(
+                compact_colors(t, CompactTone::Strong),
+                (t.text, t.divider())
+            );
+            assert_eq!(
+                compact_colors(t, CompactTone::Neutral),
+                (t.text_soft(), t.divider())
+            );
+            assert_eq!(
+                compact_colors(t, CompactTone::Accent),
+                (t.accent_300, t.accent_900)
+            );
+            for tone in [
+                CompactTone::Accent,
+                CompactTone::Neutral,
+                CompactTone::Strong,
+            ] {
+                let (fg, bg) = compact_colors(t, tone);
+                assert!(contrast(fg, bg) >= 4.5, "{tone:?} {:?}", t.mode);
+                let _: Element<'_, ()> = tag_compact(t, tone, "hoje", [3, 9]);
             }
         }
     }

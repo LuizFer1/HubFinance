@@ -794,17 +794,15 @@ pub enum ButtonKind {
 }
 
 /// Tamanho do botao: 28 (compacto, dentro de linha), 36 (padrao) e 44 (cabecalho). O
-/// `button::Style` do iced nao tem altura, padding nem fonte; o estilo so usa o raio, e quem
-/// monta o botao le `height`, `padding_x` e `text_size` daqui.
+/// `button::Style` do iced nao tem altura, padding nem fonte; o estilo so usa o raio, e
+/// `widgets::action_button` le `height`, `padding_x` e `text_size` daqui.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonSize {
     Compact,
     Regular,
-    #[cfg_attr(not(test), expect(dead_code, reason = "cabecalho fixo da Fase 7"))]
     Large,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "primitivas da Fase 7"))]
 impl ButtonSize {
     pub const fn height(self) -> f32 {
         match self {
@@ -832,7 +830,7 @@ impl ButtonSize {
     /// O compacto usa o raio das pecas pequenas (6); os outros, o de controle (8).
     ///
     /// Desvio intencional da secao 7.4, que pede raio 8 para todo botao: o fantasma ("Copiar",
-    /// "Desfazer") ja tinha raio 6, e `ghost()` delega ao compacto para nao mudar de cara.
+    /// "Desfazer") ja tinha raio 6, e o fantasma usa o compacto para nao mudar de cara.
     pub const fn radius(self) -> f32 {
         match self {
             ButtonSize::Compact => radius::INSET,
@@ -935,36 +933,6 @@ pub fn button(
             },
         }
     })
-}
-
-/// Botao fantasma no acento ("Copiar", "Desfazer", "Gerar outro codigo"): raio 6.
-pub fn ghost(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    button(t, ButtonKind::Ghost, ButtonSize::Compact)
-}
-
-/// Link de texto ("Ver todos", "Limpar filtros", "Ver como").
-pub fn link(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    button(t, ButtonKind::Link, ButtonSize::Regular)
-}
-
-/// Primario ("Gerar codigo", "Limpar filtros" do vazio).
-pub fn outline_accent(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    button(t, ButtonKind::Primary, ButtonSize::Regular)
-}
-
-/// Secundario ("Cancelar").
-pub fn outline_divider(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    button(t, ButtonKind::Secondary, ButtonSize::Regular)
-}
-
-/// "Remover" da lista.
-pub fn danger_outline(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    button(t, ButtonKind::Danger, ButtonSize::Regular)
-}
-
-/// "Remover" do dialogo.
-pub fn danger_filled(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    button(t, ButtonKind::DangerFilled, ButtonSize::Regular)
 }
 
 /// Botoes da barra de titulo: icone no texto de apoio, texto a 8 % sob o mouse e 12 %
@@ -1590,12 +1558,30 @@ mod tests {
                 ("segment ativo", Box::new(segment(t, true))),
                 ("icone", Box::new(icon_button(t))),
                 ("seg_option ativo", Box::new(seg_option(t, true))),
-                ("ghost", Box::new(ghost(t))),
-                ("link", Box::new(link(t))),
-                ("outline_accent", Box::new(outline_accent(t))),
-                ("outline_divider", Box::new(outline_divider(t))),
-                ("danger_outline", Box::new(danger_outline(t))),
-                ("danger_filled", Box::new(danger_filled(t))),
+                (
+                    "ghost",
+                    Box::new(button(t, ButtonKind::Ghost, ButtonSize::Compact)),
+                ),
+                (
+                    "link",
+                    Box::new(button(t, ButtonKind::Link, ButtonSize::Regular)),
+                ),
+                (
+                    "outline_accent",
+                    Box::new(button(t, ButtonKind::Primary, ButtonSize::Regular)),
+                ),
+                (
+                    "outline_divider",
+                    Box::new(button(t, ButtonKind::Secondary, ButtonSize::Regular)),
+                ),
+                (
+                    "danger_outline",
+                    Box::new(button(t, ButtonKind::Danger, ButtonSize::Regular)),
+                ),
+                (
+                    "danger_filled",
+                    Box::new(button(t, ButtonKind::DangerFilled, ButtonSize::Regular)),
+                ),
                 ("titlebar", Box::new(titlebar_button(t, true))),
                 ("chip ativo", Box::new(chip(t, true))),
                 ("filtro ativo", Box::new(filter_button(t, true))),
@@ -1897,7 +1883,7 @@ mod tests {
             );
             let m = t.mode;
 
-            let g = ghost(t);
+            let g = button(t, ButtonKind::Ghost, ButtonSize::Compact);
             assert_eq!(g(&theme, rest).background, None, "{m:?}");
             assert_eq!(
                 g(&theme, hover).background,
@@ -1912,7 +1898,7 @@ mod tests {
             assert_eq!(g(&theme, rest).border.radius, 6.0.into());
             assert_eq!(g(&theme, rest).text_color, t.accent_300, "{m:?}");
 
-            let p = outline_accent(t);
+            let p = button(t, ButtonKind::Primary, ButtonSize::Regular);
             assert_eq!(
                 p(&theme, rest).background,
                 bg(alpha(t.accent, 0.08)),
@@ -1938,7 +1924,7 @@ mod tests {
                 );
             }
 
-            let sec = outline_divider(t);
+            let sec = button(t, ButtonKind::Secondary, ButtonSize::Regular);
             assert_eq!(sec(&theme, rest).background, None, "{m:?}");
             assert_eq!(
                 sec(&theme, hover).background,
@@ -1952,7 +1938,7 @@ mod tests {
             );
             assert_eq!(sec(&theme, rest).border.color, t.divider(), "{m:?}");
 
-            let d = danger_outline(t);
+            let d = button(t, ButtonKind::Danger, ButtonSize::Regular);
             assert_eq!(
                 d(&theme, hover).background,
                 bg(alpha(t.expense, 0.12)),
@@ -1971,7 +1957,7 @@ mod tests {
             assert_eq!(d(&theme, down).border.color, t.expense, "{m:?}");
             assert!(opaque(d(&theme, down).border.color), "{m:?}");
 
-            let f = danger_filled(t);
+            let f = button(t, ButtonKind::DangerFilled, ButtonSize::Regular);
             assert_eq!(
                 f(&theme, rest).background,
                 bg(alpha(t.expense, 0.14)),
@@ -1995,7 +1981,7 @@ mod tests {
             assert_eq!(f(&theme, down).border.color, t.expense, "{m:?}");
             assert!(opaque(f(&theme, down).border.color), "{m:?}");
 
-            let l = link(t);
+            let l = button(t, ButtonKind::Link, ButtonSize::Regular);
             assert_eq!(l(&theme, rest).text_color, t.accent_300, "{m:?}");
             assert_eq!(l(&theme, hover).text_color, t.accent_200, "{m:?}");
             assert_eq!(l(&theme, down).text_color, t.accent_100, "{m:?}");

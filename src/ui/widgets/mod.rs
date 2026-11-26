@@ -10,8 +10,10 @@ use super::fonts;
 use super::icons;
 use super::theme::{self, Tokens};
 
+mod controls;
 mod surface;
 
+pub use controls::{action_button, action_button_icon, action_button_with};
 pub use surface::{card, divider, inset, section_heading, vdivider};
 
 /// Controle segmentado de duas opcoes (o "toggle" do hub): `(glifo opcional, rotulo, ativo,

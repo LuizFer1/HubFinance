@@ -10,7 +10,7 @@ use iced::{Alignment, Color, Element, Length};
 
 use super::app::{App, Message, awaiting_cloud_consent};
 use super::assistant_settings_view;
-use super::theme::{self, Tokens};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens};
 use super::{fonts, rows, time, widgets};
 use crate::advisor::{Finding, Severity};
 use crate::assistant::prompt::Role;
@@ -29,30 +29,27 @@ exatas.";
 pub fn view(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let toolbar = row![
-        button(
-            text("Conversar sobre isso")
-                .size(13)
-                .font(fonts::INTER_MEDIUM)
+        widgets::action_button(
+            t,
+            ButtonKind::Primary,
+            ButtonSize::Compact,
+            "Conversar sobre isso"
         )
-        .padding([6, 12])
-        .style(theme::outline_accent(t))
         .on_press(Message::StartConversation),
         Space::new().width(Length::Fill),
-        button(
-            text("Configurar assistente")
-                .size(13)
-                .font(fonts::INTER_MEDIUM)
+        widgets::action_button(
+            t,
+            ButtonKind::Secondary,
+            ButtonSize::Compact,
+            "Configurar assistente"
         )
-        .padding([6, 12])
-        .style(theme::outline_divider(t))
         .on_press(Message::ToggleAssistantSettings),
-        button(
-            text("Ver o que o assistente vê")
-                .size(13)
-                .font(fonts::INTER_MEDIUM)
+        widgets::action_button(
+            t,
+            ButtonKind::Secondary,
+            ButtonSize::Compact,
+            "Ver o que o assistente vê"
         )
-        .padding([6, 12])
-        .style(theme::outline_divider(t))
         .on_press(Message::ShowEnvelope),
     ]
     .spacing(8);
@@ -182,9 +179,7 @@ fn chat_area(app: &App) -> Option<Element<'_, Message>> {
             .color(t.text),
         Space::new().width(Length::Fill),
         text(tokens_total_label(open)).size(12).color(t.text_muted),
-        button(text("Fechar").size(13).font(fonts::INTER_MEDIUM))
-            .padding([4, 10])
-            .style(theme::outline_divider(t))
+        widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Fechar")
             .on_press(Message::CloseConversation),
     ]
     .spacing(12)
@@ -198,10 +193,13 @@ fn chat_area(app: &App) -> Option<Element<'_, Message>> {
                         .size(13)
                         .color(t.warning),
                     Space::new().width(Length::Fill),
-                    button(text("Nova conversa").size(13).font(fonts::INTER_MEDIUM))
-                        .padding([4, 10])
-                        .style(theme::outline_accent(t))
-                        .on_press(Message::StartConversation),
+                    widgets::action_button(
+                        t,
+                        ButtonKind::Primary,
+                        ButtonSize::Compact,
+                        "Nova conversa"
+                    )
+                    .on_press(Message::StartConversation),
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center),
@@ -245,7 +243,7 @@ fn chat_area(app: &App) -> Option<Element<'_, Message>> {
     // Sem `on_input` o campo fica desabilitado enquanto ha resposta chegando.
     let mut input = text_input("Pergunte algo sobre estes números", &app.chat_input)
         .size(14)
-        .padding([10, 12])
+        .padding([9, 12])
         .style(theme::input(t))
         .width(Length::Fill);
     if !view.busy {
@@ -256,11 +254,9 @@ fn chat_area(app: &App) -> Option<Element<'_, Message>> {
     // "Enviar" ao lado do Enter: quem nao sabe do Enter nao fica sem saida. Desabilitado nas
     // mesmas condicoes em que `ChatSubmit` nao faria nada.
     let can_send = !view.busy && !app.chat_input.trim().is_empty();
-    // Mesma altura do campo sem numero magico: texto de 14 com a altura de linha padrao e o
-    // mesmo respiro vertical de 10 (14 x 1,3 + 20 = 38,2 nos dois).
-    let send = button(text("Enviar").size(14).font(fonts::INTER_MEDIUM))
-        .padding([10, 16])
-        .style(theme::outline_accent(t))
+    // Botao padrao de 36 e o campo na mesma altura: texto de 14 com a altura de linha padrao e
+    // 9 de respiro (14 x 1,3 + 18 = 36,2).
+    let send = widgets::action_button(t, ButtonKind::Primary, ButtonSize::Regular, "Enviar")
         .on_press_maybe(can_send.then_some(Message::ChatSubmit));
     col = col.push(row![input, send].spacing(8).align_y(Alignment::Center));
     Some(widgets::card(t, col).padding([18, 20]).into())
@@ -435,13 +431,9 @@ fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, 
     .padding(4);
     let actions = row![
         Space::new().width(Length::Fill),
-        button(text("Cancelar").size(13).font(fonts::INTER_MEDIUM))
-            .padding([6, 14])
-            .style(theme::outline_divider(t))
+        widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Cancelar")
             .on_press(cancel_preview_message(open)),
-        button(text(PREVIEW_SEND).size(13).font(fonts::INTER_MEDIUM))
-            .padding([6, 14])
-            .style(theme::outline_accent(t))
+        widgets::action_button(t, ButtonKind::Primary, ButtonSize::Compact, PREVIEW_SEND)
             .on_press(Message::ApproveCloudSend),
     ]
     .spacing(8)
@@ -471,11 +463,14 @@ fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, 
 
 /// Secundario, e nao de perigo: tentar de novo nao apaga nem envia nada novo.
 fn retry_button(t: &'static Tokens) -> Element<'static, Message> {
-    button(text("Tentar de novo").size(13).font(fonts::INTER_MEDIUM))
-        .padding([4, 10])
-        .style(theme::outline_divider(t))
-        .on_press(Message::ChatRetry)
-        .into()
+    widgets::action_button(
+        t,
+        ButtonKind::Secondary,
+        ButtonSize::Compact,
+        "Tentar de novo",
+    )
+    .on_press(Message::ChatRetry)
+    .into()
 }
 
 fn streaming_bubble<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> {
@@ -489,9 +484,7 @@ fn streaming_bubble<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> 
         container(
             column![
                 text(shown).size(14).color(t.text),
-                button(text("Parar").size(13).font(fonts::INTER_MEDIUM))
-                    .padding([4, 10])
-                    .style(theme::outline_divider(t))
+                widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Parar")
                     .on_press(Message::ChatStop),
             ]
             .spacing(8)
@@ -521,20 +514,14 @@ fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
         return None;
     }
     let armed = app.confirm_delete_all.is_some();
-    let delete_all = button(
-        text(delete_all_label(armed))
-            .size(13)
-            .font(fonts::INTER_MEDIUM),
-    )
-    .padding([4, 10])
-    .style(move |theme: &iced::Theme, status| {
-        if armed {
-            theme::danger_filled(t)(theme, status)
-        } else {
-            theme::danger_outline(t)(theme, status)
-        }
-    })
-    .on_press(Message::DeleteAllConversations);
+    let delete_kind = if armed {
+        ButtonKind::DangerFilled
+    } else {
+        ButtonKind::Danger
+    };
+    let delete_all =
+        widgets::action_button(t, delete_kind, ButtonSize::Compact, delete_all_label(armed))
+            .on_press(Message::DeleteAllConversations);
     let open_id = open_conversation(app).map(|c| c.id.as_str());
     let mut col = column![
         row![
@@ -568,9 +555,7 @@ fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
             .width(Length::Fill)
             .style(theme::plain(t.text))
             .on_press(Message::OpenConversation(c.id.clone()));
-        let delete = button(text("Apagar").size(12).font(fonts::INTER_MEDIUM))
-            .padding([4, 8])
-            .style(theme::danger_outline(t))
+        let delete = widgets::action_button(t, ButtonKind::Danger, ButtonSize::Compact, "Apagar")
             .on_press(Message::AskDeleteConversation(c.id.clone()));
         let line = row![title, delete].spacing(8).align_y(Alignment::Center);
         col = col.push(rows::hover_row(app, &c.id, line, [0, 4], 8.0, 52.0));
@@ -610,10 +595,7 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
     )
     .height(Length::Fill)
     .padding(4);
-    let close = button(text("Fechar").size(13).font(fonts::INTER_MEDIUM))
-        .height(38)
-        .padding([0, 16])
-        .style(theme::outline_divider(t))
+    let close = widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Regular, "Fechar")
         .on_press(Message::CloseEnvelope);
     let width = (app.window_size.width - 48.0).clamp(280.0, 720.0);
     let height = (app.window_size.height - 96.0).clamp(240.0, 640.0);

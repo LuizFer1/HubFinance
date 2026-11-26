@@ -11,9 +11,7 @@
 
 use ::time::OffsetDateTime;
 use iced::widget::text::{IntoFragment, Span, Wrapping};
-use iced::widget::{
-    Space, Stack, button, canvas, column, container, rich_text, row, span, text, tooltip,
-};
+use iced::widget::{Space, Stack, canvas, column, container, rich_text, row, span, text, tooltip};
 use iced::{Alignment, Color, Element, Font, Length, Padding};
 
 use super::app::{App, Message, Screen};
@@ -21,7 +19,7 @@ use super::charts::{
     EMPTY_HEIGHT, EMPTY_WIDTH, EmptyChartProgram, HISTORY_HEIGHT, HistoryProgram, MeterProgram,
     PACE_HEIGHT, PaceProgram, SwatchProgram,
 };
-use super::theme::{self, Tokens};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens};
 use super::{fonts, icons, shell, time, widgets};
 use crate::dashboard::grafite::{
     BusinessBlock, EmergencyBlock, HistoryBody, Line, Section, Tone, UpcomingLine,
@@ -443,17 +441,22 @@ fn big_value<'a>(
 }
 
 fn link_button<'a>(t: &'static Tokens, label: &str, message: Message) -> Element<'a, Message> {
-    button(
+    // Linha inteira de 44 (o tamanho grande, texto 14) sem respiro lateral: o link encosta
+    // na borda do conteudo do card, como no design. A cor vem do estilo, que muda com o mouse.
+    widgets::action_button_with(
+        t,
+        ButtonKind::Link,
+        ButtonSize::Large,
         row![
-            txt(label.to_string(), 14.0, t.accent_300).width(Length::Fill),
-            icons::icon(icons::CARET_RIGHT, 14.0, t.accent_300),
+            text(label.to_string())
+                .size(ButtonSize::Large.text_size())
+                .width(Length::Fill),
+            icons::icon_inherit(icons::CARET_RIGHT, 14.0),
         ]
         .align_y(Alignment::Center),
     )
     .width(Length::Fill)
-    .height(44)
     .padding(0)
-    .style(theme::link(t))
     .on_press(message)
     .into()
 }

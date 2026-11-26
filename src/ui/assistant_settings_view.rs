@@ -6,7 +6,7 @@ use iced::widget::{Space, button, column, container, pick_list, row, text, text_
 use iced::{Alignment, Element, Length, Padding};
 
 use super::app::{App, Message};
-use super::theme::{self, Tokens};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens};
 use super::{fonts, widgets};
 use crate::assistant::secret::Secret;
 use crate::assistant::settings::ProviderChoice;
@@ -111,13 +111,16 @@ fn local_section(app: &App) -> Element<'_, Message> {
             .on_submit(Message::SettingsPortSubmit)
             .size(13)
             .width(90)
-            .padding([8, 10])
+            .padding([10, 10])
             .style(theme::input(t)),
         Space::new().width(Length::Fill),
-        button(text("Atualizar modelos").size(13).font(fonts::INTER_MEDIUM))
-            .padding([8, 14])
-            .style(theme::outline_divider(t))
-            .on_press(Message::RefreshModels),
+        widgets::action_button(
+            t,
+            ButtonKind::Secondary,
+            ButtonSize::Regular,
+            "Atualizar modelos"
+        )
+        .on_press(Message::RefreshModels),
     ]
     .spacing(10)
     .align_y(Alignment::Center);
@@ -143,7 +146,7 @@ fn local_section(app: &App) -> Element<'_, Message> {
                     )
                     .placeholder("Escolha um modelo")
                     .text_size(13)
-                    .padding([8, 10])
+                    .padding([10, 10])
                     .style(theme::pick(t))
                     .menu_style(theme::pick_menu(t))
                     .width(Length::Fill),
@@ -202,9 +205,7 @@ fn cloud_section(app: &App) -> Element<'_, Message> {
         row![
             text("Chave salva").size(13).color(t.text),
             Space::new().width(Length::Fill),
-            button(text("Remover").size(13).font(fonts::INTER_MEDIUM))
-                .padding([8, 14])
-                .style(theme::danger_outline(t))
+            widgets::action_button(t, ButtonKind::Danger, ButtonSize::Regular, "Remover")
                 .on_press(Message::RemoveKey),
         ]
         .align_y(Alignment::Center)
@@ -217,11 +218,9 @@ fn cloud_section(app: &App) -> Element<'_, Message> {
                 .on_submit(Message::SaveKey)
                 .size(13)
                 .width(Length::Fill)
-                .padding([8, 10])
+                .padding([10, 10])
                 .style(theme::input(t)),
-            button(text("Salvar").size(13).font(fonts::INTER_MEDIUM))
-                .padding([8, 14])
-                .style(theme::outline_accent(t))
+            widgets::action_button(t, ButtonKind::Primary, ButtonSize::Regular, "Salvar")
                 .on_press_maybe((!app.key_input.trim().is_empty()).then_some(Message::SaveKey)),
         ]
         .spacing(10)
@@ -244,7 +243,7 @@ fn cloud_section(app: &App) -> Element<'_, Message> {
             .on_submit(Message::SettingsCloudModelSubmit)
             .size(13)
             .width(Length::Fill)
-            .padding([8, 10])
+            .padding([10, 10])
             .style(theme::input(t)),
         ]
         .spacing(6),

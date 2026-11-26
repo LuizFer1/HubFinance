@@ -9,7 +9,7 @@ use iced::widget::{
 use iced::{Alignment, Element, Length, Padding, mouse, window};
 
 use super::app::{App, Message, Screen};
-use super::theme::{self, Tokens};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens};
 use super::{
     analysis_view, connection_view, dashboard_view, fonts, icons, remove_view, reserves_view, time,
     transactions_view, widgets,
@@ -48,15 +48,8 @@ pub fn root(app: &App) -> Element<'_, Message> {
 
 /// Toast de 40 px centralizado embaixo, com "Desfazer".
 fn toast<'a>(t: &'static Tokens, message: &'a str) -> Element<'a, Message> {
-    let undo = button(
-        container(text("Desfazer").size(13).font(fonts::INTER_MEDIUM))
-            .height(Length::Fill)
-            .align_y(Alignment::Center),
-    )
-    .height(28)
-    .padding([0, 10])
-    .style(theme::ghost(t))
-    .on_press(Message::UndoRemove);
+    let undo = widgets::action_button(t, ButtonKind::Ghost, ButtonSize::Compact, "Desfazer")
+        .on_press(Message::UndoRemove);
     let content = row![
         icons::icon(icons::CHECK_CIRCLE, 14.0, t.income_fg),
         text(message).size(13).color(t.text),
@@ -344,18 +337,12 @@ pub(super) fn connect_phone_button(app: &App) -> Option<Element<'_, Message>> {
     // inicial, e o botao piscaria no boot de quem ja tem celular pareado.
     let up = matches!(app.snapshot.status, Status::Running | Status::NoNetwork);
     (up && active_devices(app) == 0).then(|| {
-        button(
-            container(
-                text("Conectar um celular")
-                    .size(13)
-                    .font(fonts::INTER_MEDIUM),
-            )
-            .height(Length::Fill)
-            .align_y(Alignment::Center),
+        widgets::action_button(
+            app.tokens,
+            ButtonKind::Primary,
+            ButtonSize::Regular,
+            "Conectar um celular",
         )
-        .height(36)
-        .padding([0, 14])
-        .style(theme::outline_accent(app.tokens))
         .on_press(Message::SelectScreen(Screen::Connection))
         .into()
     })

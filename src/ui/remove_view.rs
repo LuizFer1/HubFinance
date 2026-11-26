@@ -13,7 +13,7 @@ use super::app::{App, Message, RemoveStep};
 // As contagens usam o "4.688" do resto da UI: numero grande sem separador e dificil de ler justo
 // no dialogo em que a pessoa decide o que apagar.
 use super::shell::{plural, thousands};
-use super::theme::{self, Tokens};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens};
 use super::{fonts, icons, widgets};
 use crate::hub::snapshot::DeviceView;
 use crate::store::erase::{Area, AreaSet, DeviceData};
@@ -225,58 +225,36 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
             .into(),
     };
 
-    let action = |content: Element<'static, Message>| {
-        button(
-            container(content)
-                .height(Length::Fill)
-                .align_y(Alignment::Center),
-        )
-        .height(38)
-        .padding([0, 16])
-    };
-    let label = |s: String| -> Element<'static, Message> {
-        text(s).size(13).font(fonts::INTER_MEDIUM).into()
-    };
+    let size = ButtonSize::Regular;
     let buttons = match state.step {
         RemoveStep::Choose => {
             let first = if orphan { "Depois" } else { "Cancelar" };
-            let cancel = action(label(first.into()))
-                .style(theme::outline_divider(t))
+            let cancel = widgets::action_button(t, ButtonKind::Secondary, size, first)
                 .on_press(Message::CancelRemove);
             let nothing = state.selected.is_empty();
-            let (primary_label, style_danger) = match (nothing, orphan) {
-                (true, true) => ("Manter tudo", false),
-                (true, false) => ("Remover", false),
-                (false, _) => ("Continuar", true),
+            let (primary_label, kind) = match (nothing, orphan) {
+                (true, true) => ("Manter tudo", ButtonKind::Primary),
+                (true, false) => ("Remover", ButtonKind::DangerFilled),
+                (false, _) => ("Continuar", ButtonKind::Danger),
             };
-            let content: Element<'static, Message> = if nothing && !orphan {
-                row![
-                    icons::icon_inherit(icons::USER_MINUS, 13.0),
-                    text(primary_label).size(13).font(fonts::INTER_MEDIUM),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .into()
+            let primary = if nothing && !orphan {
+                widgets::action_button_icon(t, kind, size, icons::USER_MINUS, primary_label)
             } else {
-                label(primary_label.into())
-            };
-            let primary = action(content).on_press(Message::RemoveContinue);
-            let primary = if style_danger {
-                primary.style(theme::danger_outline(t))
-            } else if orphan {
-                primary.style(theme::outline_accent(t))
-            } else {
-                primary.style(theme::danger_filled(t))
-            };
+                widgets::action_button(t, kind, size, primary_label)
+            }
+            .on_press(Message::RemoveContinue);
             row![Space::new().width(Length::Fill), cancel, primary].spacing(10)
         }
         RemoveStep::Confirm => {
-            let back = action(label("Voltar".into()))
-                .style(theme::outline_divider(t))
+            let back = widgets::action_button(t, ButtonKind::Secondary, size, "Voltar")
                 .on_press(Message::RemoveBack);
-            let confirm = action(label(confirm_label(data, state.selected, orphan)))
-                .style(theme::danger_filled(t))
-                .on_press(Message::ConfirmRemove);
+            let confirm = widgets::action_button(
+                t,
+                ButtonKind::DangerFilled,
+                size,
+                confirm_label(data, state.selected, orphan),
+            )
+            .on_press(Message::ConfirmRemove);
             row![Space::new().width(Length::Fill), back, confirm].spacing(10)
         }
     };
@@ -338,14 +316,12 @@ fn choose_body<'a>(app: &'a App, who: &Subject<'a>, selected: AreaSet) -> Elemen
         col = col.push(area_row(t, area, data, selected.contains(area)));
     }
     let shortcut = |label: &'static str, msg: Message, danger: bool| {
-        let b = button(text(label).size(12).font(fonts::INTER_MEDIUM))
-            .padding([6, 12])
-            .on_press(msg);
-        if danger {
-            b.style(theme::danger_outline(t))
+        let kind = if danger {
+            ButtonKind::Danger
         } else {
-            b.style(theme::outline_divider(t))
-        }
+            ButtonKind::Secondary
+        };
+        widgets::action_button(t, kind, ButtonSize::Compact, label).on_press(msg)
     };
     col.push(
         row![
@@ -408,12 +384,17 @@ fn area_row<'a>(
     let line = row![mark, info.width(Length::Fill)]
         .spacing(12)
         .align_y(Alignment::Center);
-    let b = button(line).width(Length::Fill).padding([10, 12]);
-    let b = if selected && enabled {
-        b.style(theme::danger_outline(t))
+    // Caixa de selecao inteira, nao botao de acao: o papel do botao so empresta o contorno e os
+    // estados (perigo marcada, secundario desmarcada).
+    let kind = if selected && enabled {
+        ButtonKind::Danger
     } else {
-        b.style(theme::outline_divider(t))
+        ButtonKind::Secondary
     };
+    let b = button(line)
+        .width(Length::Fill)
+        .padding([10, 12])
+        .style(theme::button(t, kind, ButtonSize::Regular));
     if enabled {
         b.on_press(Message::ToggleArea(area)).into()
     } else {
@@ -437,13 +418,9 @@ pub(super) fn orphan_banner(app: &App) -> Option<Element<'_, Message>> {
     } else {
         format!("{n} aparelhos removidos ainda têm dados no hub")
     };
-    let later = button(text("Depois").size(13).font(fonts::INTER_MEDIUM))
-        .padding([6, 12])
-        .style(theme::ghost(t))
+    let later = widgets::action_button(t, ButtonKind::Ghost, ButtonSize::Compact, "Depois")
         .on_press(Message::PostponeOrphans);
-    let decide = button(text("Decidir").size(13).font(fonts::INTER_MEDIUM))
-        .padding([6, 12])
-        .style(theme::outline_accent(t))
+    let decide = widgets::action_button(t, ButtonKind::Primary, ButtonSize::Compact, "Decidir")
         .on_press(Message::DecideOrphan);
     Some(
         container(

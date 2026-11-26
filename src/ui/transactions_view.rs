@@ -12,7 +12,7 @@ use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{App, Message};
 use super::rows::{author_cell, category_tile, hover_row, value_cell};
-use super::theme::{self, Tokens, alpha, mix};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, alpha, mix};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::list::{
     ALL_CATEGORIES_COLOR, CategoryOption, Filters, ListRow, NONE_KEY, TypeFilter,
@@ -85,21 +85,13 @@ fn filter_bar(app: &App) -> Element<'_, Message> {
     }
     bar = bar.push(widgets::vdivider(t)).push(type_segment(app));
     if app.filters.is_active() {
-        let clear = button(
-            container(
-                row![
-                    icons::icon_inherit(icons::X, 13.0),
-                    text("Limpar filtros").size(13),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .height(Length::Fill)
-            .align_y(Alignment::Center),
+        let clear = widgets::action_button_icon(
+            t,
+            ButtonKind::Link,
+            ButtonSize::Regular,
+            icons::X,
+            "Limpar filtros",
         )
-        .height(36)
-        .padding([0, 10])
-        .style(theme::link(t))
         .on_press(Message::ClearFilters);
         bar = bar.push(clear);
     }
@@ -571,14 +563,12 @@ fn empty(app: &App) -> Element<'_, Message> {
     }
     if show_clear {
         col = col.push(Space::new().height(2)).push(
-            button(
-                container(text("Limpar filtros").size(13).font(fonts::INTER_MEDIUM))
-                    .height(Length::Fill)
-                    .align_y(Alignment::Center),
+            widgets::action_button(
+                t,
+                ButtonKind::Primary,
+                ButtonSize::Regular,
+                "Limpar filtros",
             )
-            .height(36)
-            .padding([0, 14])
-            .style(theme::outline_accent(t))
             .on_press(Message::ClearFilters),
         );
     }

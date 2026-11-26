@@ -9,13 +9,11 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, SystemTime};
 
 use iced::widget::text::Wrapping;
-use iced::widget::{
-    Space, button, column, container, mouse_area, qr_code, rich_text, row, span, text,
-};
+use iced::widget::{Space, column, container, mouse_area, qr_code, rich_text, row, span, text};
 use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
 use super::app::{App, CopyTarget, Message};
-use super::theme::{self, Tokens};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens};
 use super::{fonts, icons, measure, shell, time, widgets};
 use crate::config;
 use crate::dashboard::people::{Person, presence};
@@ -223,13 +221,12 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
                         .color(t.text_muted),
                 )
                 .push(
-                    button(
-                        text("Gerar outro código")
-                            .size(13)
-                            .font(fonts::INTER_MEDIUM),
+                    widgets::action_button(
+                        t,
+                        ButtonKind::Ghost,
+                        ButtonSize::Compact,
+                        "Gerar outro código",
                     )
-                    .padding([6, 10])
-                    .style(theme::ghost(t))
                     .on_press(Message::IssueToken),
                 );
         }
@@ -240,14 +237,8 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
             if pairing.is_some() {
                 col = col.push(text("Código expirado").size(12).color(t.warning));
             }
-            let mut generate = button(
-                container(text("Gerar código").size(13).font(fonts::INTER_MEDIUM))
-                    .height(Length::Fill)
-                    .align_y(Alignment::Center),
-            )
-            .height(36)
-            .padding([0, 14])
-            .style(theme::outline_accent(t));
+            let mut generate =
+                widgets::action_button(t, ButtonKind::Primary, ButtonSize::Regular, "Gerar código");
             if is_up(snap) {
                 generate = generate.on_press(Message::IssueToken);
             }
@@ -385,23 +376,13 @@ fn field<'a>(
 fn copy_button(app: &App, target: CopyTarget, enabled: bool) -> Element<'_, Message> {
     let t = app.tokens;
     let copied = app.is_copied(target);
-    let mut copy = button(
-        container(
-            row![
-                icons::icon_inherit(if copied { icons::CHECK } else { icons::COPY }, 12.0),
-                text(if copied { "Copiado" } else { "Copiar" })
-                    .size(12)
-                    .font(fonts::INTER_MEDIUM),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .height(Length::Fill)
-        .align_y(Alignment::Center),
-    )
-    .height(32)
-    .padding([0, 10])
-    .style(theme::ghost(t));
+    let mut copy = widgets::action_button_icon(
+        t,
+        ButtonKind::Ghost,
+        ButtonSize::Compact,
+        if copied { icons::CHECK } else { icons::COPY },
+        if copied { "Copiado" } else { "Copiar" },
+    );
     if enabled {
         copy = copy.on_press(Message::Copy(target));
     }
@@ -423,21 +404,20 @@ fn releases_link(app: &App) -> Element<'_, Message> {
         .align_y(Alignment::Center)
         .into();
     }
-    button(
-        container(
-            row![
-                text("Versões no GitHub").size(12).font(fonts::INTER_MEDIUM),
-                icons::icon_inherit(icons::ARROW_SQUARE_OUT, 14.0),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .height(Length::Fill)
+    let size = ButtonSize::Compact;
+    widgets::action_button_with(
+        t,
+        ButtonKind::Ghost,
+        size,
+        row![
+            text("Versões no GitHub")
+                .size(size.text_size())
+                .font(fonts::INTER_MEDIUM),
+            icons::icon_inherit(icons::ARROW_SQUARE_OUT, 14.0),
+        ]
+        .spacing(6)
         .align_y(Alignment::Center),
     )
-    .height(32)
-    .padding([0, 10])
-    .style(theme::ghost(t))
     .on_press(Message::OpenReleases)
     .into()
 }
@@ -649,21 +629,13 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
     .wrap()
     .vertical_spacing(4);
 
-    let remove = button(
-        container(
-            row![
-                icons::icon_inherit(icons::USER_MINUS, 13.0),
-                text("Remover").size(13).font(fonts::INTER_MEDIUM),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .height(Length::Fill)
-        .align_y(Alignment::Center),
+    let remove = widgets::action_button_icon(
+        t,
+        ButtonKind::Danger,
+        ButtonSize::Compact,
+        icons::USER_MINUS,
+        "Remover",
     )
-    .height(32)
-    .padding([0, 12])
-    .style(theme::danger_outline(t))
     .on_press(Message::AskRemove(person.device_id.clone()));
 
     let content = row![

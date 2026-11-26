@@ -137,8 +137,12 @@ impl ConnectFlow {
 
 /// Sem aparelho ativo e com o nucleo no ar: o fluxo ocupa a tela, sem modal. No `Starting` a
 /// lista ainda vem vazia do snapshot inicial, e o fluxo piscaria no boot de quem ja tem celular.
+///
+/// Conta pelo snapshot, e nao pela lista visivel: o aparelho com remocao pendente ainda conta.
+/// Senao o fluxo tomaria a tela durante o "Desfazer", e desfazer o esconderia de novo com o
+/// codigo do passo 3 valendo. O fluxo so substitui a lista depois que a remocao sai.
 pub(super) fn in_screen_case(app: &App) -> bool {
-    is_up(&app.snapshot) && shell::active_devices(app) == 0
+    is_up(&app.snapshot) && app.snapshot.devices.iter().all(|d| d.revoked)
 }
 
 /// O fluxo esta na tela, no lugar da lista?

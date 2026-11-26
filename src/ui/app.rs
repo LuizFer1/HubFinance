@@ -968,6 +968,16 @@ fn snapshot_stream(rx: watch::Receiver<Snapshot>) -> impl futures::Stream<Item =
 }
 
 pub fn update(app: &mut App, message: Message) -> Task<Message> {
+    let task = handle(app, message);
+    // Fluxo aberto que deixou de estar na tela (outra tela, "Desfazer" que trouxe um aparelho de
+    // volta, nucleo que caiu): fecha e cancela o codigo, que nao pode valer sem ninguem ver.
+    if app.connect.is_some() && !app.connect_showing() {
+        app.close_connect();
+    }
+    task
+}
+
+fn handle(app: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::Snapshot(s) => {
             let new_token = s.pairing.as_ref().map(|p| &p.token);
@@ -985,20 +995,23 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 .then(|| {
                     s.devices
                         .iter()
+                        // Parear de novo com o mesmo `deviceId` ainda ativo mantem o id (UPSERT)
+                        // e so troca o `paired_at`: conta como novo tambem.
                         .find(|d| {
                             !d.revoked
-                                && !app
-                                    .snapshot
-                                    .devices
-                                    .iter()
-                                    .any(|o| !o.revoked && o.device_id == d.device_id)
+                                && !app.snapshot.devices.iter().any(|o| {
+                                    !o.revoked
+                                        && o.device_id == d.device_id
+                                        && o.paired_at == d.paired_at
+                                })
                         })
                         .map(|d| d.name.clone())
                 })
                 .flatten();
             if let Some(name) = paired {
-                // O codigo ja foi consumido pelo pareamento: nada a cancelar no nucleo.
-                app.connect = None;
+                // O codigo foi consumido, mas um "Gerar outro codigo" pode ter saido antes do
+                // snapshot chegar: cancela mesmo assim, para nenhum codigo ficar valendo.
+                app.close_connect();
                 app.notice = Some((format!("{name} conectado"), Instant::now() + NOTICE_FOR));
             }
             let stopped = s.status == Status::Stopped;
@@ -1218,10 +1231,17 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ConnectBack => {
+            let mut left_pair = false;
             if let Some(flow) = app.connect.as_mut()
                 && let Some(step) = flow.step.back()
             {
+                left_pair = flow.step == ConnectStep::Pair;
                 flow.step = step;
+            }
+            // Sair do passo 3 tira o QR da tela: o codigo deixa de valer; voltar ao passo 3
+            // pede outro.
+            if left_pair {
+                let _ = app.handle.commands.send(Command::CancelPairingToken);
             }
             Task::none()
         }
@@ -2492,6 +2512,10 @@ pub(super) mod tests {
         assert!(drain(&mut rx).is_empty());
         let _ = update(&mut app, Message::ConnectBack);
         assert_eq!(app.connect.map(|f| f.step), Some(ConnectStep::Certificate));
+        // Voltar do passo 3 cancela o codigo; voltar do 2 nao manda nada.
+        assert_eq!(drain(&mut rx), vec![Command::CancelPairingToken]);
+        let _ = update(&mut app, Message::ConnectBack);
+        assert!(drain(&mut rx).is_empty());
     }
 
     #[test]
@@ -2562,8 +2586,8 @@ pub(super) mod tests {
             app.notice.as_ref().map(|(text, _)| text.as_str()),
             Some("Pixel da Ana conectado")
         );
-        // O codigo foi consumido no pareamento: nada a cancelar.
-        assert!(drain(&mut rx).is_empty());
+        // Cancela mesmo assim: um "Gerar outro codigo" pode ter saido antes do snapshot.
+        assert_eq!(drain(&mut rx), vec![Command::CancelPairingToken]);
         // O aviso some no tique depois do prazo.
         let _ = update(&mut app, Message::Tick);
         assert!(app.notice.is_some());
@@ -2572,6 +2596,68 @@ pub(super) mod tests {
         }
         let _ = update(&mut app, Message::Tick);
         assert_eq!(app.notice, None);
+    }
+
+    #[test]
+    fn parear_de_novo_o_mesmo_aparelho_tambem_fecha_o_dialogo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(
+            running_with(vec![phone("D1", "Pixel 7")]),
+            dir.path().to_path_buf(),
+        );
+        let _ = update(&mut app, Message::ConnectPhone);
+        // Mesmo id, ainda ativo, `paired_at` novo (o UPSERT do pareamento).
+        let mut again = phone("D1", "Pixel 7");
+        again.paired_at = "2026-11-26T10:00:00Z".into();
+        let _ = update(
+            &mut app,
+            Message::Snapshot(Box::new(running_with(vec![again]))),
+        );
+        assert_eq!(app.connect, None);
+        assert_eq!(
+            app.notice.as_ref().map(|(text, _)| text.as_str()),
+            Some("Pixel 7 conectado")
+        );
+        // Um snapshot qualquer (mesmo `paired_at`) nao e pareamento.
+        app.notice = None;
+        let _ = update(&mut app, Message::ConnectPhone);
+        let snap = app.snapshot.clone();
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert!(app.connect.is_some());
+        assert_eq!(app.notice, None);
+    }
+
+    #[test]
+    fn remocao_pendente_nao_troca_a_lista_pelo_fluxo_e_desfazer_cancela_o_codigo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with(
+            running_with(vec![phone("D1", "Pixel 7")]),
+            dir.path().to_path_buf(),
+        );
+        app.refresh_people();
+        app.screen = Screen::Connection;
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ConfirmRemove);
+        // Durante o "Desfazer" o aparelho ainda conta: a lista fica, sem o fluxo em tela.
+        assert!(!connection_view::in_screen_case(&app));
+        assert!(!connection_view::shows_in_screen_flow(&app));
+        // Fluxo em tela no passo 3 (como antes desta correcao) que o "Desfazer" esconderia.
+        app.connect = Some(ConnectFlow {
+            step: ConnectStep::Pair,
+            ..ConnectFlow::new(false)
+        });
+        let _ = drain(&mut rx);
+        let _ = update(&mut app, Message::UndoRemove);
+        assert_eq!(app.connect, None);
+        assert_eq!(drain(&mut rx), vec![Command::CancelPairingToken]);
+        // Depois que a remocao sai e o snapshot a reflete, o fluxo ocupa a tela.
+        let mut gone = phone("D1", "Pixel 7");
+        gone.revoked = true;
+        let _ = update(
+            &mut app,
+            Message::Snapshot(Box::new(running_with(vec![gone]))),
+        );
+        assert!(connection_view::shows_in_screen_flow(&app));
     }
 
     #[test]

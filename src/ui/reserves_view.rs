@@ -14,7 +14,7 @@ use super::charts::{
 };
 use super::rows::{author_cell_of, hover_row, kicker_with_icon};
 use super::theme::{self, Tokens};
-use super::widgets::TagTone;
+use super::widgets::{Bar, TagTone};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::contract::MovementKind;
 use crate::dashboard::money::{format_brl, money_parts, whole_brl};
@@ -81,99 +81,6 @@ fn reserve_glyph(key: &str) -> &'static str {
     }
 }
 
-/// Partes de uma barra proporcional: `FillPortion` e `u16`, entao os valores viram milesimos
-/// do total, minimo 1 (mesma ideia do `split_portions` do Dashboard).
-fn portions(values: &[i64]) -> Vec<u16> {
-    let total: i128 = values.iter().map(|v| i128::from((*v).max(0))).sum();
-    values
-        .iter()
-        .map(|v| {
-            if total == 0 {
-                1
-            } else {
-                (i128::from((*v).max(0)) * 1000 / total).clamp(1, 1000) as u16
-            }
-        })
-        .collect()
-}
-
-/// Barra de 6 px dividida (gap 3, raio 3); sem partes, um trilho so em `neutral_800`.
-fn split_bar<'a>(t: &'static Tokens, parts: &[(i64, Color)]) -> Element<'a, Message> {
-    if parts.is_empty() {
-        return container(Space::new())
-            .width(Length::Fill)
-            .height(6)
-            .style(theme::fill(t.neutral_800, 3.0))
-            .into();
-    }
-    let values: Vec<i64> = parts.iter().map(|(v, _)| *v).collect();
-    let segments = portions(&values)
-        .into_iter()
-        .zip(parts)
-        .map(|(portion, (_, color))| {
-            container(Space::new())
-                .width(Length::FillPortion(portion))
-                .height(6)
-                .style(theme::fill(*color, 3.0))
-                .into()
-        });
-    iced::widget::Row::with_children(segments)
-        .spacing(3)
-        .width(Length::Fill)
-        .into()
-}
-
-/// Trilho com preenchimento parcial (0..=1) a esquerda.
-pub(super) fn fill_bar<'a>(
-    track: Color,
-    color: Color,
-    fraction: f32,
-    height: f32,
-    radius: f32,
-) -> Element<'a, Message> {
-    let fraction = fraction.clamp(0.0, 1.0);
-    let filled = (fraction * 1000.0).round() as u16;
-    let inner: Element<'a, Message> = if filled == 0 {
-        Space::new().width(Length::Fill).height(height).into()
-    } else {
-        let bar = container(Space::new())
-            .width(Length::FillPortion(filled))
-            .height(height)
-            .style(theme::fill(color, radius));
-        if filled >= 1000 {
-            bar.into()
-        } else {
-            row![
-                bar,
-                Space::new()
-                    .width(Length::FillPortion(1000 - filled))
-                    .height(height)
-            ]
-            .into()
-        }
-    };
-    container(inner)
-        .width(Length::Fill)
-        .height(height)
-        .style(theme::fill(track, radius))
-        .into()
-}
-
-/// Medidor de N segmentos (gap 4, raio 2, trilho `neutral_800`, preenchimento `accent`).
-fn meter<'a>(t: &'static Tokens, segments: &[f32], height: f32) -> Element<'a, Message> {
-    if segments.is_empty() {
-        return Space::new().height(height).into();
-    }
-    iced::widget::Row::with_children(
-        segments
-            .iter()
-            .map(|f| fill_bar(t.neutral_800, t.accent, *f, height, 2.0)),
-    )
-    .spacing(4)
-    .width(Length::Fill)
-    .into()
-}
-
 // ---- linha 1: KPIs ----
 
 fn kpi_row(app: &App) -> Element<'_, Message> {
@@ -211,10 +118,10 @@ fn total_card(app: &App) -> Element<'_, Message> {
     ]
     .spacing(5)
     .align_y(Alignment::Center);
-    let shares: Vec<(i64, Color)> = v
+    let shares: Vec<(f64, Color)> = v
         .shares
         .iter()
-        .map(|s| (s.balance_minor, reserve_color(t, &s.color)))
+        .map(|s| (s.balance_minor as f64, reserve_color(t, &s.color)))
         .collect();
     kpi_card(
         t,
@@ -228,7 +135,14 @@ fn total_card(app: &App) -> Element<'_, Message> {
                 t.text_muted
             ),
             note,
-            container(split_bar(t, &shares)).padding(Padding {
+            container(widgets::bar(
+                Bar::Parts {
+                    parts: &shares,
+                    track: t.neutral_800
+                },
+                6.0,
+            ))
+            .padding(Padding {
                 top: 8.0,
                 ..Padding::ZERO
             }),
@@ -310,7 +224,15 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
             kicker_with_icon(t, icons::LIFEBUOY, t.accent_300, "Emergência coberta"),
             value,
             text(remaining.to_string()).size(12).color(t.text_muted),
-            container(meter(t, segments, 6.0)).padding(Padding {
+            container(widgets::bar(
+                Bar::Segments {
+                    values: segments,
+                    color: t.accent,
+                    track: t.neutral_800
+                },
+                6.0,
+            ))
+            .padding(Padding {
                 top: 8.0,
                 ..Padding::ZERO
             }),
@@ -494,7 +416,14 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
         Space::new().height(16),
         balance,
         Space::new().height(14),
-        meter(t, &e.segments, 10.0),
+        widgets::bar(
+            Bar::Segments {
+                values: &e.segments,
+                color: t.accent,
+                track: t.neutral_800
+            },
+            10.0,
+        ),
     ];
     if !e.segments.is_empty() {
         col = col.push(Space::new().height(6)).push(meter_labels(t, e));
@@ -603,11 +532,11 @@ fn essential_section<'a>(
     } else {
         format!("Média dos últimos {} meses nestas categorias", cost.months)
     };
-    let bar_parts: Vec<(i64, Color)> = cost
+    let bar_parts: Vec<(f64, Color)> = cost
         .parts
         .iter()
         .filter(|p| p.average_minor > 0)
-        .map(|p| (p.average_minor, t.token(&p.color)))
+        .map(|p| (p.average_minor as f64, t.token(&p.color)))
         .collect();
     let columns = if inner_width >= 2.0 * LEGEND_COL_MIN + LEGEND_COL_GAP {
         2
@@ -652,7 +581,13 @@ fn essential_section<'a>(
         Space::new().height(2),
         text(note).size(12).color(muted),
         Space::new().height(12),
-        split_bar(t, &bar_parts),
+        widgets::bar(
+            Bar::Parts {
+                parts: &bar_parts,
+                track: t.neutral_800
+            },
+            6.0,
+        ),
         Space::new().height(10),
         legend,
     ]
@@ -733,12 +668,14 @@ fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
     ]
     .width(Length::Fill);
     if let Some(progress) = p.progress {
-        body = body.push(Space::new().height(10)).push(fill_bar(
-            t.neutral_900,
-            color,
-            progress,
+        body = body.push(Space::new().height(10)).push(widgets::bar(
+            Bar::Fraction {
+                value: progress,
+                color,
+                track: Some(t.neutral_900),
+                outlined: false,
+            },
             6.0,
-            3.0,
         ));
     }
     if let Some(label) = pace_label(&p.pace) {
@@ -1098,15 +1035,6 @@ mod tests {
         app.reserves.movements.clear();
         app.reserves.series.clear();
         let _ = view(&app);
-    }
-
-    #[test]
-    fn partes_proporcionais_em_milesimos() {
-        assert_eq!(portions(&[]), Vec::<u16>::new());
-        assert_eq!(portions(&[0, 0]), vec![1, 1]);
-        assert_eq!(portions(&[300, 100]), vec![750, 250]);
-        assert_eq!(portions(&[1, 1_000_000]), vec![1, 999]);
-        assert_eq!(portions(&[-5, 10]), vec![1, 1000]);
     }
 
     #[test]

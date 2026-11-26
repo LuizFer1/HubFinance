@@ -20,7 +20,7 @@ use super::charts::{
     PACE_HEIGHT, PaceProgram, SwatchProgram,
 };
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
-use super::widgets::TagTone;
+use super::widgets::{Bar, TagTone};
 use super::{fonts, icons, shell, time, widgets};
 use crate::dashboard::grafite::{
     BusinessBlock, EmergencyBlock, HistoryBody, Line, Section, Tone, UpcomingLine,
@@ -339,40 +339,6 @@ fn swatch<'a>(color: Color, size: f32, radius: f32) -> Element<'a, Message> {
         .height(size)
         .style(theme::fill(color, radius))
         .into()
-}
-
-/// Barra horizontal de `frac` da largura (lista do historico, taxa de poupanca, medidor da
-/// reserva). `FillPortion` e `u16`: a fracao vira milesimos.
-fn ratio_bar<'a>(
-    frac: f32,
-    color: Color,
-    track: Option<Color>,
-    height: f32,
-    outlined: bool,
-) -> Element<'a, Message> {
-    let p = (frac.clamp(0.0, 1.0) * 1000.0).round() as u16;
-    let radius = height / 2.0;
-    let fill: Element<'a, Message> = if p == 0 {
-        Space::new().width(Length::FillPortion(1)).into()
-    } else {
-        let bar = container(Space::new())
-            .width(Length::FillPortion(p))
-            .height(height);
-        if outlined {
-            bar.style(theme::outlined(color, radius)).into()
-        } else {
-            bar.style(theme::fill(color, radius)).into()
-        }
-    };
-    let mut line = row![fill].height(height);
-    if p < 1000 {
-        line = line.push(Space::new().width(Length::FillPortion(1000 - p.max(1))));
-    }
-    let bar = container(line).width(Length::Fill).height(height);
-    match track {
-        Some(track) => bar.style(theme::fill(track, radius)).into(),
-        None => bar.into(),
-    }
 }
 
 /// Medidor em canvas (barra, preenchimento e marcas pontilhadas).
@@ -721,7 +687,15 @@ fn balance_column(app: &App) -> Element<'_, Message> {
             .align_y(Alignment::End),
             rate,
             column![
-                ratio_bar(s.fill, t.neutral_400, Some(t.neutral_800), 6.0, false),
+                widgets::bar(
+                    Bar::Fraction {
+                        value: s.fill,
+                        color: t.neutral_400,
+                        track: Some(t.neutral_800),
+                        outlined: false
+                    },
+                    6.0,
+                ),
                 row![
                     txt(s.scale_start.clone(), 11.0, t.text_muted).width(Length::Fill),
                     txt(s.scale_end.clone(), 11.0, t.text_muted),
@@ -841,8 +815,16 @@ fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
             let mut labels = row![].spacing(4);
             for (k, f) in e.segments.iter().enumerate() {
                 segments = segments.push(
-                    container(ratio_bar(*f, t.accent, Some(t.neutral_800), 5.0, false))
-                        .width(Length::FillPortion(1)),
+                    container(widgets::bar(
+                        Bar::Fraction {
+                            value: *f,
+                            color: t.accent,
+                            track: Some(t.neutral_800),
+                            outlined: false,
+                        },
+                        5.0,
+                    ))
+                    .width(Length::FillPortion(1)),
                 );
                 let label = e.segment_labels.get(k).cloned().unwrap_or_default();
                 labels = labels.push(
@@ -993,8 +975,24 @@ fn history_body(app: &App) -> Element<'_, Message> {
                             txt(l.text.clone(), 13.0, t.neutral_300).wrapping(Wrapping::None),
                         ]
                         .spacing(12),
-                        ratio_bar(l.income, t.income, None, 6.0, l.partial),
-                        ratio_bar(l.expense, t.expense, None, 6.0, l.partial),
+                        widgets::bar(
+                            Bar::Fraction {
+                                value: l.income,
+                                color: t.income,
+                                track: None,
+                                outlined: l.partial
+                            },
+                            6.0,
+                        ),
+                        widgets::bar(
+                            Bar::Fraction {
+                                value: l.expense,
+                                color: t.expense,
+                                track: None,
+                                outlined: l.partial
+                            },
+                            6.0,
+                        ),
                     ]
                     .spacing(7),
                 );
@@ -1054,20 +1052,18 @@ fn where_it_went(app: &App, width: f32) -> Element<'_, Message> {
         None => vec![t.neutral_600],
     };
     if let Some(bar) = plan.bar {
-        let mut segments = row![].spacing(3).height(8);
-        for (f, color) in bar.iter().zip(&colors) {
-            let p = (f.clamp(0.0, 1.0) * 1000.0).round() as u16;
-            if p == 0 {
-                continue;
-            }
-            segments = segments.push(
-                container(Space::new())
-                    .width(Length::FillPortion(p))
-                    .height(8)
-                    .style(theme::fill(*color, 4.0)),
-            );
-        }
-        plan_col = plan_col.push(segments);
+        let parts: Vec<(f64, Color)> = bar
+            .iter()
+            .zip(&colors)
+            .map(|(f, color)| (f64::from(f.clamp(0.0, 1.0)), *color))
+            .collect();
+        plan_col = plan_col.push(widgets::bar(
+            Bar::Parts {
+                parts: &parts,
+                track: t.neutral_800,
+            },
+            8.0,
+        ));
     }
     let mut legend = row![].spacing(28);
     for (label, color) in plan.legend.iter().zip(&colors) {

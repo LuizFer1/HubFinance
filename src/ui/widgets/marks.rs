@@ -1,11 +1,151 @@
-//! Marcas pequenas que acompanham um texto: tags e tiles de icone, sobre a superficie do card.
+//! Marcas pequenas sobre a superficie do card: tags, tiles de icone e barras.
 
-use iced::widget::{container, row, text};
-use iced::{Alignment, Color, Element};
+use iced::widget::{Row, Space, container, row, text};
+use iced::{Alignment, Color, Element, Length};
 
 use super::dot;
 use crate::ui::theme::{self, Tokens, Tone, radius, space, type_scale};
 use crate::ui::{fonts, icons};
+
+/// O que a barra desenha.
+#[derive(Clone, Copy, Debug)]
+pub enum Bar<'b> {
+    /// Trilho opcional com o preenchimento de `value` (0..=1) a esquerda. `outlined` desenha so
+    /// o contorno do preenchimento (mes parcial do historico).
+    Fraction {
+        value: f32,
+        color: Color,
+        track: Option<Color>,
+        outlined: bool,
+    },
+    /// Barra dividida em partes proporcionais aos pesos, 3 px entre elas. Peso zero nao entra;
+    /// sem nenhum peso, so o trilho.
+    Parts {
+        parts: &'b [(f64, Color)],
+        track: Color,
+    },
+    /// Medidor de N segmentos iguais, 4 px entre eles, cada um com a sua fracao (0..=1).
+    Segments {
+        values: &'b [f32],
+        color: Color,
+        track: Color,
+    },
+}
+
+/// Barra de `height` px (4, 6 ou 10 na regua; o Resumo usa 5 e 8). Raio 4, ou meia altura se
+/// a barra for mais baixa que 8, para a ponta continuar redonda. `FillPortion` e `u16`, entao
+/// as fracoes viram milesimos.
+pub fn bar<'a, M: 'a>(spec: Bar<'_>, height: f32) -> Element<'a, M> {
+    let r = radius::BAR.min(height / 2.0);
+    match spec {
+        Bar::Fraction {
+            value,
+            color,
+            track,
+            outlined,
+        } => fraction_bar(value, color, track, outlined, height, r),
+        Bar::Parts { parts, track } => {
+            let weights: Vec<f64> = parts.iter().map(|(w, _)| *w).collect();
+            let shares = portions(&weights);
+            if shares.iter().all(|p| *p == 0) {
+                return container(Space::new())
+                    .width(Length::Fill)
+                    .height(height)
+                    .style(theme::fill(track, r))
+                    .into();
+            }
+            let segments =
+                shares
+                    .into_iter()
+                    .zip(parts)
+                    .filter(|(p, _)| *p > 0)
+                    .map(|(p, (_, color))| {
+                        container(Space::new())
+                            .width(Length::FillPortion(p))
+                            .height(height)
+                            .style(theme::fill(*color, r))
+                            .into()
+                    });
+            Row::with_children(segments)
+                .spacing(3)
+                .width(Length::Fill)
+                .into()
+        }
+        Bar::Segments {
+            values,
+            color,
+            track,
+        } => {
+            if values.is_empty() {
+                return Space::new().height(height).into();
+            }
+            Row::with_children(
+                values
+                    .iter()
+                    .map(|v| fraction_bar(*v, color, Some(track), false, height, r)),
+            )
+            .spacing(space::XS)
+            .width(Length::Fill)
+            .into()
+        }
+    }
+}
+
+fn fraction_bar<'a, M: 'a>(
+    value: f32,
+    color: Color,
+    track: Option<Color>,
+    outlined: bool,
+    height: f32,
+    r: f32,
+) -> Element<'a, M> {
+    let filled = (value.clamp(0.0, 1.0) * 1000.0).round() as u16;
+    let inner: Element<'a, M> = if filled == 0 {
+        Space::new().width(Length::Fill).height(height).into()
+    } else {
+        let piece = container(Space::new())
+            .width(Length::FillPortion(filled))
+            .height(height);
+        let piece = if outlined {
+            piece.style(theme::outlined(color, r))
+        } else {
+            piece.style(theme::fill(color, r))
+        };
+        if filled >= 1000 {
+            piece.into()
+        } else {
+            row![
+                piece,
+                Space::new()
+                    .width(Length::FillPortion(1000 - filled))
+                    .height(height)
+            ]
+            .into()
+        }
+    };
+    let bar = container(inner).width(Length::Fill).height(height);
+    match track {
+        Some(track) => bar.style(theme::fill(track, r)).into(),
+        None => bar.into(),
+    }
+}
+
+/// Milesimos de cada peso no total (negativo conta zero). Peso positivo minimo vale 1, para a
+/// parte pequena nao sumir; peso zero fica zero e sai da barra.
+fn portions(weights: &[f64]) -> Vec<u16> {
+    let total: f64 = weights.iter().map(|w| w.max(0.0)).sum();
+    weights
+        .iter()
+        .map(|w| {
+            let w = w.max(0.0);
+            if total <= 0.0 || w <= 0.0 {
+                0
+            } else {
+                (w * 1000.0 / total).clamp(1.0, 1000.0) as u16
+            }
+        })
+        .collect()
+}
 
 /// Tinta do tile: a cor a 16 % sobre a superficie (antes 15, 16 ou 18 % conforme a tela).
 const TILE_TINT: f32 = 0.16;
@@ -203,6 +343,50 @@ mod tests {
         };
         let (x, y) = (lum(a), lum(b));
         (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    #[test]
+    fn partes_proporcionais_em_milesimos() {
+        assert_eq!(portions(&[]), Vec::<u16>::new());
+        assert_eq!(portions(&[0.0, 0.0]), vec![0, 0]);
+        assert_eq!(portions(&[300.0, 100.0]), vec![750, 250]);
+        assert_eq!(portions(&[1.0, 1_000_000.0]), vec![1, 999]);
+        assert_eq!(portions(&[-5.0, 10.0]), vec![0, 1000]);
+    }
+
+    #[test]
+    fn barra_monta_fracao_partes_e_segmentos() {
+        let c = Color::WHITE;
+        for value in [-1.0, 0.0, 0.4, 1.0, 2.0] {
+            for outlined in [true, false] {
+                let _: Element<'_, ()> = bar(
+                    Bar::Fraction {
+                        value,
+                        color: c,
+                        track: Some(c),
+                        outlined,
+                    },
+                    6.0,
+                );
+            }
+        }
+        for parts in [
+            &[][..],
+            &[(0.0, c), (0.0, c)][..],
+            &[(3.0, c), (1.0, c)][..],
+        ] {
+            let _: Element<'_, ()> = bar(Bar::Parts { parts, track: c }, 8.0);
+        }
+        for values in [&[][..], &[1.0, 0.5, 0.0][..]] {
+            let _: Element<'_, ()> = bar(
+                Bar::Segments {
+                    values,
+                    color: c,
+                    track: c,
+                },
+                10.0,
+            );
+        }
     }
 
     #[test]

@@ -10,7 +10,9 @@
 
 use iced::gradient::{self, Gradient};
 use iced::overlay::menu;
-use iced::widget::{button, container, pick_list, scrollable, text_input};
+// `button::{self}` traz so o modulo: a funcao `button` daqui e o estilo unico de botao.
+use iced::widget::button::{self};
+use iced::widget::{container, pick_list, scrollable, text_input};
 use iced::{Background, Border, Color, Degrees, Shadow, Theme, Vector};
 
 use crate::config::ThemeMode;
@@ -38,7 +40,6 @@ pub struct Tokens {
     /// Texto/icone sobre preenchimento `accent`.
     #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
     pub on_accent: Color,
-    #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
     pub accent_100: Color,
     pub accent_200: Color,
     pub accent_300: Color,
@@ -358,6 +359,13 @@ impl Tokens {
         self.idle()
     }
 
+    /// Camada neutra de hover (4 %) e pressionado (8 %), em `fg` com alfa sobre o pai. Linha
+    /// interativa so mora em `surface`: sobre `surface_2` o hover a 4 % e a propria caixa e o
+    /// `text_muted` do claro cai abaixo de 4,5 pressionado (relatorio 7.2).
+    pub fn state(&self, pressed: bool) -> Color {
+        self.text_alpha(if pressed { 0.08 } else { 0.04 })
+    }
+
     /// Tinta de 10 % de um tom, opaca sobre o pai (banner, tile de severidade).
     #[allow(dead_code, reason = "banner e tile da Fase 7")]
     pub fn tint(&self, tone: Tone, parent: Color) -> Color {
@@ -380,6 +388,22 @@ impl Tokens {
     /// controle inativo), e e o que separa "desabilitado" de "secundario".
     pub fn text_disabled(&self) -> Color {
         self.idle()
+    }
+
+    /// Brilho do botao primario (heranca do Nocturne: primario e contorno com brilho, nunca
+    /// preenchido). No claro o alfa e menor porque a sombra dourada sobre branco suja o fundo.
+    pub fn accent_glow(&self) -> Shadow {
+        Shadow {
+            color: alpha(
+                self.accent,
+                match self.mode {
+                    Mode::Dark => 0.28,
+                    Mode::Light => 0.16,
+                },
+            ),
+            offset: Vector::ZERO,
+            blur_radius: 24.0,
+        }
     }
 
     /// Divisoria opaca: o hex da paleta sobre `surface` (sobre `bg` fica um tom mais clara que
@@ -727,68 +751,198 @@ pub fn seg_option(
     })
 }
 
-/// Botao fantasma no acento ("Copiar", "Desfazer", "Gerar outro codigo").
+/// Papel do botao (relatorio 7.5 e 9). Um so estilo por papel, em vez de uma funcao por tela.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonKind {
+    /// Acao principal do bloco: contorno `accent`, tinta de 8/16/24 % (repouso, mouse,
+    /// pressionado), texto `text_accent` e `accent_glow`. Nunca preenchido (heranca do Nocturne).
+    Primary,
+    /// Contorno no divisor, texto `fg`, camada `state` de 4/8 % ("Cancelar", "Fechar").
+    Secondary,
+    /// Sem contorno, texto `text_accent`, tinta do acento a 12/20 % ("Copiar", "Desfazer").
+    Ghost,
+    /// So texto: `accent_300`, `accent_200` sob o mouse, `accent_100` pressionado ("Ver todos").
+    Link,
+    /// Perigo em contorno: texto `expense_fg`, contorno da despesa a 45 %, tinta a 12 %.
+    Danger,
+    /// Perigo preenchido, a 14/20 %, so dentro de card ou dialogo (sobre `bg` o hover do claro
+    /// cai a 4,25:1).
+    DangerFilled,
+}
+
+/// Tamanho do botao: 28 (compacto, dentro de linha), 36 (padrao) e 44 (cabecalho). O
+/// `button::Style` do iced nao tem altura, padding nem fonte; o estilo so usa o raio, e quem
+/// monta o botao le `height`, `padding_x` e `text_size` daqui.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonSize {
+    Compact,
+    Regular,
+    #[allow(dead_code, reason = "o cabecalho fixo da Fase 7 usa o de 44")]
+    Large,
+}
+
+#[allow(
+    dead_code,
+    reason = "as primitivas da Fase 7 montam o botao com estes valores"
+)]
+impl ButtonSize {
+    pub const fn height(self) -> f32 {
+        match self {
+            ButtonSize::Compact => size::CTRL_S,
+            ButtonSize::Regular => size::CTRL_M,
+            ButtonSize::Large => size::CTRL_L,
+        }
+    }
+
+    pub const fn padding_x(self) -> f32 {
+        match self {
+            ButtonSize::Compact => space::M,
+            ButtonSize::Regular => space::L,
+            ButtonSize::Large => space::XL,
+        }
+    }
+
+    pub const fn text_size(self) -> f32 {
+        match self {
+            ButtonSize::Compact | ButtonSize::Regular => type_scale::LABEL,
+            ButtonSize::Large => type_scale::BODY,
+        }
+    }
+
+    /// O compacto usa o raio das pecas pequenas (6); os outros, o de controle (8).
+    pub const fn radius(self) -> f32 {
+        match self {
+            ButtonSize::Compact => radius::INSET,
+            ButtonSize::Regular | ButtonSize::Large => radius::CONTROL,
+        }
+    }
+}
+
+/// Repouso, mouse ou pressionado. `Pressed` tem cara propria: sem isso o clique nao da resposta
+/// alem do hover que ja estava ali.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Press {
+    Rest,
+    Hover,
+    Down,
+}
+
+impl Press {
+    fn of(status: button::Status) -> Press {
+        match status {
+            button::Status::Hovered => Press::Hover,
+            button::Status::Pressed => Press::Down,
+            button::Status::Active | button::Status::Disabled => Press::Rest,
+        }
+    }
+
+    fn pick(self, rest: f32, hover: f32, down: f32) -> f32 {
+        match self {
+            Press::Rest => rest,
+            Press::Hover => hover,
+            Press::Down => down,
+        }
+    }
+}
+
+/// Estilo unico de botao. `Disabled` apaga como todo botao (`disabled`); `Pressed` e `Hovered`
+/// sao estados diferentes. O perigo pressionado firma o contorno em vez de subir a tinta: a
+/// 18 % ou mais o `expense_fg` do claro cai abaixo de 4,5 sobre `bg`.
+pub fn button(
+    t: &'static Tokens,
+    kind: ButtonKind,
+    size: ButtonSize,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    let r = size.radius();
+    disabled_aware(t, move |_, status| {
+        let press = Press::of(status);
+        let danger_border = |rest: f32| {
+            if press == Press::Down {
+                t.expense
+            } else {
+                alpha(t.expense, rest)
+            }
+        };
+        match kind {
+            ButtonKind::Primary => button::Style {
+                background: bg(alpha(t.accent, press.pick(0.08, 0.16, 0.24))),
+                text_color: t.text_accent(),
+                border: outline(t.accent, r),
+                shadow: t.accent_glow(),
+                ..button::Style::default()
+            },
+            ButtonKind::Secondary => button::Style {
+                background: match press {
+                    Press::Rest => None,
+                    Press::Hover => bg(t.state(false)),
+                    Press::Down => bg(t.state(true)),
+                },
+                text_color: t.text,
+                border: outline(t.divider(), r),
+                ..button::Style::default()
+            },
+            ButtonKind::Ghost => button::Style {
+                background: (press != Press::Rest)
+                    .then(|| Background::Color(alpha(t.accent, press.pick(0.0, 0.12, 0.20)))),
+                text_color: t.text_accent(),
+                border: rounded(r),
+                ..button::Style::default()
+            },
+            ButtonKind::Link => button::Style {
+                background: None,
+                text_color: match press {
+                    Press::Rest => t.text_accent(),
+                    Press::Hover => t.accent_200,
+                    Press::Down => t.accent_100,
+                },
+                border: rounded(r),
+                ..button::Style::default()
+            },
+            ButtonKind::Danger => button::Style {
+                background: (press != Press::Rest)
+                    .then(|| Background::Color(alpha(t.expense, 0.12))),
+                text_color: t.expense_fg,
+                border: outline(danger_border(0.45), r),
+                ..button::Style::default()
+            },
+            ButtonKind::DangerFilled => button::Style {
+                background: bg(alpha(t.expense, press.pick(0.14, 0.20, 0.20))),
+                text_color: t.expense_fg,
+                border: outline(danger_border(0.55), r),
+                ..button::Style::default()
+            },
+        }
+    })
+}
+
+/// Botao fantasma no acento ("Copiar", "Desfazer", "Gerar outro codigo"): raio 6.
 pub fn ghost(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    disabled_aware(t, move |_, status| button::Style {
-        background: hovered(status).then(|| Background::Color(alpha(t.accent, 0.12))),
-        text_color: t.text_accent(),
-        border: rounded(6.0),
-        ..button::Style::default()
-    })
+    button(t, ButtonKind::Ghost, ButtonSize::Compact)
 }
 
-/// Link de texto: `accent_300`, hover `accent_200` ("Ver todos", "Limpar filtros", "Ver como").
+/// Link de texto ("Ver todos", "Limpar filtros", "Ver como").
 pub fn link(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    disabled_aware(t, move |_, status| button::Style {
-        background: None,
-        text_color: if hovered(status) {
-            t.accent_200
-        } else {
-            t.text_accent()
-        },
-        ..button::Style::default()
-    })
+    button(t, ButtonKind::Link, ButtonSize::Regular)
 }
 
-/// Contorno no acento, fundo a 8 % e hover a 16 % ("Gerar codigo", "Limpar filtros" do vazio).
+/// Primario ("Gerar codigo", "Limpar filtros" do vazio).
 pub fn outline_accent(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    disabled_aware(t, move |_, status| button::Style {
-        background: bg(alpha(t.accent, if hovered(status) { 0.16 } else { 0.08 })),
-        text_color: t.text_accent(),
-        border: outline(t.accent, 8.0),
-        ..button::Style::default()
-    })
+    button(t, ButtonKind::Primary, ButtonSize::Regular)
 }
 
-/// "Cancelar": contorno no divisor, hover texto a 7 %.
+/// Secundario ("Cancelar").
 pub fn outline_divider(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    disabled_aware(t, move |_, status| button::Style {
-        background: hovered(status).then(|| Background::Color(t.text_alpha(0.07))),
-        text_color: t.text,
-        border: outline(t.divider(), 8.0),
-        ..button::Style::default()
-    })
+    button(t, ButtonKind::Secondary, ButtonSize::Regular)
 }
 
-/// "Remover" da lista: texto de despesa, contorno da despesa a 45 %, hover a 12 %.
+/// "Remover" da lista.
 pub fn danger_outline(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    disabled_aware(t, move |_, status| button::Style {
-        background: hovered(status).then(|| Background::Color(alpha(t.expense, 0.12))),
-        text_color: t.expense_fg,
-        border: outline(alpha(t.expense, 0.45), 8.0),
-        ..button::Style::default()
-    })
+    button(t, ButtonKind::Danger, ButtonSize::Regular)
 }
 
-/// "Remover" do dialogo: fundo da despesa a 14 % (hover 20 %), contorno a 55 %. O hover para
-/// em 20 % porque a 24 % o `expense_fg` do claro cai para 4,3:1.
+/// "Remover" do dialogo.
 pub fn danger_filled(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
-    disabled_aware(t, move |_, status| button::Style {
-        background: bg(alpha(t.expense, if hovered(status) { 0.20 } else { 0.14 })),
-        text_color: t.expense_fg,
-        border: outline(alpha(t.expense, 0.55), 8.0),
-        ..button::Style::default()
-    })
+    button(t, ButtonKind::DangerFilled, ButtonSize::Regular)
 }
 
 /// Botoes da barra de titulo: icone no texto de apoio, hover texto a 8 %; o fechar fica vermelho
@@ -1445,13 +1599,26 @@ mod tests {
             assert_eq!(t.border_control(), t.idle(), "{:?}", t.mode);
             assert_eq!(t.text_disabled(), t.idle(), "{:?}", t.mode);
             assert_eq!(t.text_accent(), t.accent_300, "{:?}", t.mode);
+            assert_eq!(t.state(false), t.text_alpha(0.04), "{:?}", t.mode);
+            assert_eq!(t.state(true), t.text_alpha(0.08), "{:?}", t.mode);
             assert_eq!(
                 t.tint(Tone::Warning, t.surface),
                 mix(t.surface, t.warning, 0.10),
                 "{:?}",
                 t.mode
             );
+            let glow = t.accent_glow();
+            assert_eq!(glow.blur_radius, 24.0);
+            assert_eq!(
+                Color {
+                    a: 1.0,
+                    ..glow.color
+                },
+                t.accent
+            );
         }
+        assert!((DARK.accent_glow().color.a - 0.28).abs() < f32::EPSILON);
+        assert!((LIGHT.accent_glow().color.a - 0.16).abs() < f32::EPSILON);
     }
 
     /// Relatorio 7.3: a borda do card nao e contraste, e percepcao (1,29 e 1,16 no escuro, 1,17
@@ -1539,6 +1706,184 @@ mod tests {
             assert_eq!(style.border.width, size::BORDER);
             assert_eq!(style.border.radius, radius::CARD.into());
         }
+    }
+
+    const KINDS: [ButtonKind; 6] = [
+        ButtonKind::Primary,
+        ButtonKind::Secondary,
+        ButtonKind::Ghost,
+        ButtonKind::Link,
+        ButtonKind::Danger,
+        ButtonKind::DangerFilled,
+    ];
+    const SIZES: [ButtonSize; 3] = [ButtonSize::Compact, ButtonSize::Regular, ButtonSize::Large];
+
+    /// Fundo opaco que o botao desenha sobre `parent` (tinta com alfa composta).
+    fn painted(s: &button::Style, parent: Color) -> Color {
+        match s.background {
+            None => parent,
+            Some(Background::Color(c)) => mix(parent, Color { a: 1.0, ..c }, c.a),
+            Some(Background::Gradient(_)) => panic!("botao com gradiente"),
+        }
+    }
+
+    #[test]
+    fn todo_papel_e_tamanho_apaga_desabilitado() {
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            for kind in KINDS {
+                for size in SIZES {
+                    let s = button(t, kind, size)(&theme, button::Status::Disabled);
+                    assert_eq!(s.text_color, t.text_disabled(), "{kind:?} {:?}", t.mode);
+                    assert!(s.background.is_none(), "{kind:?} {:?}", t.mode);
+                    assert_eq!(s.shadow, Shadow::default(), "{kind:?} {:?}", t.mode);
+                    if s.border.width > 0.0 {
+                        assert_eq!(s.border.color, t.divider(), "{kind:?} {:?}", t.mode);
+                    }
+                    assert_eq!(s.border.radius, size.radius().into(), "{kind:?}");
+                }
+            }
+        }
+    }
+
+    /// `Pressed` tem cara propria em todo papel; antes era o mesmo estilo do hover.
+    #[test]
+    fn pressionado_difere_do_hover_em_todo_papel() {
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            for kind in KINDS {
+                let style = button(t, kind, ButtonSize::Regular);
+                let rest = style(&theme, button::Status::Active);
+                let hover = style(&theme, button::Status::Hovered);
+                let down = style(&theme, button::Status::Pressed);
+                assert_ne!(hover, down, "{kind:?} {:?}", t.mode);
+                assert_ne!(rest, hover, "{kind:?} {:?}", t.mode);
+            }
+        }
+    }
+
+    /// O que o relatorio nao pediu para mudar continua igual: fantasma a 12 % no hover com raio
+    /// 6, primario a 8/16 %, perigo a 12 % e preenchido a 14/20 %. O secundario passou de 7 % para
+    /// a camada `state` de 4 % (relatorio 9), e o primario ganhou o brilho.
+    #[test]
+    fn estilos_antigos_delegam_e_mantem_a_cara() {
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            let hover = button::Status::Hovered;
+            let active = button::Status::Active;
+            let g = ghost(t)(&theme, hover);
+            assert_eq!(g.background, bg(alpha(t.accent, 0.12)));
+            assert_eq!(g.border.radius, 6.0.into());
+            assert_eq!(
+                g,
+                button(t, ButtonKind::Ghost, ButtonSize::Compact)(&theme, hover)
+            );
+            let p = outline_accent(t)(&theme, active);
+            assert_eq!(p.background, bg(alpha(t.accent, 0.08)));
+            assert_eq!(p.shadow, t.accent_glow());
+            assert_eq!(
+                outline_accent(t)(&theme, hover).background,
+                bg(alpha(t.accent, 0.16))
+            );
+            assert_eq!(
+                outline_divider(t)(&theme, hover).background,
+                bg(t.state(false))
+            );
+            assert_eq!(
+                danger_outline(t)(&theme, hover).background,
+                bg(alpha(t.expense, 0.12))
+            );
+            assert_eq!(
+                danger_filled(t)(&theme, active).background,
+                bg(alpha(t.expense, 0.14))
+            );
+            assert_eq!(
+                danger_filled(t)(&theme, hover).background,
+                bg(alpha(t.expense, 0.20))
+            );
+            assert_eq!(link(t)(&theme, active).text_color, t.text_accent());
+            assert_eq!(link(t)(&theme, hover).text_color, t.accent_200);
+        }
+    }
+
+    /// Relatorio 7.3: texto de botao passa 4,5 em repouso, sob o mouse e pressionado, sobre os
+    /// fundos onde o papel pode morar. Perigo preenchido so dentro de card ou dialogo (`surface`).
+    #[test]
+    fn texto_de_botao_passa_4_5_em_todo_estado() {
+        let states = [
+            button::Status::Active,
+            button::Status::Hovered,
+            button::Status::Pressed,
+        ];
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            for kind in KINDS {
+                let parents: &[(&str, Color)] = if kind == ButtonKind::DangerFilled {
+                    &[("surface", t.surface)]
+                } else {
+                    &[("surface", t.surface), ("bg", t.bg)]
+                };
+                let style = button(t, kind, ButtonSize::Regular);
+                for status in states {
+                    let s = style(&theme, status);
+                    for (name, parent) in parents {
+                        let c = contrast(s.text_color, painted(&s, *parent));
+                        assert!(c >= 4.5, "{kind:?} {status:?}/{name} {:?}: {c:.2}", t.mode);
+                    }
+                }
+            }
+        }
+        // Os numeros da tabela 7.3 (primario 8/16/24 % sobre `surface`).
+        let near = |got: f64, want: f64| (got - want).abs() < 0.02;
+        let theme = DARK.iced_theme();
+        let primary = button(&DARK, ButtonKind::Primary, ButtonSize::Regular);
+        let on = |status| {
+            let s = primary(&theme, status);
+            contrast(s.text_color, painted(&s, DARK.surface))
+        };
+        assert!(near(on(button::Status::Active), 10.10));
+        assert!(near(on(button::Status::Hovered), 8.36));
+        assert!(near(on(button::Status::Pressed), 6.81));
+    }
+
+    /// Contorno de botao e controle (nao texto, piso 3): primario e perigo pressionado. O
+    /// secundario fica no divisor de proposito (o texto `fg` e o que o identifica).
+    #[test]
+    fn contorno_do_primario_e_do_perigo_pressionado_passam_3() {
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            for (name, kind) in [
+                ("primario", ButtonKind::Primary),
+                ("perigo", ButtonKind::Danger),
+                ("perigo cheio", ButtonKind::DangerFilled),
+            ] {
+                let s = button(t, kind, ButtonSize::Regular)(&theme, button::Status::Pressed);
+                for parent in [t.surface, t.bg] {
+                    let c = contrast(s.border.color, parent);
+                    assert!(c >= 3.0, "{name} {:?}: {c:.2}", t.mode);
+                }
+            }
+        }
+    }
+
+    /// `on_accent` sobre preenchimento `accent` (paleta §4.3: 10,63 e 5,03).
+    #[test]
+    fn on_accent_passa_4_5_sobre_o_acento() {
+        let near = |got: f64, want: f64| (got - want).abs() < 0.01;
+        assert!(near(contrast(DARK.on_accent, DARK.accent), 10.63));
+        assert!(near(contrast(LIGHT.on_accent, LIGHT.accent), 5.03));
+    }
+
+    #[test]
+    fn tamanhos_de_botao_seguem_a_escala() {
+        assert_eq!(
+            SIZES.map(ButtonSize::height),
+            [size::CTRL_S, size::CTRL_M, size::CTRL_L]
+        );
+        assert_eq!(SIZES.map(ButtonSize::height), [28.0, 36.0, 44.0]);
+        assert_eq!(ButtonSize::Compact.radius(), radius::INSET);
+        assert_eq!(ButtonSize::Regular.radius(), radius::CONTROL);
+        assert_eq!(ButtonSize::Regular.text_size(), type_scale::LABEL);
     }
 
     #[test]

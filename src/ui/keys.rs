@@ -1,6 +1,10 @@
 //! Atalhos de teclado. So chegam aqui as teclas que nenhum widget consumiu
 //! (`keyboard::listen`): o que o campo de texto focado usa (digitar, setas, Esc para sair do
 //! campo) nunca vira atalho. A decisao e uma funcao pura do estado, testavel sem janela.
+//!
+//! Excecao conhecida: Ctrl+H alterna "Ocultar valores" mesmo com um campo focado. O Windows
+//! manda o `\x08` como texto, o `text_input` o descarta por ser caractere de controle e nao
+//! consome a tecla.
 
 use iced::keyboard::key::{Code, Named, Physical};
 use iced::keyboard::{self, Key, Modifiers};
@@ -103,23 +107,38 @@ fn escape(app: &App) -> Option<Message> {
 }
 
 /// O numero da tecla (1 a 9), pela posicao fisica: em teclado AZERTY o "1" sem Shift e "&".
+///
+/// O teclado numerico so conta quando a tecla e mesmo o digito: com o NumLock desligado o
+/// Numpad1 e End e o Numpad7 e Home, e Ctrl+End nao pode trocar de tela.
 fn digit(press: &KeyPress) -> Option<usize> {
     let code = match press.physical {
         Physical::Code(code) => code,
         Physical::Unidentified(_) => return None,
     };
-    let n = match code {
-        Code::Digit1 | Code::Numpad1 => 1,
-        Code::Digit2 | Code::Numpad2 => 2,
-        Code::Digit3 | Code::Numpad3 => 3,
-        Code::Digit4 | Code::Numpad4 => 4,
-        Code::Digit5 | Code::Numpad5 => 5,
-        Code::Digit6 | Code::Numpad6 => 6,
-        Code::Digit7 | Code::Numpad7 => 7,
-        Code::Digit8 | Code::Numpad8 => 8,
-        Code::Digit9 | Code::Numpad9 => 9,
+    let (n, numpad) = match code {
+        Code::Digit1 => (1, false),
+        Code::Digit2 => (2, false),
+        Code::Digit3 => (3, false),
+        Code::Digit4 => (4, false),
+        Code::Digit5 => (5, false),
+        Code::Digit6 => (6, false),
+        Code::Digit7 => (7, false),
+        Code::Digit8 => (8, false),
+        Code::Digit9 => (9, false),
+        Code::Numpad1 => (1, true),
+        Code::Numpad2 => (2, true),
+        Code::Numpad3 => (3, true),
+        Code::Numpad4 => (4, true),
+        Code::Numpad5 => (5, true),
+        Code::Numpad6 => (6, true),
+        Code::Numpad7 => (7, true),
+        Code::Numpad8 => (8, true),
+        Code::Numpad9 => (9, true),
         _ => return None,
     };
+    if numpad && press.key != Key::Character(n.to_string().into()) {
+        return None;
+    }
     Some(n)
 }
 
@@ -246,6 +265,9 @@ mod tests {
             shortcut(&app, &ctrl_digit('3', Code::Numpad3)),
             "Some(SelectScreen(Reserves))"
         ));
+        // NumLock desligado: Numpad1 com Ctrl e Ctrl+End, nao troca de tela.
+        let end = press(Key::Named(Named::End), Code::Numpad1, Modifiers::CTRL);
+        assert!(shortcut(&app, &end).is_none());
         // Alem da ultima tela, a tela atual, sem Ctrl ou segurado: nada.
         assert!(shortcut(&app, &ctrl_digit('6', Code::Digit6)).is_none());
         assert!(shortcut(&app, &ctrl_digit('1', Code::Digit1)).is_none());
@@ -315,7 +337,21 @@ mod tests {
         let _ =
             super::super::app::update(&mut app, Message::KeyPressed(ctrl_digit('2', Code::Digit2)));
         assert_eq!(app.screen, Screen::Transactions);
-        let _ = super::super::app::update(&mut app, Message::KeyPressed(tab(false)));
+        // Tab vira a operacao de foco (uma tarefa para o iced); tecla sem atalho, nenhuma.
+        let task = super::super::app::update(&mut app, Message::KeyPressed(tab(false)));
+        assert_eq!(task.units(), 1);
+        let task = super::super::app::update(&mut app, Message::KeyPressed(tab(true)));
+        assert_eq!(task.units(), 1);
+        let task = super::super::app::update(
+            &mut app,
+            Message::KeyPressed(press(
+                Key::Character("x".into()),
+                Code::KeyX,
+                Modifiers::empty(),
+            )),
+        );
+        assert_eq!(task.units(), 0);
+        assert_eq!(app.screen, Screen::Transactions);
         let before = app.month_idx;
         let _ = super::super::app::update(
             &mut app,

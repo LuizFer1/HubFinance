@@ -1058,7 +1058,7 @@ fn reserve_card(ds: &Dataset, today: &str, month: &str, m: Money) -> ReserveCard
     let (emergency, rest) = ordered(ds);
     let emergency = match emergency {
         Some(r) => EmergencyBlock::Present(Box::new(emergency_card(
-            &emergency_view(ds, r, &current),
+            &emergency_view(ds, r, &current, m),
             r.recurring_amount_minor.filter(|v| *v > 0),
             m,
         ))),
@@ -1093,7 +1093,7 @@ fn reserve_card(ds: &Dataset, today: &str, month: &str, m: Money) -> ReserveCard
         .map(|r| {
             let derived = (r.kind == super::contract::ReserveKind::Emergency)
                 .then(|| super::reserves::emergency_goal(ds, r, &current));
-            pot_row(ds, r, &current, derived)
+            pot_row(ds, r, &current, derived, m)
         })
         .collect();
     let acting: Vec<_> = rows
@@ -1698,7 +1698,7 @@ fn upcoming_card(ds: &Dataset, today: &str, m: Money) -> UpcomingCard {
 }
 
 fn recent_card(ds: &Dataset, month: &str, m: Money) -> Recent {
-    let count = list_month(ds, month, &Filters::default()).count;
+    let count = list_month(ds, month, &Filters::default(), m).count;
     let name = month_long(month);
     Recent {
         title: "Últimos lançamentos".to_string(),
@@ -1706,7 +1706,7 @@ fn recent_card(ds: &Dataset, month: &str, m: Money) -> Recent {
         lines: recent(ds, month, RECENT_LINES)
             .into_iter()
             .map(|tx| {
-                let row = to_row(ds, tx);
+                let row = to_row(ds, tx, m);
                 let income = row.kind == Kind::Income;
                 let mut meta = vec![row.category_name.clone()];
                 if let Some(a) = &row.author {
@@ -2211,7 +2211,7 @@ mod tests {
     fn meta_final_com_custo_das_categorias_diz_custo_essencial() {
         let ds = fixtures_grafite();
         let (re, _) = ordered(&ds);
-        let mut view = emergency_view(&ds, re.expect("emergencia"), "2026-11");
+        let mut view = emergency_view(&ds, re.expect("emergencia"), "2026-11", Money::default());
         if let Some(c) = view.cost.as_mut() {
             c.informed = false;
         }

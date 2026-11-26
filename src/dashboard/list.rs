@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::aggregate::{NO_CATEGORY_COLOR, NO_CATEGORY_NAME, Totals, in_month, sort_desc, totals};
 use super::contract::{Kind, ReportState};
 use super::dataset::{Dataset, Transaction};
+use super::money::Money;
 use super::periods::day_heading;
 
 /// Chave de "Sem categoria" no filtro e de "Sem autor" nos chips: string vazia, que nenhum
@@ -93,6 +94,10 @@ pub struct ListRow {
     pub description: String,
     pub kind: Kind,
     pub amount_minor: i64,
+    /// O valor como a coluna mostra: receita "+R$ 1,00", despesa "−R$ 1,00"; a mascara com
+    /// "Ocultar valores". Pronto aqui para a tela nunca formatar dinheiro (formatar la vazaria o
+    /// numero por cima do botao de ocultar).
+    pub amount: String,
     /// "Sem categoria" (nula) ou "Categoria removida" (apagada), como `resolveCategoryName`.
     pub category_name: String,
     /// Token e icone so de categoria viva; `None` desenha o tile neutro.
@@ -115,6 +120,8 @@ pub struct DayGroup {
     pub heading: String,
     /// Receitas menos despesas do dia (das linhas que passaram no filtro).
     pub net_minor: i64,
+    /// `net_minor` com sinal sempre ("+R$ 0,00" no zero), ou a mascara.
+    pub net: String,
     pub rows: Vec<ListRow>,
 }
 
@@ -123,9 +130,23 @@ pub struct ListView {
     pub groups: Vec<DayGroup>,
     pub totals: Totals,
     pub count: usize,
+    /// Os tres totais da linha de resumo, prontos: "+R$ 1,00", "−R$ 1,00" e o saldo com `−` so
+    /// no negativo; a mascara com "Ocultar valores".
+    pub income_label: String,
+    pub expense_label: String,
+    pub balance_label: String,
 }
 
-pub(crate) fn to_row(dataset: &Dataset, tx: &Transaction) -> ListRow {
+/// O valor da linha: so a receita leva `+`, a despesa sempre `−`. Receita negativa (dado torto
+/// de outro aparelho) sai como zero, como sempre saiu.
+fn row_amount(kind: Kind, amount_minor: i64, m: Money) -> String {
+    match kind {
+        Kind::Income => m.signed_plus(amount_minor.max(0)),
+        Kind::Expense => m.minus(amount_minor),
+    }
+}
+
+pub(crate) fn to_row(dataset: &Dataset, tx: &Transaction, m: Money) -> ListRow {
     let category = dataset.find_category(tx.category_id.as_deref());
     let payment = dataset.find_payment_method(tx.payment_method_id.as_deref());
     ListRow {
@@ -134,6 +155,7 @@ pub(crate) fn to_row(dataset: &Dataset, tx: &Transaction) -> ListRow {
         description: tx.description.clone(),
         kind: tx.kind,
         amount_minor: tx.amount_minor,
+        amount: row_amount(tx.kind, tx.amount_minor, m),
         category_name: dataset.category_name(tx.category_id.as_deref()),
         category_color: category.map(|c| c.color.clone()),
         category_icon: category.map(|c| c.icon.clone()),
@@ -151,7 +173,7 @@ pub(crate) fn to_row(dataset: &Dataset, tx: &Transaction) -> ListRow {
 
 /// O mes inteiro com os filtros, agrupado por dia (sem paginacao: o seletor de mes e a
 /// paginacao).
-pub fn list_month(dataset: &Dataset, month: &str, filters: &Filters) -> ListView {
+pub fn list_month(dataset: &Dataset, month: &str, filters: &Filters, m: Money) -> ListView {
     let mut items: Vec<&Transaction> = in_month(dataset, month)
         .filter(|t| filters.matches(dataset, t))
         .collect();
@@ -168,19 +190,27 @@ pub fn list_month(dataset: &Dataset, month: &str, filters: &Filters) -> ListView
         match groups.last_mut() {
             Some(group) if group.date == tx.occurred_on => {
                 group.net_minor = group.net_minor.saturating_add(signed);
-                group.rows.push(to_row(dataset, tx));
+                group.rows.push(to_row(dataset, tx, m));
             }
             _ => groups.push(DayGroup {
                 date: tx.occurred_on.clone(),
                 heading: day_heading(&tx.occurred_on),
                 net_minor: signed,
-                rows: vec![to_row(dataset, tx)],
+                net: String::new(),
+                rows: vec![to_row(dataset, tx, m)],
             }),
         }
     }
+    for group in &mut groups {
+        group.net = m.signed_plus(group.net_minor);
+    }
+    let totals = totals(items.iter().copied());
     ListView {
         groups,
-        totals: totals(items.iter().copied()),
+        income_label: m.plus(totals.income_minor),
+        expense_label: m.minus(totals.expense_minor),
+        balance_label: m.signed(totals.balance_minor),
+        totals,
         count: items.len(),
     }
 }
@@ -303,7 +333,7 @@ mod tests {
         .collect();
         ds.apply(rows);
 
-        let view = list_month(&ds, "2026-09", &Filters::default());
+        let view = list_month(&ds, "2026-09", &Filters::default(), Money::default());
         assert_eq!(view.count, 3);
         assert_eq!(view.groups.len(), 1);
         assert_eq!(view.groups[0].rows.len(), 3);
@@ -354,7 +384,7 @@ mod tests {
     #[test]
     fn mes_sem_filtro_em_grupos_por_dia() {
         let ds = fixtures();
-        let view = list_month(&ds, "2026-09", &Filters::default());
+        let view = list_month(&ds, "2026-09", &Filters::default(), Money::default());
         assert_eq!(view.count, 7);
         assert_eq!(
             ids(&view),
@@ -377,19 +407,38 @@ mod tests {
         assert_eq!(view.totals.income_minor, 650_000);
         assert_eq!(view.totals.expense_minor, 231_000);
         assert_eq!(view.totals.income_count + view.totals.expense_count, 7);
+        assert_eq!(view.income_label, "+R$ 6.500,00");
+        assert_eq!(view.expense_label, "−R$ 2.310,00");
+        assert_eq!(view.balance_label, "R$ 4.190,00");
+        assert_eq!(view.groups[0].net, "−R$ 470,00");
+        assert_eq!(view.groups[4].net, "+R$ 6.500,00");
+        let empty = list_month(&ds, "2026-05", &Filters::default(), Money::default());
+        assert!(empty.groups.is_empty());
+        assert_eq!(empty.totals, Totals::default());
+        // Mes vazio ainda mostra a linha de resumo zerada, com os sinais de sempre.
         assert_eq!(
-            list_month(&ds, "2026-05", &Filters::default()),
-            ListView::default()
+            (empty.income_label.as_str(), empty.expense_label.as_str()),
+            ("+R$ 0,00", "−R$ 0,00")
         );
     }
 
     #[test]
     fn filtro_de_categoria() {
         let ds = fixtures();
-        let one = list_month(&ds, "2026-09", &filters(Some("C1"), &[], TypeFilter::All));
+        let one = list_month(
+            &ds,
+            "2026-09",
+            &filters(Some("C1"), &[], TypeFilter::All),
+            Money::default(),
+        );
         assert_eq!(ids(&one), vec!["T08"]);
         // "Sem categoria" pega a nula e a apagada.
-        let none = list_month(&ds, "2026-09", &filters(Some(""), &[], TypeFilter::All));
+        let none = list_month(
+            &ds,
+            "2026-09",
+            &filters(Some(""), &[], TypeFilter::All),
+            Money::default(),
+        );
         assert_eq!(ids(&none), vec!["T10", "T11"]);
         assert_eq!(none.totals.expense_minor, 5_000);
     }
@@ -397,32 +446,55 @@ mod tests {
     #[test]
     fn filtro_de_autor_e_tipo() {
         let ds = fixtures();
-        let ana = list_month(&ds, "2026-09", &filters(None, &["U1"], TypeFilter::All));
+        let ana = list_month(
+            &ds,
+            "2026-09",
+            &filters(None, &["U1"], TypeFilter::All),
+            Money::default(),
+        );
         assert_eq!(ids(&ana), vec!["T10", "T08", "T06"]);
         let both = list_month(
             &ds,
             "2026-09",
             &filters(None, &["U1", "U2"], TypeFilter::All),
+            Money::default(),
         );
         assert_eq!(ids(&both), vec!["T10", "T09", "T08", "T07", "T06"]);
         // Sem autor e autor apagado colapsam.
-        let nobody = list_month(&ds, "2026-09", &filters(None, &[""], TypeFilter::All));
+        let nobody = list_month(
+            &ds,
+            "2026-09",
+            &filters(None, &[""], TypeFilter::All),
+            Money::default(),
+        );
         assert_eq!(ids(&nobody), vec!["T13", "T11"]);
-        let income = list_month(&ds, "2026-09", &filters(None, &[], TypeFilter::Income));
+        let income = list_month(
+            &ds,
+            "2026-09",
+            &filters(None, &[], TypeFilter::Income),
+            Money::default(),
+        );
         assert_eq!(ids(&income), vec!["T06"]);
-        let expense = list_month(&ds, "2026-09", &filters(None, &[], TypeFilter::Expense));
+        let expense = list_month(
+            &ds,
+            "2026-09",
+            &filters(None, &[], TypeFilter::Expense),
+            Money::default(),
+        );
         assert_eq!(expense.count, 6);
         // Combinados: Ana + despesa + Alimentacao.
         let combo = list_month(
             &ds,
             "2026-09",
             &filters(Some("C1"), &["U1"], TypeFilter::Expense),
+            Money::default(),
         );
         assert_eq!(ids(&combo), vec!["T08"]);
         let nothing = list_month(
             &ds,
             "2026-09",
             &filters(Some("C1"), &["U2"], TypeFilter::All),
+            Money::default(),
         );
         assert_eq!(nothing.count, 0);
         assert!(nothing.groups.is_empty());
@@ -431,7 +503,7 @@ mod tests {
     #[test]
     fn linha_resolve_referencias() {
         let ds = fixtures();
-        let view = list_month(&ds, "2026-09", &Filters::default());
+        let view = list_month(&ds, "2026-09", &Filters::default(), Money::default());
         let row = |id: &str| {
             view.groups
                 .iter()
@@ -505,9 +577,19 @@ mod tests {
     #[test]
     fn filtro_de_categoria_inclui_a_copia_fundida() {
         let ds = crate::dashboard::fixtures_with_merged();
-        let view = list_month(&ds, "2026-09", &filters(Some("C1"), &[], TypeFilter::All));
+        let view = list_month(
+            &ds,
+            "2026-09",
+            &filters(Some("C1"), &[], TypeFilter::All),
+            Money::default(),
+        );
         assert_eq!(ids(&view), vec!["T08", "T20"]);
-        let none = list_month(&ds, "2026-09", &filters(Some(""), &[], TypeFilter::All));
+        let none = list_month(
+            &ds,
+            "2026-09",
+            &filters(Some(""), &[], TypeFilter::All),
+            Money::default(),
+        );
         assert!(!ids(&none).contains(&"T20"));
     }
 
@@ -531,7 +613,7 @@ mod tests {
     #[test]
     fn linha_da_copia_mostra_o_padrao() {
         let ds = crate::dashboard::fixtures_with_merged();
-        let row = to_row(&ds, &ds.transactions["T20"]);
+        let row = to_row(&ds, &ds.transactions["T20"], Money::default());
         assert_eq!(row.category_name, "Alimentação");
         assert_eq!(row.category_color.as_deref(), Some("orange"));
         assert_eq!(row.category_icon.as_deref(), Some("utensils"));

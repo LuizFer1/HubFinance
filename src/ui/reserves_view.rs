@@ -1,8 +1,9 @@
 //! Tela Reservas: total separado, emergencia coberta, ultimos 12 meses, o card da reserva de
 //! emergencia, as caixinhas, a evolucao empilhada e as movimentacoes; ou o estado vazio.
 //!
-//! Tudo vem de `app.reserves` (calculado em `App::rebuild`); aqui so se monta a arvore. Os
-//! textos seguem o bloco `isRes` do prototipo e o trecho de `renderVals()` a partir de `RD`.
+//! Tudo vem de `app.reserves` (calculado em `App::rebuild`); aqui so se monta a arvore. Todo
+//! valor em R$ ja chega formatado (e mascarado com "Ocultar valores"): formatar aqui vazaria o
+//! numero por cima do botao de ocultar. Os textos seguem o bloco `isRes` do prototipo e o trecho de `renderVals()` a partir de `RD`.
 
 use iced::widget::text::Wrapping;
 use iced::widget::{Space, canvas, column, container, row, text};
@@ -17,11 +18,10 @@ use super::theme::{self, Tokens, type_scale};
 use super::widgets::{Bar, RowEdge, StatSize, TagTone};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::contract::MovementKind;
-use crate::dashboard::money::{format_brl, money_parts, whole_brl};
-use crate::dashboard::periods::{month_long, short_date};
+use crate::dashboard::periods::short_date;
 use crate::dashboard::reserves::{
     DEFAULT_MULTIPLE, EmergencyView, EssentialCost, EssentialPart, MovementRow, Pace, PotRow,
-    ReserveColor, pace_label,
+    ReserveColor,
 };
 
 const GAP: f32 = 14.0;
@@ -104,17 +104,10 @@ fn kpi_card<'a>(
 fn total_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.reserves;
-    let parts = money_parts(v.totals.total_minor);
     let muted = t.text_muted;
     let note = row![
         icons::icon(icons::ARROW_DOWN, 12.0, muted),
-        text(format!(
-            "{} guardados em {}",
-            format_brl(v.totals.saved_this_month_minor),
-            month_long(&v.current_month)
-        ))
-        .size(12)
-        .color(muted),
+        text(v.saved_note.clone()).size(12).color(muted),
     ]
     .spacing(5)
     .align_y(Alignment::Center);
@@ -127,14 +120,7 @@ fn total_card(app: &App) -> Element<'_, Message> {
         t,
         column![
             widgets::kicker(t, "Total separado"),
-            widgets::money(
-                t,
-                &format!("{}R$", parts.sign),
-                &parts.whole,
-                &parts.cents,
-                StatSize::L,
-                t.text
-            ),
+            widgets::money(t, &v.total, StatSize::L, t.text),
             note,
             container(widgets::bar(
                 Bar::Parts {
@@ -243,10 +229,15 @@ fn year_card(app: &App) -> Element<'_, Message> {
                 icon_color: Color,
                 color: Color,
                 label: &'static str,
-                sign: &str,
+                value: &str,
                 minor: i64| {
-        let (value, value_color) = flow_value(sign, minor, color, muted);
-        let icon_color = if minor == 0 { muted } else { icon_color };
+        // Zero na cor secundaria: "−R$ 0,00" no vermelho de despesa apontava uma retirada que
+        // nao houve (o texto do zero, sem sinal, vem do modelo).
+        let (value_color, icon_color) = if minor == 0 {
+            (muted, muted)
+        } else {
+            (color, icon_color)
+        };
         row![
             row![
                 icons::icon(glyph, 13.0, icon_color),
@@ -255,7 +246,7 @@ fn year_card(app: &App) -> Element<'_, Message> {
             .spacing(6)
             .align_y(Alignment::Center)
             .width(Length::Fill),
-            text(value)
+            text(value.to_string())
                 .size(20)
                 .font(fonts::INTER_MEDIUM)
                 .line_height(1.0)
@@ -272,7 +263,7 @@ fn year_card(app: &App) -> Element<'_, Message> {
             t.accent_300,
             t.text,
             "Guardado",
-            "+",
+            &v.deposits,
             v.totals.deposits_minor,
         ))
         .padding(Padding {
@@ -284,7 +275,7 @@ fn year_card(app: &App) -> Element<'_, Message> {
             t.expense_fg,
             t.expense_fg,
             "Retirado",
-            "\u{2212}",
+            &v.withdrawals,
             v.totals.withdrawals_minor,
         ),
     ]
@@ -302,16 +293,6 @@ fn year_card(app: &App) -> Element<'_, Message> {
         col.push(Space::new().height(16))
     };
     kpi_card(t, col)
-}
-
-/// Valor e cor de uma linha do card "Últimos 12 meses". Zero sai sem sinal e na cor
-/// secundaria: "−R$ 0,00" no vermelho de despesa apontava uma retirada que nao houve.
-fn flow_value(sign: &str, minor: i64, color: Color, muted: Color) -> (String, Color) {
-    if minor == 0 {
-        (format_brl(0), muted)
-    } else {
-        (format!("{sign}{}", format_brl(minor)), color)
-    }
 }
 
 // ---- linha 2: emergencia e caixinhas ----
@@ -387,20 +368,18 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
     ]
     .spacing(12)
     .align_y(Alignment::Center);
-    let parts = money_parts(e.balance_minor);
-    let mut balance = row![widgets::money(
-        t,
-        &format!("{}R$", parts.sign),
-        &parts.whole,
-        &parts.cents,
-        StatSize::L,
-        t.text
-    )]
-    .spacing(10)
-    .align_y(Alignment::End);
-    if let Some(goal) = goal_note(e.goal_minor) {
+    let mut balance = row![widgets::money(t, &e.balance, StatSize::L, t.text)]
+        .spacing(10)
+        .align_y(Alignment::End);
+    if let Some(goal) = &e.goal_note {
         balance = balance.push(
-            container(text(goal).size(13).line_height(1.0).color(t.text_muted)).padding(Padding {
+            container(
+                text(goal.clone())
+                    .size(13)
+                    .line_height(1.0)
+                    .color(t.text_muted),
+            )
+            .padding(Padding {
                 bottom: 2.0,
                 ..Padding::ZERO
             }),
@@ -437,12 +416,6 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
         .push(Space::new().height(14))
         .push(eta);
     widgets::card(t, col).padding(padding).into()
-}
-
-/// "de R$ 2.400,00" ao lado do saldo. Sem meta, nada: a pilula do cabecalho ja diz "Sem meta"
-/// e repetir ao lado do valor era a terceira vez no mesmo card.
-fn goal_note(goal_minor: i64) -> Option<String> {
-    (goal_minor > 0).then(|| format!("de {}", format_brl(goal_minor)))
 }
 
 /// "1", "2", …, "6 meses": um rotulo sob cada segmento, com a mesma largura.
@@ -492,7 +465,7 @@ fn essential_section<'a>(
     };
     let header = row![
         title,
-        text(format!("{}/mês", whole_brl(cost.total_minor)))
+        text(cost.total_label.clone())
             .size(13)
             .font(fonts::INTER_MEDIUM)
             .wrapping(Wrapping::None)
@@ -549,7 +522,7 @@ fn essential_section<'a>(
             )
             .width(Length::Fill)
             .clip(true),
-            text(whole_brl(p.average_minor))
+            text(p.average_label.clone())
                 .size(13)
                 .wrapping(Wrapping::None)
                 .color(t.text_soft()),
@@ -650,7 +623,7 @@ fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
             )
             .width(Length::Fill)
             .clip(true),
-            text(format_brl(p.balance_minor))
+            text(p.balance.clone())
                 .size(14)
                 .font(fonts::INTER_MEDIUM)
                 .wrapping(Wrapping::None)
@@ -673,7 +646,7 @@ fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
             6.0,
         ));
     }
-    if let Some(label) = pace_label(&p.pace) {
+    if let Some(label) = p.pace_label.clone() {
         let (glyph, pace_color) = pace_style(t, &p.pace);
         body = body.push(Space::new().height(8)).push(
             row![
@@ -739,6 +712,8 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
             series: &v.series,
             months: &v.months,
             axis_top: v.axis_top,
+            y_labels: &v.y_labels,
+            month_totals: &v.month_totals,
             current: v.months.len().saturating_sub(1),
             tokens: t,
             cache: &app.reserves_cache,
@@ -840,12 +815,9 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
     ]
     .spacing(8)
     .align_y(Alignment::Center);
-    let (value, value_color) = match m.kind {
-        MovementKind::Deposit => (format!("+{}", format_brl(m.amount_minor)), t.text),
-        MovementKind::Withdrawal => (
-            format!("\u{2212}{}", format_brl(m.amount_minor)),
-            t.expense_fg,
-        ),
+    let value_color = match m.kind {
+        MovementKind::Deposit => t.text,
+        MovementKind::Withdrawal => t.expense_fg,
     };
     let content = row![
         container(description)
@@ -858,7 +830,7 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
             .width(Length::FillPortion(author_w))
             .clip(true),
         container(
-            text(value)
+            text(m.amount.clone())
                 .size(14)
                 .font(fonts::INTER_MEDIUM)
                 .wrapping(Wrapping::None)
@@ -927,6 +899,8 @@ mod tests {
             id: "E".into(),
             name: "Emergência".into(),
             balance_minor: 1_880_000,
+            balance: Default::default(),
+            goal_note: None,
             multiple: 6,
             cost: None,
             goal_minor: 0,
@@ -962,31 +936,6 @@ mod tests {
     }
 
     #[test]
-    fn zero_sem_sinal_e_na_cor_secundaria() {
-        let t = &theme::DARK;
-        let muted = t.text_muted;
-        assert_eq!(
-            flow_value("\u{2212}", 0, t.expense_fg, muted),
-            ("R$ 0,00".to_string(), muted)
-        );
-        assert_eq!(
-            flow_value("\u{2212}", 12_345, t.expense_fg, muted),
-            ("\u{2212}R$ 123,45".to_string(), t.expense_fg)
-        );
-        assert_eq!(
-            flow_value("+", 920_000, t.text, muted),
-            ("+R$ 9.200,00".to_string(), t.text)
-        );
-    }
-
-    #[test]
-    fn meta_ao_lado_do_saldo_so_quando_existe() {
-        assert_eq!(goal_note(240_000).as_deref(), Some("de R$ 2.400,00"));
-        assert_eq!(goal_note(0), None);
-        assert_eq!(goal_note(-1), None);
-    }
-
-    #[test]
     fn constroi_vazia_e_com_dados_sem_panico() {
         let dir = tempfile::tempdir().unwrap();
         let (app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
@@ -1010,6 +959,7 @@ mod tests {
         if let Some(e) = app.reserves.emergency.as_mut() {
             e.cost = Some(EssentialCost {
                 total_minor: 250_000,
+                total_label: "R$ 2.500/mês".into(),
                 months: 0,
                 parts: Vec::new(),
                 informed: true,

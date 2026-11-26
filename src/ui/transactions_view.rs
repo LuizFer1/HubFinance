@@ -18,7 +18,7 @@ use super::{fonts, icons, shell, widgets};
 use crate::dashboard::list::{
     ALL_CATEGORIES_COLOR, CategoryOption, Filters, ListRow, NONE_KEY, TypeFilter,
 };
-use crate::dashboard::money::{format_brl, group_thousands, signed_brl, signed_brl_plus};
+use crate::dashboard::money::group_thousands;
 use crate::dashboard::periods::month_long;
 use crate::dashboard::view::TransactionsView;
 
@@ -311,17 +311,9 @@ fn totals_line(app: &App) -> Element<'_, Message> {
             .color(muted),
         ])
         .size(13),
-        pair(
-            "Receitas",
-            format!("+{}", format_brl(list.totals.income_minor)),
-            t.income_fg
-        ),
-        pair(
-            "Despesas",
-            format!("\u{2212}{}", format_brl(list.totals.expense_minor)),
-            t.expense_fg
-        ),
-        pair("Saldo", signed_brl(list.totals.balance_minor), t.text),
+        pair("Receitas", list.income_label.clone(), t.income_fg),
+        pair("Despesas", list.expense_label.clone(), t.expense_fg),
+        pair("Saldo", list.balance_label.clone(), t.text),
     ]
     .spacing(24)
     .wrap()
@@ -383,9 +375,7 @@ fn table(app: &App) -> Element<'_, Message> {
                         .font(fonts::INTER_MEDIUM)
                         .color(t.text_soft())
                         .width(Length::Fill),
-                    text(signed_brl_plus(group.net_minor))
-                        .size(12)
-                        .color(t.text_muted),
+                    text(group.net.clone()).size(12).color(t.text_muted),
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center),
@@ -538,12 +528,12 @@ mod tests {
     #[test]
     fn tres_vazios() {
         let none = Filters::default();
-        let hub = build_transactions(&Dataset::default(), "2026-09-24", "2026-09", &none);
+        let hub = build_transactions(&Dataset::default(), "2026-09-24", "2026-09", &none, false);
         let (title, _, clear) = empty_copy(&hub, &none);
         assert_eq!(title, "Nenhum lançamento sincronizado");
         assert!(!clear);
         let ds = fixtures();
-        let may = build_transactions(&ds, "2026-09-24", "2026-05", &none);
+        let may = build_transactions(&ds, "2026-09-24", "2026-05", &none, false);
         assert_eq!(
             empty_copy(&may, &none),
             (
@@ -557,7 +547,7 @@ mod tests {
             category: Some("C1".into()),
             ..Filters::default()
         };
-        let sep = build_transactions(&ds, "2026-09-24", "2026-09", &filters);
+        let sep = build_transactions(&ds, "2026-09-24", "2026-09", &filters, false);
         assert_eq!(sep.list.count, 0);
         let (title, body, clear) = empty_copy(&sep, &filters);
         assert_eq!(title, "Nada com esses filtros");

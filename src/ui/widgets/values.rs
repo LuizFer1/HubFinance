@@ -5,6 +5,7 @@ use iced::widget::text::Wrapping;
 use iced::widget::{Column, column, container, row, text};
 use iced::{Alignment, Color, Element, Font, Padding};
 
+use crate::dashboard::money::BigMoney;
 use crate::ui::fonts;
 use crate::ui::theme::{Tokens, type_scale};
 
@@ -85,22 +86,26 @@ impl StatSize {
     }
 }
 
-/// Dinheiro grande: `prefix` ("R$", "−R$") e centavos em `text_muted`, o inteiro em Light na
-/// `color`. O valor ja vem formatado pelo modelo; aqui so a tipografia.
+/// Dinheiro grande: sinal com `R$` ("R$", "−R$") e centavos em `text_muted`, o inteiro em Light
+/// na `color`. O valor ja vem formatado (e mascarado) pelo modelo; aqui so a tipografia. Os
+/// centavos ja trazem a virgula e somem ocultos: juntar uma virgula aqui deixaria "•••••,".
 pub fn money<'a, M: 'a>(
     t: &'static Tokens,
-    prefix: &str,
-    whole: &str,
-    cents: &str,
+    value: &BigMoney,
     size: StatSize,
     color: Color,
 ) -> Element<'a, M> {
     value_line(
         vec![
-            (prefix.to_string(), size.small(), fonts::INTER, t.text_muted),
-            (whole.to_string(), size.size(), fonts::INTER_LIGHT, color),
             (
-                format!(",{cents}"),
+                format!("{}{}", value.sign, value.currency),
+                size.small(),
+                fonts::INTER,
+                t.text_muted,
+            ),
+            (value.whole.clone(), size.size(), fonts::INTER_LIGHT, color),
+            (
+                value.cents.clone(),
                 size.small(),
                 fonts::INTER,
                 t.text_muted,
@@ -139,6 +144,7 @@ pub fn stat<'a, M: 'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dashboard::money::Money;
     use crate::ui::theme::{DARK, LIGHT};
 
     #[test]
@@ -151,9 +157,11 @@ mod tests {
     fn numero_monta_em_todo_degrau_com_e_sem_nota() {
         for t in [&DARK, &LIGHT] {
             for size in [StatSize::M, StatSize::L, StatSize::XL] {
-                let value: Element<'_, ()> = money(t, "R$", "1.234", "56", size, t.text);
+                let value: Element<'_, ()> =
+                    money(t, &Money::new(false).big(123_456), size, t.text);
                 let _: Element<'_, ()> = stat(t, "Total separado", value, Some("nota")).into();
-                let value: Element<'_, ()> = money(t, "−R$", "0", "00", size, t.expense_fg);
+                let value: Element<'_, ()> =
+                    money(t, &Money::new(true).big(-1), size, t.expense_fg);
                 let _: Element<'_, ()> = stat(t, "Saldo", value, None).into();
             }
             let _: Element<'_, ()> = value_line(

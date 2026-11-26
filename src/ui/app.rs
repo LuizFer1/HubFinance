@@ -539,26 +539,40 @@ impl App {
             self.select_book(Book::Personal);
         }
         self.scope = self.snapshot.dashboard.for_book(self.book);
-        let dataset = &self.scope;
-        let month = self.month().to_string();
-        self.transactions = build_transactions(dataset, &self.today, &month, &self.filters);
-        self.reserves = build_reserves(dataset, &self.today);
-        self.analysis = crate::advisor::analyze(dataset, &self.today);
+        self.analysis = crate::advisor::analyze(&self.scope, &self.today);
         self.envelope_now = self.compute_envelope();
         if self.envelope_preview.is_some() {
             self.envelope_preview = Some(self.current_envelope());
         }
-        self.rebuild_dashboard();
-        // "N lançamentos sincronizados de K aparelhos": so aparelhos ativos que ja enviaram.
+        self.rebuild_valued();
+        self.refresh_user_avatars();
+        self.clear_charts();
+        tracing::trace!("telas recalculadas para {}", self.month());
+    }
+
+    /// As telas cujo modelo traz o dinheiro ja formatado: Resumo, Lancamentos e Reservas.
+    /// "Ocultar valores" refaz as tres juntas, nao so a da vez: trocar de tela com o olho ligado
+    /// tem de chegar numa tela ja mascarada. A Analise fica de fora de proposito: os achados
+    /// guardam o texto real (vao no envelope do assistente) e a tela os mascara ao desenhar.
+    fn rebuild_valued(&mut self) {
+        let month = self.month().to_string();
+        self.transactions = build_transactions(
+            &self.scope,
+            &self.today,
+            &month,
+            &self.filters,
+            self.hide_values,
+        );
+        // "N lançamentos sincronizados de K aparelhos": so aparelhos ativos que ja enviaram. Vem
+        // do snapshot, nao do dataset; refazer o modelo sem isto zeraria o "· N aparelhos".
         self.transactions.synced_devices = self
             .snapshot
             .devices
             .iter()
             .filter(|d| !d.revoked && d.last_push_at.is_some())
             .count();
-        self.refresh_user_avatars();
-        self.clear_charts();
-        tracing::trace!("telas recalculadas para {month}");
+        self.reserves = build_reserves(&self.scope, &self.today, self.hide_values);
+        self.rebuild_dashboard();
     }
 
     /// Abre o painel "Configurar assistente" com o campo de porta refletindo o que esta gravado.
@@ -604,7 +618,7 @@ impl App {
         ))
     }
 
-    /// So o Dashboard: ocultar valores muda o texto de cada R$, nada das outras telas.
+    /// So o Resumo (o `grafite`): o modelo depende do mes, da conta e de "Ocultar valores".
     fn rebuild_dashboard(&mut self) {
         self.dashboard = build_grafite(
             &self.scope,
@@ -1145,7 +1159,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ToggleHideValues => {
             app.hide_values = !app.hide_values;
-            app.rebuild_dashboard();
+            app.rebuild_valued();
             // Os rotulos em R$ dos graficos estao gravados na geometria em cache.
             app.clear_charts();
             Task::perform(save_prefs(app.prefs(), app.prefs_dir.clone()), |_| {

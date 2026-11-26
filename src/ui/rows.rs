@@ -11,7 +11,6 @@ use super::widgets::{RowEdge, RowHover};
 use super::{fonts, icons, widgets};
 use crate::dashboard::contract::Kind;
 use crate::dashboard::list::{ListRow, RowAuthor};
-use crate::dashboard::money::{format_brl, signed_brl_plus};
 
 /// Coluna do valor nas linhas de lancamento.
 const VALUE_WIDTH: f32 = 128.0;
@@ -77,15 +76,15 @@ pub(super) fn author_cell_of<'a>(
     .into()
 }
 
-/// Valor da linha: receita com `+` na cor de receita; despesa com `−` na cor do texto (so a
-/// receita ganha cor, como pede o README).
+/// Valor da linha (o texto vem pronto do modelo, mascarado com "Ocultar valores"): receita na
+/// cor de receita, despesa na cor do texto (so a receita ganha cor, como pede o README).
 pub(super) fn value_cell<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Message> {
-    let (label, color) = match r.kind {
-        Kind::Income => (signed_brl_plus(r.amount_minor.max(0)), t.income_fg),
-        Kind::Expense => (format!("\u{2212}{}", format_brl(r.amount_minor)), t.text),
+    let color = match r.kind {
+        Kind::Income => t.income_fg,
+        Kind::Expense => t.text,
     };
     container(
-        text(label)
+        text(r.amount.clone())
             .size(14)
             .font(fonts::INTER_MEDIUM)
             .wrapping(Wrapping::None)

@@ -20,7 +20,6 @@ use super::app::Message;
 use super::fonts;
 use super::theme::{Tokens, alpha};
 use crate::dashboard::grafite::{HistoryChart, HistoryColumn, PaceChart};
-use crate::dashboard::money::{axis_label, format_brl};
 use crate::dashboard::periods::{month_label_capitalized, month_short};
 use crate::dashboard::reserves::{ReserveColor, ReserveSeries};
 
@@ -239,6 +238,10 @@ pub struct StackedBarsProgram<'a> {
     pub series: &'a [ReserveSeries],
     pub months: &'a [String],
     pub axis_top: i64,
+    /// Rotulos do eixo (teto, metade, zero) e o "Total" de cada mes, prontos no modelo: com
+    /// "Ocultar valores" ja vem a mascara, e o canvas nunca formata dinheiro.
+    pub y_labels: &'a [String; 3],
+    pub month_totals: &'a [String],
     /// Coluna do mes corrente (a ultima).
     pub current: usize,
     pub tokens: &'static Tokens,
@@ -303,10 +306,11 @@ impl canvas::Program<Message> for StackedBarsProgram<'_> {
         let chart = self.cache.draw(renderer, size, |frame| {
             let grid = t.divider();
             let muted = t.text_muted;
+            let [top, half, zero] = self.y_labels;
             let marks = [
-                (plot.y, axis_label(self.axis_top)),
-                (plot.y + plot.height / 2.0, axis_label(self.axis_top / 2)),
-                (plot.y + plot.height, axis_label(0)),
+                (plot.y, top.clone()),
+                (plot.y + plot.height / 2.0, half.clone()),
+                (plot.y + plot.height, zero.clone()),
             ];
             for (y, text) in marks {
                 frame.fill_rectangle(
@@ -375,9 +379,8 @@ impl canvas::Program<Message> for StackedBarsProgram<'_> {
             draw_stack_tooltip(
                 &mut bars,
                 t,
-                self.series,
+                &stack_tooltip(self.series, self.month_totals, i),
                 month,
-                i,
                 (plot.x + i as f32 * col_w, col_w),
                 bar_top,
                 plot,
@@ -411,38 +414,53 @@ fn draw_column_highlight(
     );
 }
 
+/// O que o tooltip do mes `i` mostra: uma linha por reserva com saldo (nome cortado, valor e
+/// cor) e o total. Os textos vem do modelo, ja mascarados com "Ocultar valores".
+#[derive(Debug, PartialEq)]
+struct StackTooltip<'a> {
+    rows: Vec<(String, &'a str, &'a ReserveColor)>,
+    total: &'a str,
+}
+
+fn stack_tooltip<'a>(
+    series: &'a [ReserveSeries],
+    month_totals: &'a [String],
+    i: usize,
+) -> StackTooltip<'a> {
+    StackTooltip {
+        rows: series
+            .iter()
+            .filter(|s| s.balances.get(i).copied().unwrap_or(0) > 0)
+            .map(|s| {
+                (
+                    clip_chars(&s.name, 24),
+                    s.labels.get(i).map_or("", String::as_str),
+                    &s.color,
+                )
+            })
+            .collect(),
+        total: month_totals.get(i).map_or("", String::as_str),
+    }
+}
+
 /// Tooltip do mes: titulo, uma linha por reserva com saldo, divisor e "Total".
 #[allow(clippy::too_many_arguments)]
 fn draw_stack_tooltip(
     frame: &mut Frame,
     t: &'static Tokens,
-    series: &[ReserveSeries],
+    tip: &StackTooltip<'_>,
     month: &str,
-    i: usize,
     (col_x, col_w): (f32, f32),
     bar_top: f32,
     plot: Rectangle,
     size: Size,
 ) {
-    let rows: Vec<(String, String, Color)> = series
+    let rows: Vec<(String, String, Color)> = tip
+        .rows
         .iter()
-        .filter_map(|s| {
-            let v = s.balances.get(i).copied().unwrap_or(0);
-            (v > 0).then(|| {
-                (
-                    clip_chars(&s.name, 24),
-                    format_brl(v),
-                    series_color(t, &s.color),
-                )
-            })
-        })
+        .map(|(name, value, color)| (name.clone(), value.to_string(), series_color(t, color)))
         .collect();
-    let total: i64 = series
-        .iter()
-        .filter_map(|s| s.balances.get(i).copied())
-        .filter(|v| *v > 0)
-        .fold(0i64, i64::saturating_add);
-    let total_label = format_brl(total);
+    let total_label = tip.total.to_string();
     // Largura estimada (o canvas nao mede texto): ~7 px por caractere em 12 px tabular, mais o
     // ponto, os respiros e o padding.
     let longest = rows
@@ -1264,6 +1282,7 @@ mod tests {
     use iced::widget::canvas::Program;
 
     use super::*;
+    use crate::dashboard::money::axis_label;
     use crate::ui::theme::DARK;
 
     #[test]
@@ -1514,11 +1533,16 @@ mod tests {
             name: "Reserva".into(),
             color: ReserveColor::Accent,
             balances: vec![100_000; 12],
+            labels: vec!["R$ 1.000,00".into(); 12],
         }];
+        let y_labels = ["R$ 6 mil".to_string(), "R$ 3 mil".into(), "R$ 0".into()];
+        let totals = vec!["R$ 1.000,00".to_string(); 12];
         let program = StackedBarsProgram {
             series: &series,
             months: &months,
             axis_top: 600_000,
+            y_labels: &y_labels,
+            month_totals: &totals,
             current: 11,
             tokens: &DARK,
             cache: &cache,
@@ -1538,6 +1562,35 @@ mod tests {
         assert_eq!(state, Some(1));
         let (event, cursor) = at(136.0);
         assert!(program.update(&mut state, &event, bounds, cursor).is_none());
+    }
+
+    #[test]
+    fn tooltip_das_pilhas_usa_os_textos_do_modelo_e_mascara_com_ocultar() {
+        use crate::dashboard::fixtures_with_reserves;
+        use crate::dashboard::money::{MASK, leaks};
+        use crate::dashboard::view::build_reserves;
+        let ds = fixtures_with_reserves();
+        let shown = build_reserves(&ds, "2026-09-24", false);
+        let hidden = build_reserves(&ds, "2026-09-24", true);
+        let last = shown.months.len() - 1;
+        let tip = stack_tooltip(&shown.series, &shown.month_totals, last);
+        assert!(!tip.rows.is_empty());
+        assert!(tip.total.starts_with("R$ "), "{}", tip.total);
+        // So reservas com saldo no mes entram, com o valor do modelo.
+        let with_balance = shown.series.iter().filter(|s| s.balances[last] > 0).count();
+        assert_eq!(tip.rows.len(), with_balance);
+        let tip = stack_tooltip(&hidden.series, &hidden.month_totals, last);
+        assert_eq!(
+            tip.rows.len(),
+            with_balance,
+            "ocultar nao some com as linhas"
+        );
+        assert!(tip.rows.iter().all(|(_, v, _)| *v == MASK), "{tip:?}");
+        assert_eq!(tip.total, MASK);
+        assert_eq!(leaks(&format!("{tip:?}")), None);
+        // O eixo tambem: no cache do canvas, entao o toggle limpa o cache.
+        assert_eq!(hidden.y_labels, ["•••", "•••", "•••"]);
+        assert_eq!(shown.y_labels[0], "R$ 12 mil");
     }
 
     #[test]

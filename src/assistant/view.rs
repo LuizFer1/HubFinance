@@ -97,9 +97,10 @@ pub struct AssistantView {
     pub models_port: Option<u16>,
     /// "Testar conexao" esperando a resposta do Ollama (A7: o botao mostra o carregando).
     pub listing: bool,
-    /// Quantas gravacoes do dialogo (`AssistantCommand::Configure`) o nucleo ja terminou, com
-    /// sucesso ou nao. O dialogo guarda o numero esperado e fecha quando ele chega sem erro.
-    pub configured: u64,
+    /// A ultima gravacao do dialogo (`AssistantCommand::Configure`): o numero dela e como
+    /// terminou. O dialogo guarda o numero que espera e so olha o resultado com esse numero;
+    /// deduzir pelo `last_error` confundiria um erro antigo (do historico) com o desta gravacao.
+    pub configure_result: Option<(u64, Result<(), String>)>,
     pub conversations: Vec<ConversationSummary>,
     pub open: Option<OpenConversation>,
     /// Texto chegando agora; vira `MessageView` no fim.

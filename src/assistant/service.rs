@@ -174,17 +174,27 @@ impl AssistantService {
     /// "Usar Ollama local" / "Usar OpenRouter" do dialogo: a chave (se a pessoa digitou uma) e a
     /// configuracao num comando so. Dois comandos separados apagariam um o erro do outro (cada
     /// gravacao bem-sucedida limpa `last_error`). A chave vai primeiro: se ela falha, a
-    /// configuracao nao e gravada, para a nuvem nao ficar ligada sem chave. `configured` anda
-    /// sempre, com sucesso ou nao: e por ele que o dialogo sabe que a gravacao terminou.
+    /// configuracao nao e gravada, para a nuvem nao ficar ligada sem chave. Toda chamada publica
+    /// `configure_result` com um numero novo, com sucesso ou nao: e por ele que o dialogo sabe
+    /// que a sua gravacao terminou e como.
     pub fn configure(&mut self, s: Settings, key: Option<&str>) {
-        self.view.configured = self.view.configured.wrapping_add(1);
+        let seq = self
+            .view
+            .configure_result
+            .as_ref()
+            .map_or(0, |(n, _)| *n)
+            .wrapping_add(1);
+        let failed = |view: &AssistantView| view.last_error.clone().map_or(Ok(()), Err);
         if let Some(key) = key.map(str::trim).filter(|k| !k.is_empty()) {
             self.save_key(key);
-            if self.view.last_error.is_some() {
+            let r = failed(&self.view);
+            if r.is_err() {
+                self.view.configure_result = Some((seq, r));
                 return;
             }
         }
         self.save_settings(s);
+        self.view.configure_result = Some((seq, failed(&self.view)));
     }
 
     pub fn save_key(&mut self, key: &str) {
@@ -1110,13 +1120,13 @@ mod tests {
         };
         cloud.cloud.enabled = true;
         s.configure(cloud.clone(), Some("  sk-or-x  "));
-        assert_eq!(s.view().configured, 1);
+        assert_eq!(s.view().configure_result, Some((1, Ok(()))));
         assert!(s.view().has_key);
         assert_eq!(s.view().settings, cloud);
         assert_eq!(s.view().last_error, None);
         // Sem chave nova so grava a configuracao.
         s.configure(Settings::default(), None);
-        assert_eq!(s.view().configured, 2);
+        assert_eq!(s.view().configure_result, Some((2, Ok(()))));
         assert_eq!(s.view().settings, Settings::default());
         assert!(s.view().has_key);
     }
@@ -1131,7 +1141,10 @@ mod tests {
         };
         cloud.cloud.enabled = true;
         s.configure(cloud, Some("sk-or-x"));
-        assert_eq!(s.view().configured, 1);
+        assert_eq!(
+            s.view().configure_result,
+            Some((1, Err("Não foi possível salvar a chave.".into())))
+        );
         assert_eq!(s.view().settings, Settings::default());
         assert_eq!(
             s.view().last_error.as_deref(),

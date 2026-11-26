@@ -695,16 +695,24 @@ impl App {
     fn sync_assistant_dialogs(&mut self) {
         let view = &self.snapshot.assistant;
         let mut done = false;
+        let hub_down = matches!(self.snapshot.status, Status::Failed(_) | Status::Stopped);
         if let Some(setup) = self.assistant_setup.as_mut() {
             setup.resync(&view.settings);
-            if let Some(expected) = setup.saving
-                && view.configured >= expected
-            {
-                if view.last_error.is_none() {
-                    done = true;
-                } else {
+            match (&view.configure_result, setup.saving) {
+                (Some((n, result)), Some(expected)) if *n == expected => {
                     setup.saving = None;
+                    match result {
+                        Ok(()) => done = true,
+                        Err(msg) => setup.error = Some(msg.clone()),
+                    }
                 }
+                // O nucleo caiu com a gravacao no ar: a resposta nunca vira. O botao volta e o
+                // dialogo diz por que, em vez de "Salvando..." para sempre.
+                (_, Some(_)) if hub_down => {
+                    setup.saving = None;
+                    setup.error = Some(HUB_DOWN_SAVE.into());
+                }
+                _ => {}
             }
         }
         if done {
@@ -1297,8 +1305,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 app.close_connect();
             }
             // O dialogo do assistente nao sobrevive a troca de tela (o scrim ja impede o
-            // clique; isto cobre qualquer outro caminho), e a chave digitada vai junto.
+            // clique; isto cobre qualquer outro caminho), e a chave digitada vai junto. A
+            // previa tambem: ela e da conversa da Analise, e nao reaparece sozinha ao voltar.
             app.close_setup();
+            app.consent_preview = None;
+            app.preview_after = None;
             app.screen = screen;
             app.cat_menu_open = false;
             top
@@ -1910,9 +1921,24 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 app.close_setup();
                 return Task::none();
             }
-            let expected = app.snapshot.assistant.configured.wrapping_add(1);
+            // Hub fora do ar: o comando nao teria quem o grave. A chave digitada ja saiu do
+            // campo (`take`) e nao volta: digitar de novo e mais seguro que guarda-la.
+            if matches!(app.snapshot.status, Status::Failed(_) | Status::Stopped) {
+                if let Some(setup) = app.assistant_setup.as_mut() {
+                    setup.error = Some(HUB_DOWN_SAVE.into());
+                }
+                return Task::none();
+            }
+            let expected = app
+                .snapshot
+                .assistant
+                .configure_result
+                .as_ref()
+                .map_or(0, |(n, _)| *n)
+                .wrapping_add(1);
             if let Some(setup) = app.assistant_setup.as_mut() {
                 setup.saving = Some(expected);
+                setup.error = None;
             }
             send_assistant(app, AssistantCommand::Configure { settings, key });
             Task::none()
@@ -1922,6 +1948,13 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::RemoveKey => {
+            if app
+                .assistant_setup
+                .as_ref()
+                .is_some_and(|s| s.saving.is_some())
+            {
+                return Task::none();
+            }
             app.key_input.clear();
             send_assistant(app, AssistantCommand::SaveKey(Secret::new(String::new())));
             Task::none()
@@ -1972,6 +2005,10 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
 
 /// Quanto tempo "Apagar todas" fica armado depois do primeiro clique.
 pub(super) const DELETE_ALL_ARMED_FOR: Duration = Duration::from_secs(3);
+
+/// Por que o dialogo nao gravou com o nucleo fora do ar.
+pub(super) const HUB_DOWN_SAVE: &str =
+    "O hub não está rodando, então a configuração não foi gravada.";
 
 /// A porta mais alta (65535) tem 5 digitos.
 const PORT_DIGITS: usize = 5;
@@ -4484,11 +4521,12 @@ pub(super) mod tests {
         app.assistant_setup.as_ref().expect("dialogo aberto")
     }
 
-    /// O snapshot depois de o nucleo terminar a gravacao: `configured` anda, e com sucesso a
-    /// configuracao e a gravada.
+    /// O snapshot depois de o nucleo terminar a gravacao: `configure_result` com o numero
+    /// seguinte, e com sucesso a configuracao e a gravada.
     fn configured(app: &App, saved: Option<&Settings>, error: Option<&str>) -> Message {
         let mut s = app.snapshot.clone();
-        s.assistant.configured += 1;
+        let n = s.assistant.configure_result.as_ref().map_or(0, |(n, _)| *n) + 1;
+        s.assistant.configure_result = Some((n, error.map_or(Ok(()), |e| Err(e.to_string()))));
         if let Some(saved) = saved {
             s.assistant.settings = saved.clone();
         }
@@ -4722,6 +4760,8 @@ pub(super) mod tests {
         assert_eq!(draft.cloud_model, "x/modelo");
         let _ = update(&mut app, Message::SetupNext);
         let _ = drain(&mut rx);
+        app.snapshot.assistant.models = Some(Ok(vec!["llama".into()]));
+        app.snapshot.assistant.models_port = Some(11500);
         let _ = update(&mut app, Message::SetupFinish);
         let mut expected = boot.clone();
         expected.local.port = 11500;
@@ -4732,6 +4772,163 @@ pub(super) mod tests {
                 key: None,
             })]
         );
+    }
+
+    #[test]
+    fn porta_do_dialogo_tem_no_maximo_5_digitos() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = assistant_app(dir.path(), Settings::default());
+        let _ = update(&mut app, Message::ConfigureAssistant);
+        let _ = update(&mut app, Message::SetupPort("1234567".into()));
+        assert_eq!(setup(&app).draft.port_input, "12345");
+    }
+
+    #[test]
+    fn ollama_so_grava_com_modelo_da_lista_desta_porta() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), Settings::default());
+        let _ = update(&mut app, Message::ConfigureAssistant);
+        let _ = update(&mut app, Message::SetupChoice(ProviderChoice::Local));
+        let _ = update(&mut app, Message::SetupNext);
+        let _ = update(&mut app, Message::SetupLocalModel("llama".into()));
+        let _ = drain(&mut rx);
+        // Lista de outra porta, ou sem o modelo escolhido: nao grava.
+        app.snapshot.assistant.models = Some(Ok(vec!["llama".into()]));
+        app.snapshot.assistant.models_port = Some(11500);
+        let _ = update(&mut app, Message::SetupFinish);
+        app.snapshot.assistant.models_port = Some(11434);
+        app.snapshot.assistant.models = Some(Ok(vec!["qwen".into()]));
+        let _ = update(&mut app, Message::SetupFinish);
+        app.snapshot.assistant.models = Some(Err("sem Ollama".into()));
+        let _ = update(&mut app, Message::SetupFinish);
+        assert!(drain(&mut rx).is_empty());
+        app.snapshot.assistant.models = Some(Ok(vec!["qwen".into(), "llama".into()]));
+        let _ = update(&mut app, Message::SetupFinish);
+        assert_eq!(drain(&mut rx).len(), 1);
+    }
+
+    #[test]
+    fn chave_so_com_espacos_nao_conta_e_remover_limpa_o_campo() {
+        use crate::assistant::secret::Secret;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), Settings::default());
+        let _ = update(&mut app, Message::ConfigureAssistant);
+        let _ = update(&mut app, Message::SetupChoice(ProviderChoice::Cloud));
+        let _ = update(&mut app, Message::SetupNext);
+        let _ = update(&mut app, Message::KeyInput(Secret::new("   ".into())));
+        let _ = update(&mut app, Message::SetupFinish);
+        assert!(drain(&mut rx).is_empty());
+        assert!(app.assistant_setup.is_some());
+        let _ = update(&mut app, Message::KeyInput(Secret::new("sk-or-x".into())));
+        let _ = update(&mut app, Message::RemoveKey);
+        assert!(app.key_input.is_empty());
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::SaveKey(Secret::new(
+                String::new()
+            )))]
+        );
+        // Gravando: "Remover" nao faz nada.
+        if let Some(s) = app.assistant_setup.as_mut() {
+            s.saving = Some(1);
+        }
+        let _ = update(&mut app, Message::RemoveKey);
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn nada_mudou_nada_e_gravado_no_ollama_e_na_nuvem() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        app.snapshot.assistant.models = Some(Ok(vec!["m".into()]));
+        app.snapshot.assistant.models_port = Some(11434);
+        let _ = update(&mut app, Message::ConfigureAssistant);
+        let _ = update(&mut app, Message::SetupNext);
+        let _ = update(&mut app, Message::SetupFinish);
+        assert!(drain(&mut rx).is_empty());
+        assert!(app.assistant_setup.is_none());
+
+        let (mut app, mut rx) = cloud_app(dir.path());
+        let _ = update(&mut app, Message::ConfigureAssistant);
+        let _ = update(&mut app, Message::SetupNext);
+        let _ = update(&mut app, Message::SetupFinish);
+        assert!(drain(&mut rx).is_empty());
+        assert!(app.assistant_setup.is_none());
+    }
+
+    #[test]
+    fn chave_digitada_com_ollama_escolhido_nao_vai() {
+        use crate::assistant::secret::Secret;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), Settings::default());
+        let _ = update(&mut app, Message::ConfigureAssistant);
+        let _ = update(&mut app, Message::SetupChoice(ProviderChoice::Cloud));
+        let _ = update(&mut app, Message::SetupNext);
+        let _ = update(&mut app, Message::KeyInput(Secret::new("sk-or-x".into())));
+        let _ = update(&mut app, Message::SetupBack);
+        let _ = update(&mut app, Message::SetupChoice(ProviderChoice::Local));
+        let _ = update(&mut app, Message::SetupNext);
+        let _ = update(&mut app, Message::SetupLocalModel("m".into()));
+        app.snapshot.assistant.models = Some(Ok(vec!["m".into()]));
+        app.snapshot.assistant.models_port = Some(11434);
+        let _ = drain(&mut rx);
+        let _ = update(&mut app, Message::SetupFinish);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::Configure {
+                settings: local_settings(Some("m")),
+                key: None,
+            })]
+        );
+        assert!(app.key_input.is_empty());
+    }
+
+    #[test]
+    fn hub_fora_do_ar_nao_deixa_o_salvando_preso() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let _ = update(&mut app, Message::ConfigureAssistant);
+        let _ = update(&mut app, Message::SetupChoice(ProviderChoice::None));
+        let _ = update(&mut app, Message::SetupFinish);
+        assert_eq!(setup(&app).saving, Some(1));
+        let _ = drain(&mut rx);
+        // O nucleo caiu antes de responder.
+        let mut down = app.snapshot.clone();
+        down.status = Status::Failed("porta ocupada".into());
+        let _ = update(&mut app, Message::Snapshot(Box::new(down)));
+        assert_eq!(setup(&app).saving, None);
+        assert_eq!(setup(&app).error.as_deref(), Some(super::HUB_DOWN_SAVE));
+        let _ = super::super::shell::root(&app);
+        // Tentar de novo com ele fora: nao manda nada e o erro continua.
+        let _ = update(&mut app, Message::SetupFinish);
+        assert!(drain(&mut rx).is_empty());
+        assert_eq!(setup(&app).saving, None);
+        assert_eq!(setup(&app).error.as_deref(), Some(super::HUB_DOWN_SAVE));
+    }
+
+    #[test]
+    fn resultado_de_outra_gravacao_nao_fecha_o_dialogo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        // Uma gravacao anterior ja terminou com erro (numero 1).
+        app.snapshot.assistant.configure_result = Some((1, Err("antigo".into())));
+        let _ = update(&mut app, Message::ConfigureAssistant);
+        let _ = update(&mut app, Message::SetupChoice(ProviderChoice::None));
+        let _ = update(&mut app, Message::SetupFinish);
+        assert_eq!(setup(&app).saving, Some(2));
+        let _ = drain(&mut rx);
+        // Snapshot que ainda traz o resultado 1: o dialogo continua esperando o 2.
+        let same = Message::Snapshot(Box::new(app.snapshot.clone()));
+        let _ = update(&mut app, same);
+        assert_eq!(setup(&app).saving, Some(2));
+        assert_eq!(setup(&app).error, None);
+        let off = Settings {
+            provider: ProviderChoice::None,
+            ..local_settings(Some("m"))
+        };
+        let done = configured(&app, Some(&off), None);
+        let _ = update(&mut app, done);
+        assert!(app.assistant_setup.is_none());
     }
 
     #[test]
@@ -5002,6 +5199,35 @@ pub(super) mod tests {
             drain(&mut rx),
             vec![Command::Assistant(AssistantCommand::Delete("C1".into()))]
         );
+    }
+
+    #[test]
+    fn previa_nao_abre_com_snapshot_que_ainda_traz_a_conversa_anterior() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = cloud_app(dir.path());
+        // A conversa anterior (C1) esta aberta e tambem espera aprovacao.
+        app.snapshot.assistant.open = Some(awaiting_conv(app.book, "ENV"));
+        let _ = update(&mut app, Message::StartConversation);
+        let _ = drain(&mut rx);
+        assert_eq!(app.preview_after, Some(Some("C1".into())));
+        // O snapshot de antes do comando ainda traz C1: a previa nao abre para ela.
+        let old = Message::Snapshot(Box::new(app.snapshot.clone()));
+        let _ = update(&mut app, old);
+        assert!(app.consent_preview.is_none());
+        // Chega a conversa nova: abre para ela.
+        let snap = {
+            let mut s = app.snapshot.clone();
+            let mut fresh = awaiting_conv(app.book, "ENV");
+            fresh.id = "C2".into();
+            s.assistant.open = Some(fresh);
+            Message::Snapshot(Box::new(s))
+        };
+        let _ = update(&mut app, snap);
+        assert_eq!(app.consent_preview.as_deref(), Some("C2"));
+        // Trocar de tela fecha a previa e esquece o pedido.
+        let _ = update(&mut app, Message::SelectScreen(Screen::Dashboard));
+        assert!(app.consent_preview.is_none());
+        assert!(app.preview_after.is_none());
     }
 
     #[test]

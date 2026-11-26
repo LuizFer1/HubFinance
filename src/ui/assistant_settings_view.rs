@@ -5,7 +5,9 @@
 //! ja ligaria a nuvem. O ultimo botao manda um `Configure` so (chave e configuracao juntas) e o
 //! dialogo espera o nucleo: fecha se deu certo, mostra o erro se nao deu.
 
-use iced::widget::{Space, button, column, container, pick_list, row, text, text_input};
+use iced::widget::{
+    Space, button, column, container, pick_list, row, scrollable, text, text_input,
+};
 use iced::{Alignment, Element, Length};
 
 use super::app::{App, Message};
@@ -39,6 +41,15 @@ const RADIO_MAX: usize = 6;
 
 /// Largura do dialogo.
 const DIALOG_WIDTH: f32 = 560.0;
+
+/// Altura do passo 2 (o da nuvem e o mais alto, e a lista de modelos cresce): o corpo rola e
+/// cabecalho, progresso e rodape ficam fixos. Numa janela mais baixa, a janela menos 24 de
+/// cada lado.
+const DIALOG_HEIGHT: f32 = 600.0;
+
+pub(super) fn dialog_height(window_height: f32) -> f32 {
+    DIALOG_HEIGHT.min(window_height - 48.0).max(200.0)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetupStep {
@@ -91,8 +102,11 @@ pub struct AssistantSetup {
     /// aberto antes dele) atualiza o campo que a pessoa nao tocou (ainda igual a base); o que
     /// ela mexeu fica. Sem isto o dialogo aberto cedo regravaria o padrao por cima do salvo.
     pub base: SetupDraft,
-    /// `Some(n)`: o `Configure` saiu e o dialogo espera `AssistantView::configured >= n`.
+    /// `Some(n)`: o `Configure` numero `n` saiu e o dialogo espera `configure_result` com ele.
     pub saving: Option<u64>,
+    /// Por que a ultima gravacao deste dialogo nao valeu (do `configure_result`, ou o hub fora
+    /// do ar). Mostrado no dialogo; some ao tentar de novo.
+    pub error: Option<String>,
 }
 
 impl AssistantSetup {
@@ -103,6 +117,7 @@ impl AssistantSetup {
             base: draft.clone(),
             draft,
             saving: None,
+            error: None,
         }
     }
 
@@ -176,15 +191,32 @@ pub(super) fn primary_label(setup: &AssistantSetup) -> &'static str {
     }
 }
 
-/// O ultimo botao pode gravar? Ollama precisa de porta valida e modelo; a nuvem, de modelo e de
-/// uma chave (a salva ou a digitada agora).
+/// O ultimo botao pode gravar? Ollama precisa de porta valida e de um modelo da lista que o
+/// teste trouxe **desta** porta (modelo de outra porta, ou de uma lista antiga, falharia na
+/// primeira pergunta); a nuvem, de modelo e de uma chave (a salva ou a digitada agora, que nao
+/// conta se for so espaco).
 pub(super) fn can_finish(app: &App, setup: &AssistantSetup) -> bool {
     if setup.saving.is_some() {
         return false;
     }
-    let cloud_key = app.snapshot.assistant.has_key || !app.key_input.trim().is_empty();
-    settings_to_save(&app.snapshot.assistant.settings, &setup.draft).is_some()
-        && (setup.draft.choice != ProviderChoice::Cloud || cloud_key)
+    let view = &app.snapshot.assistant;
+    let ok = match setup.draft.choice {
+        ProviderChoice::None => true,
+        ProviderChoice::Local => {
+            let port = setup.draft.port();
+            let listed = match &view.models {
+                Some(Ok(models)) => setup
+                    .draft
+                    .local_model
+                    .as_ref()
+                    .is_some_and(|m| models.contains(m)),
+                _ => false,
+            };
+            port.is_some() && view.models_port == port && listed
+        }
+        ProviderChoice::Cloud => view.has_key || !app.key_input.trim().is_empty(),
+    };
+    ok && settings_to_save(&view.settings, &setup.draft).is_some()
 }
 
 /// Rotulo da linha de progresso.
@@ -226,14 +258,37 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
         (SetupStep::Details, ProviderChoice::Cloud) => cloud_step(app, setup),
         _ => where_step(app, setup),
     };
+    let details = setup.step == SetupStep::Details;
+    // No passo 2 o corpo rola dentro da altura fixa; no passo 1 (tres linhas) cabe sempre.
+    let body: Element<'_, Message> = if details {
+        scrollable(container(body).padding(iced::Padding {
+            right: 12.0,
+            ..iced::Padding::ZERO
+        }))
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new().width(6).scroller_width(6),
+        ))
+        .style(theme::scrollbar(t))
+        .height(Length::Fill)
+        .into()
+    } else {
+        body
+    };
     let mut col = column![header, progress, body].spacing(16);
-    if let Some(err) = &app.snapshot.assistant.last_error {
+    if details {
+        col = col.height(Length::Fill);
+    }
+    let error = setup
+        .error
+        .as_deref()
+        .or(app.snapshot.assistant.last_error.as_deref());
+    if let Some(err) = error {
         col = col.push(widgets::banner(
             t,
             Tone::Expense,
             t.surface,
             icons::WARNING_CIRCLE,
-            err.as_str(),
+            err,
             Vec::new(),
         ));
     }
@@ -266,7 +321,7 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
         col,
         app.window_size.width,
         DIALOG_WIDTH,
-        None,
+        details.then(|| dialog_height(app.window_size.height)),
         Message::CloseAssistantSetup,
     ))
 }
@@ -445,8 +500,10 @@ fn cloud_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
         row![
             text("Chave salva").size(13).color(t.text),
             Space::new().width(Length::Fill),
+            // Desligado enquanto grava: apagar a chave no meio do `Configure` desfaria o que ele
+            // acabou de salvar.
             widgets::action_button(t, ButtonKind::Danger, ButtonSize::Compact, "Remover")
-                .on_press(Message::RemoveKey),
+                .on_press_maybe(setup.saving.is_none().then_some(Message::RemoveKey)),
         ]
         .align_y(Alignment::Center)
         .into()
@@ -610,6 +667,13 @@ mod tests {
         assert_eq!(setup.draft.choice, ProviderChoice::Local);
         assert_eq!(setup.draft.local_model.as_deref(), Some("llama"));
         assert_eq!(setup.base, SetupDraft::from_settings(&boot));
+    }
+
+    #[test]
+    fn passo_2_tem_altura_fixa_que_cabe_na_janela() {
+        assert_eq!(dialog_height(900.0), DIALOG_HEIGHT);
+        assert_eq!(dialog_height(500.0), 452.0);
+        assert_eq!(dialog_height(100.0), 200.0);
     }
 
     #[test]

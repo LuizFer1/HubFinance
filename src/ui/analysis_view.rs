@@ -1,23 +1,49 @@
-//! Tela Analise: os achados de `advisor` como cartoes (sempre, sem rede); o chat entra depois.
-//! Tudo vem de `app.analysis` (calculado em `App::rebuild`); aqui so se monta a arvore.
+//! Tela Analise em dois paineis (spec Grafite · Mesa 8.5): os achados de `advisor` a esquerda
+//! (sempre, sem rede) e o assistente a direita, cada um com a propria rolagem. Na janela minima
+//! (728 de largura util) os paineis viram um segmentado [Achados | Conversa]. Tudo vem de
+//! `app.analysis` (calculado em `App::rebuild`) e do snapshot; aqui so se monta a arvore.
 
 use std::borrow::Cow;
 
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
-use iced::{Alignment, Color, Element, Length};
+use iced::widget::{
+    Space, button, column, container, markdown, rich_text, row, scrollable, text, text_input,
+};
+use iced::{Alignment, Color, Element, Length, Padding};
 
-use super::app::{App, Message, awaiting_cloud_consent};
+use super::app::{AnalysisTab, App, CopyTarget, Message, awaiting_cloud_consent};
 use super::assistant_settings_view;
-use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, size};
-use super::widgets::RowEdge;
-use super::{fonts, icons, rows, time, widgets};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, radius, size};
+use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
+use super::{fonts, icons, rows, shell, time, widgets};
 use crate::advisor::{Finding, Severity};
 use crate::assistant::prompt::Role;
+use crate::assistant::settings::{ProviderChoice, Settings};
 use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
 use crate::dashboard::money::{MASK, MASK_DIGITS, MINUS, group_thousands};
 use crate::hub::snapshot::Status;
 
 const GAP: f32 = 14.0;
+
+/// Largura do painel do assistente (8.5).
+const ASSISTANT_WIDTH: f32 = 400.0;
+
+/// Teto do texto dos achados: linha longa demais cansa a leitura na janela maximizada.
+const FINDINGS_MAX: f32 = 720.0;
+
+/// Largura maxima da resposta: perto de 56 caracteres de 14 px, a medida de leitura (8.5).
+/// No painel de 400 ela nunca chega a valer; vale no segmentado da janela minima.
+const REPLY_MAX: f32 = 440.0;
+
+/// Abaixo desta largura util os dois paineis nao cabem (achados precisam de ~320 ao lado dos
+/// 400 do assistente e do respiro): a tela vira o segmentado. A janela minima (1024) da 728.
+const TWO_PANELS_MIN: f32 = 760.0;
+
+/// Rolagem da conversa: id proprio, porque `CONTENT_SCROLL` (o que a troca de tela volta ao
+/// topo) e o dos achados, e so uma rolagem pode ter cada id.
+pub(super) const CHAT_SCROLL: &str = "conversa";
+
+/// A pergunta que a tela responde, no cabecalho fixo da casca.
+pub(super) const QUESTION: &str = "Onde dá para melhorar?";
 
 /// Texto da sobreposicao; constante para um teste conferir que a quebra de linha no fonte nao
 /// deixou espacos soltos no meio da frase.
@@ -25,76 +51,339 @@ const INTRO: &str = "Este é o texto exato que o assistente recebe: resumos e to
 lançamentos, descrições, nomes de pessoas, aparelhos ou formas de pagamento, nem datas \
 exatas.";
 
+/// Os dois paineis cabem lado a lado nesta largura util?
+pub(super) fn two_panels(content_width: f32) -> bool {
+    content_width >= TWO_PANELS_MIN
+}
+
 pub fn view(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
-    let toolbar = row![
+    let mut page = column![
+        text(summary_line(&app.analysis.findings))
+            .size(13)
+            .color(t.text_muted)
+    ]
+    .spacing(GAP)
+    .width(Length::Fill)
+    .height(Length::Fill);
+    if two_panels(shell::content_width(app)) {
+        page = page.push(
+            row![
+                findings_panel(app),
+                container(assistant_panel(app)).width(ASSISTANT_WIDTH)
+            ]
+            .spacing(16)
+            .height(Length::Fill),
+        );
+    } else {
+        page = page.push(tab_switch(app));
+        page = page.push(match app.analysis_tab {
+            AnalysisTab::Findings => findings_panel(app),
+            AnalysisTab::Chat => assistant_panel(app),
+        });
+    }
+    page.into()
+}
+
+/// [Achados | Conversa] da janela estreita.
+fn tab_switch(app: &App) -> Element<'_, Message> {
+    let current = app.analysis_tab;
+    let option =
+        |label: &'static str, tab: AnalysisTab| (label, current == tab, Message::AnalysisTab(tab));
+    row![
+        widgets::segmented(
+            app.tokens,
+            SegmentedVariant::Pill,
+            SegmentedSize::Regular,
+            false,
+            [
+                option("Achados", AnalysisTab::Findings),
+                option("Conversa", AnalysisTab::Chat),
+            ],
+        ),
+        Space::new().width(Length::Fill),
+    ]
+    .into()
+}
+
+/// "2 alertas, 3 atenções, 1 bom sinal. Calculado no seu PC." Grupo vazio nao entra: "0
+/// alertas" chamaria atencao para o que nao existe.
+pub(super) fn summary_line(findings: &[Finding]) -> String {
+    let count = |s: Severity| findings.iter().filter(|f| f.severity == s).count();
+    let parts: Vec<String> = [
+        (count(Severity::Alert), "alerta", "alertas"),
+        (count(Severity::Attention), "atenção", "atenções"),
+        (count(Severity::GoodSign), "bom sinal", "bons sinais"),
+    ]
+    .into_iter()
+    .filter(|(n, ..)| *n > 0)
+    .map(|(n, one, many)| format!("{n} {}", if n == 1 { one } else { many }))
+    .collect();
+    if parts.is_empty() {
+        "Nada a apontar. Calculado no seu PC.".to_string()
+    } else {
+        format!("{}. Calculado no seu PC.", parts.join(", "))
+    }
+}
+
+/// Rolagem vertical de painel: cursor fino, longe da borda do card.
+fn panel_scroll<'a>(
+    t: &'static Tokens,
+    content: impl Into<Element<'a, Message>>,
+) -> scrollable::Scrollable<'a, Message> {
+    scrollable(content)
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new()
+                .width(6)
+                .scroller_width(6)
+                .margin(3),
+        ))
+        .style(theme::scrollbar(t))
+        .width(Length::Fill)
+        .height(Length::Fill)
+}
+
+// ---- achados ----
+
+fn severity_tone(s: Severity) -> Tone {
+    match s {
+        Severity::Alert => Tone::Expense,
+        Severity::Attention => Tone::Warning,
+        Severity::GoodSign => Tone::Income,
+    }
+}
+
+/// Cor do icone de cada gravidade: a de texto do tom (o `expense` cru nao vira icone).
+fn severity_fg(t: &'static Tokens, s: Severity) -> Color {
+    match s {
+        Severity::Alert => t.expense_fg,
+        Severity::Attention => t.warning,
+        Severity::GoodSign => t.income_fg,
+    }
+}
+
+fn severity_glyph(s: Severity) -> &'static str {
+    match s {
+        Severity::Alert => icons::WARNING_CIRCLE,
+        Severity::Attention => icons::INFO,
+        Severity::GoodSign => icons::CHECK_CIRCLE,
+    }
+}
+
+/// Titulo do grupo: plural, como na linha-resumo ("Alertas 2").
+fn group_title(s: Severity) -> &'static str {
+    match s {
+        Severity::Alert => "Alertas",
+        Severity::Attention => "Atenção",
+        Severity::GoodSign => "Bons sinais",
+    }
+}
+
+const SEVERITIES: [Severity; 3] = [Severity::Alert, Severity::Attention, Severity::GoodSign];
+
+fn findings_panel(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let findings = &app.analysis.findings;
+    let content: Element<'_, Message> = if findings.is_empty() {
+        container(widgets::empty_state(
+            t,
+            widgets::empty_icon(t, icons::CHECK_CIRCLE),
+            "Nada a apontar",
+            "Ainda não há dados suficientes nesta conta, ou está tudo dentro do seu normal.",
+            None,
+        ))
+        .center_x(Length::Fill)
+        .padding([40, 20])
+        .into()
+    } else {
+        let mut groups = column![].spacing(22).max_width(FINDINGS_MAX);
+        for severity in SEVERITIES {
+            let items: Vec<&Finding> = findings.iter().filter(|f| f.severity == severity).collect();
+            if items.is_empty() {
+                continue;
+            }
+            let mut group = column![
+                row![
+                    text(group_title(severity))
+                        .size(13)
+                        .font(fonts::INTER_MEDIUM)
+                        .color(t.text_soft()),
+                    text(items.len().to_string()).size(13).color(t.text_muted),
+                ]
+                .spacing(8)
+            ]
+            .spacing(12);
+            for (i, f) in items.into_iter().enumerate() {
+                if i > 0 {
+                    group = group.push(widgets::divider(t));
+                }
+                group = group.push(finding_row(app, f));
+            }
+            groups = groups.push(group);
+        }
+        container(groups)
+            .padding([18, 20])
+            .width(Length::Fill)
+            .into()
+    };
+    widgets::card(t, panel_scroll(t, content).id(super::shell::CONTENT_SCROLL))
+        .padding(0)
+        .height(Length::Fill)
+        .into()
+}
+
+/// Um achado: tile de 28 na tinta de 10 % do tom, titulo 16 Medium, detalhe 14 `text_soft` e a
+/// acao 14 em `fg` (nao dourada: nao e clicavel).
+fn finding_row<'a>(app: &'a App, f: &'a Finding) -> Element<'a, Message> {
+    let t = app.tokens;
+    let tile = container(icons::icon(
+        severity_glyph(f.severity),
+        16.0,
+        severity_fg(t, f.severity),
+    ))
+    .center(size::CTRL_S)
+    .style(theme::fill(
+        t.tint(severity_tone(f.severity), t.surface),
+        radius::INSET,
+    ));
+    let mut body = column![
+        text(mask(app, &f.title))
+            .size(16)
+            .font(fonts::INTER_MEDIUM)
+            .color(t.text),
+        text(mask(app, &f.detail))
+            .size(14)
+            .line_height(1.45)
+            .color(t.text_soft()),
+    ]
+    .spacing(4)
+    .width(Length::Fill);
+    if let Some(action) = &f.action {
+        body = body.push(
+            text(mask(app, action))
+                .size(14)
+                .line_height(1.45)
+                .color(t.text),
+        );
+    }
+    row![tile, body].spacing(12).into()
+}
+
+// ---- assistente ----
+
+/// No lugar do chat quando o nucleo nao subiu.
+const HUB_DOWN: &str = "O hub não iniciou; os achados ao lado continuam valendo.";
+
+/// "llama3.1:8b, local" sob o titulo do painel: onde o assistente roda agora.
+pub(super) fn assistant_status(settings: &Settings) -> String {
+    match settings.provider {
+        ProviderChoice::None => "Desligado".to_string(),
+        ProviderChoice::Local => match settings.local.model.as_deref() {
+            Some(m) if !m.is_empty() => format!("{m}, local"),
+            _ => "Ollama, sem modelo".to_string(),
+        },
+        ProviderChoice::Cloud if !settings.cloud.enabled => "Nuvem desligada".to_string(),
+        ProviderChoice::Cloud => format!("{}, nuvem", settings.cloud.model.trim()),
+    }
+}
+
+fn assistant_panel(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let open = open_conversation(app);
+    let mut header = row![
+        column![
+            text("Assistente")
+                .size(15)
+                .font(fonts::INTER_MEDIUM)
+                .color(t.text),
+            text(assistant_status(&app.snapshot.assistant.settings))
+                .size(12)
+                .color(t.text_muted),
+        ]
+        .spacing(2)
+        .width(Length::Fill),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    if let Some(open) = open {
+        header = header.push(text(tokens_total_label(open)).size(12).color(t.text_muted));
+        header = header.push(
+            widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Fechar")
+                .on_press(Message::CloseConversation),
+        );
+    }
+    header = header.push(widgets::icon_button(
+        t,
+        icons::GEAR,
+        ButtonSize::Compact,
+        "Configurar assistente",
+        Some(Message::ToggleAssistantSettings),
+    ));
+    let body: Element<'_, Message> = if matches!(app.snapshot.status, Status::Failed(_)) {
+        // Sem o nucleo nao ha assistente; os achados (do ultimo snapshot) seguem valendo.
+        container(text(HUB_DOWN).size(14).color(t.text_muted))
+            .padding([18, 20])
+            .into()
+    } else if app.assistant_settings_open {
+        panel_scroll(
+            t,
+            container(assistant_settings_view::view(app)).padding([14, 16]),
+        )
+        .into()
+    } else if let Some(open) = open {
+        conversation_body(app, open)
+    } else {
+        idle_body(app)
+    };
+    widgets::card(
+        t,
+        column![
+            container(header).padding(Padding {
+                top: 14.0,
+                right: 12.0,
+                bottom: 12.0,
+                left: 16.0,
+            }),
+            widgets::divider(t),
+            body,
+        ]
+        .height(Length::Fill),
+    )
+    .padding(0)
+    .height(Length::Fill)
+    .into()
+}
+
+/// Sem conversa aberta: conversar, ver o envelope e as conversas anteriores.
+fn idle_body(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let mut col = column![
+        text("Converse sobre os achados desta conta. O assistente recebe só resumos e totais.")
+            .size(13)
+            .line_height(1.45)
+            .color(t.text_soft()),
         widgets::action_button(
             t,
             ButtonKind::Primary,
-            ButtonSize::Compact,
-            "Conversar sobre isso"
+            ButtonSize::Regular,
+            "Conversar sobre estes achados",
         )
         .on_press(Message::StartConversation),
-        Space::new().width(Length::Fill),
         widgets::action_button(
             t,
-            ButtonKind::Secondary,
-            ButtonSize::Compact,
-            "Configurar assistente"
-        )
-        .on_press(Message::ToggleAssistantSettings),
-        widgets::action_button(
-            t,
-            ButtonKind::Secondary,
+            ButtonKind::Link,
             ButtonSize::Compact,
             "Ver o que o assistente vê"
         )
         .on_press(Message::ShowEnvelope),
     ]
-    .spacing(8);
-    let body: Element<'_, Message> = if app.analysis.findings.is_empty() {
-        widgets::card(
-            t,
-            column![
-                widgets::kicker(t, "Nada a apontar"),
-                text(
-                    "Ainda não há dados suficientes nesta conta, ou está tudo dentro do seu normal."
-                )
-                .size(14)
-                .color(t.text_muted),
-            ]
-            .spacing(6),
-        )
-        .padding([18, 20])
-        .into()
-    } else {
-        column(app.analysis.findings.iter().map(|f| finding_card(app, f)))
-            .spacing(GAP)
-            .width(Length::Fill)
-            .into()
-    };
-    let mut page = column![toolbar].spacing(GAP).width(Length::Fill);
-    if app.assistant_settings_open {
-        page = page.push(assistant_settings_view::view(app));
+    .spacing(12)
+    .width(Length::Fill);
+    if let Some(list) = conversation_list(app) {
+        col = col.push(Space::new().height(6)).push(list);
     }
-    page = page.push(body);
-    if matches!(app.snapshot.status, Status::Failed(_)) {
-        // Sem o nucleo nao ha assistente; os achados (do ultimo snapshot) seguem valendo.
-        page = page
-            .push(widgets::card(t, text(HUB_DOWN).size(14).color(t.text_muted)).padding([18, 20]));
-    } else {
-        if let Some(chat) = chat_area(app) {
-            page = page.push(chat);
-        }
-        if let Some(list) = conversation_list(app) {
-            page = page.push(list);
-        }
-    }
-    page.into()
+    panel_scroll(t, container(col).padding([16, 16])).into()
 }
-
-/// No lugar do chat quando o nucleo nao subiu.
-const HUB_DOWN: &str = "O hub não iniciou; a análise acima continua valendo.";
 
 /// A conversa aberta, so se for da conta que a tela mostra: com a outra conta aberta ela falaria
 /// de numeros que nao estao na tela.
@@ -167,75 +456,77 @@ fn hidden_values_note(app: &App) -> Option<&'static str> {
     app.hide_values.then_some(HIDDEN_VALUES_NOTE)
 }
 
-fn chat_area(app: &App) -> Option<Element<'_, Message>> {
+/// A conversa: mensagens na rolagem propria (ancorada embaixo, acompanha o texto que chega) e o
+/// campo de pergunta fixo no pe do painel.
+fn conversation_body<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, Message> {
     let t = app.tokens;
     let view = &app.snapshot.assistant;
-    let open = open_conversation(app)?;
-    let header = row![
-        text("Conversa")
-            .size(15)
-            .font(fonts::INTER_MEDIUM)
-            .color(t.text),
-        Space::new().width(Length::Fill),
-        text(tokens_total_label(open)).size(12).color(t.text_muted),
-        widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Fechar")
-            .on_press(Message::CloseConversation),
-    ]
-    .spacing(12)
-    .align_y(Alignment::Center);
-    let mut col = column![header].spacing(12).width(Length::Fill);
-    if data_changed(app) {
-        col = col.push(widgets::banner(
-            t,
-            Tone::Warning,
-            t.surface,
-            icons::WARNING_CIRCLE,
-            "Os dados mudaram desde o início desta conversa",
-            vec![
-                widgets::action_button(
-                    t,
-                    ButtonKind::Primary,
-                    ButtonSize::Compact,
-                    "Nova conversa",
-                )
-                .on_press(Message::StartConversation)
-                .into(),
-            ],
-        ));
-    }
     // Nuvem sem a previa aprovada: nada saiu, e o "Tentar de novo" sob a pergunta de abertura
     // reenviaria sem a pessoa ver o que vai. A previa toma o lugar dele e do campo de pergunta.
     let awaiting = awaiting_cloud_consent(app).is_some();
     let last = open.messages.len().saturating_sub(1);
-    let mut messages = column![].spacing(10).width(Length::Fill);
+    let mut messages = column![].spacing(14).width(Length::Fill);
     for (i, m) in open.messages.iter().enumerate() {
-        messages = messages.push(message_bubble(app, m, i == last && !view.busy && !awaiting));
+        messages = messages.push(message_view(app, m, i == last && !view.busy && !awaiting));
     }
     if let (true, Some(partial)) = (view.busy, view.streaming.as_deref()) {
-        messages = messages.push(streaming_bubble(app, partial));
+        messages = messages.push(streaming_view(app, partial));
     }
-    // Altura fixa: a pagina ja rola, e uma rolagem dentro de outra so se resolve com tamanho
-    // definido. Ancorada embaixo, a conversa acompanha o texto que chega.
-    let height = (app.window_size.height - 340.0).clamp(220.0, 520.0);
-    col = col.push(
-        scrollable(container(messages).padding([0, 12]))
-            .direction(scrollable::Direction::Vertical(
-                scrollable::Scrollbar::new()
-                    .width(6)
-                    .scroller_width(6)
-                    .margin(3)
-                    .anchor(scrollable::Anchor::End),
+    let scroll = scrollable(container(messages).padding([14, 16]))
+        .id(CHAT_SCROLL)
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new()
+                .width(6)
+                .scroller_width(6)
+                .margin(3)
+                .anchor(scrollable::Anchor::End),
+        ))
+        .style(theme::scrollbar(t))
+        .width(Length::Fill)
+        .height(Length::Fill);
+    let mut col = column![].width(Length::Fill).height(Length::Fill);
+    if data_changed(app) {
+        col = col.push(
+            container(widgets::banner(
+                t,
+                Tone::Warning,
+                t.surface,
+                icons::WARNING_CIRCLE,
+                "Os dados mudaram desde o início desta conversa",
+                vec![
+                    widgets::action_button(
+                        t,
+                        ButtonKind::Primary,
+                        ButtonSize::Compact,
+                        "Nova conversa",
+                    )
+                    .on_press(Message::StartConversation)
+                    .into(),
+                ],
             ))
-            .style(theme::scrollbar(t))
-            .width(Length::Fill)
-            .height(height),
-    );
-    if awaiting {
-        col = col.push(consent_preview(app, open));
-        return Some(widgets::card(t, col).padding([18, 20]).into());
+            .padding(Padding {
+                top: 12.0,
+                right: 12.0,
+                bottom: 0.0,
+                left: 12.0,
+            }),
+        );
     }
+    col = col.push(scroll).push(widgets::divider(t));
+    let foot: Element<'a, Message> = if awaiting {
+        consent_preview(app, open)
+    } else {
+        chat_input(app)
+    };
+    col.push(container(foot).padding([12, 16])).into()
+}
+
+/// Campo de pergunta com "Enviar", fixo no pe do painel.
+fn chat_input(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let view = &app.snapshot.assistant;
     // Sem `on_input` o campo fica desabilitado enquanto ha resposta chegando.
-    let mut input = text_input("Pergunte algo sobre estes números", &app.chat_input)
+    let mut input = text_input("Pergunte sobre estes números", &app.chat_input)
         .size(14)
         .padding([9, 12])
         .style(theme::input(t))
@@ -252,18 +543,19 @@ fn chat_area(app: &App) -> Option<Element<'_, Message>> {
     // 9 de respiro (14 x 1,3 + 18 = 36,2).
     let send = widgets::action_button(t, ButtonKind::Primary, ButtonSize::Regular, "Enviar")
         .on_press_maybe(can_send.then_some(Message::ChatSubmit));
-    col = col.push(row![input, send].spacing(8).align_y(Alignment::Center));
-    Some(widgets::card(t, col).padding([18, 20]).into())
+    row![input, send]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
 }
 
-fn message_bubble<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<'a, Message> {
+fn message_view<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<'a, Message> {
     let t = app.tokens;
-    let content = mask(app, &m.content);
     match m.role {
         MessageRole::User => {
-            let bubble = container(text(content).size(14).color(t.text))
+            let bubble = container(text(mask(app, &m.content)).size(14).color(t.text))
                 .padding([8, 12])
-                .max_width(520)
+                .max_width(300)
                 .style(theme::fill(t.surface_2, 10.0));
             // Pergunta sem resposta e sem nada em andamento (a abertura nao saiu, ou o envio
             // morreu antes do erro virar mensagem): sem este botao a conversa ficaria parada.
@@ -275,33 +567,274 @@ fn message_bubble<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Elemen
         }
         MessageRole::Assistant => {
             let notes = reply_notes(m);
-            row![
-                column![
-                    container(text(content).size(14).color(t.text))
-                        .padding([8, 12])
-                        .style(theme::outlined(t.divider(), 10.0)),
-                    text(notes.join(" · ")).size(11).color(t.text_muted),
+            let copied = app.is_copied(CopyTarget::Reply)
+                && app.copied_reply.as_deref() == Some(m.id.as_str());
+            column![
+                reply_body(app, m),
+                row![
+                    text(notes.join(" · "))
+                        .size(11)
+                        .color(t.text_muted)
+                        .width(Length::Fill),
+                    widgets::copy_button(t, copied, Some(Message::CopyReply(m.id.clone()))),
                 ]
-                .spacing(4)
-                .max_width(560),
-                Space::new().width(Length::Fill),
+                .spacing(8)
+                .align_y(Alignment::Center),
             ]
+            .spacing(6)
+            .max_width(REPLY_MAX)
             .into()
         }
         MessageRole::Error => {
-            let mut body = column![text(content).size(14).color(t.expense_fg)].spacing(8);
+            let mut body =
+                column![text(mask(app, &m.content)).size(14).color(t.expense_fg)].spacing(8);
             if is_last {
                 body = body.push(retry_button(t));
             }
-            row![
-                container(body)
-                    .padding([8, 12])
-                    .max_width(560)
-                    .style(theme::outlined(theme::alpha(t.expense, 0.55), 10.0)),
-                Space::new().width(Length::Fill),
-            ]
-            .into()
+            container(body)
+                .padding([8, 12])
+                .max_width(REPLY_MAX)
+                .style(theme::outlined(theme::alpha(t.expense, 0.55), 10.0))
+                .into()
         }
+    }
+}
+
+/// O corpo da resposta: o Markdown ja interpretado do cache (`App::replies`), ou o texto puro.
+/// O cache so vale para o mesmo texto e o mesmo estado do olho: um cache montado com os valores
+/// a mostra nunca e desenhado com "Ocultar valores" ligado.
+fn reply_body<'a>(app: &'a App, m: &'a MessageView) -> Element<'a, Message> {
+    let t = app.tokens;
+    let fallback = || -> Element<'a, Message> {
+        text(mask(app, &m.content))
+            .size(14)
+            .line_height(1.5)
+            .color(t.text)
+            .into()
+    };
+    let Some(cached) = app
+        .replies
+        .get(&m.id)
+        .filter(|c| c.hidden == app.hide_values && c.content == m.content)
+    else {
+        return fallback();
+    };
+    match &cached.shown {
+        ReplyShown::Markdown(items) => container(markdown::view_with(
+            items,
+            markdown_settings(t),
+            &ReplyViewer { t },
+        ))
+        .style(move |_| container::Style {
+            text_color: Some(t.text),
+            ..container::Style::default()
+        })
+        .into(),
+        ReplyShown::Plain(s) => text(s.as_str())
+            .size(14)
+            .line_height(1.5)
+            .color(t.text)
+            .into(),
+    }
+}
+
+/// Resposta chegando: texto puro (mascarado). O Markdown so entra quando ela termina: um numero
+/// cortado entre dois pedacos nao seria reconhecido pela mascara num parse incremental.
+fn streaming_view<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> {
+    let t = app.tokens;
+    let shown = if partial.is_empty() {
+        Cow::Borrowed("…")
+    } else {
+        mask(app, partial)
+    };
+    column![
+        text(shown).size(14).line_height(1.5).color(t.text),
+        widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Parar")
+            .on_press(Message::ChatStop),
+    ]
+    .spacing(8)
+    .max_width(REPLY_MAX)
+    .into()
+}
+
+// ---- Markdown da resposta ----
+
+/// Como a resposta aparece: Markdown interpretado ou, quando a mascara nao pode garantir o
+/// Markdown, o texto puro ja mascarado.
+pub(super) enum ReplyShown {
+    Markdown(Vec<markdown::Item>),
+    Plain(String),
+}
+
+/// Resposta pronta para desenhar, guardada em `App::replies` pelo id da mensagem. `hidden` e
+/// `content` sao a chave de validade: o `view` so usa o cache se os dois baterem com agora.
+pub(super) struct CachedReply {
+    pub hidden: bool,
+    pub content: String,
+    pub shown: ReplyShown,
+    /// O que "Copiar" leva: o texto da resposta, mascarado com o olho ligado (coerente com a
+    /// tela: quem esconde os valores nao os quer colados num chat ou num e-mail).
+    pub copy: String,
+}
+
+/// Monta a resposta. Com os valores a mostra, e o Markdown da resposta.
+///
+/// Com "Ocultar valores", a mascara e aplicada ao texto **antes** do parse, e o resultado e
+/// conferido **depois**: o texto desenhado precisa ser exatamente a mascara do texto que o
+/// Markdown original desenharia. Isso pega o que o parse remonta e a mascara do fonte nao ve
+/// ("1.**234**,56", "1\.234,56", "&#49;.234,56"); nesses casos sai o texto puro, mascarado depois
+/// de interpretado. Tabela nao pode ser conferida (o iced nao expoe as celulas): sai em texto
+/// puro, sem as marcas de enfase.
+pub(super) fn render_reply(content: &str, hidden: bool) -> CachedReply {
+    let cached = |shown, copy| CachedReply {
+        hidden,
+        content: content.to_string(),
+        shown,
+        copy,
+    };
+    if !hidden {
+        return cached(
+            ReplyShown::Markdown(markdown::parse(content).collect()),
+            content.to_string(),
+        );
+    }
+    let raw: Vec<markdown::Item> = markdown::parse(content).collect();
+    let source = mask_str(content);
+    let masked: Vec<markdown::Item> = markdown::parse(&source).collect();
+    match (rendered_text(&raw), rendered_text(&masked)) {
+        (Some(raw_text), Some(masked_text)) => {
+            let expected = mask_str(&raw_text);
+            if masked_text == expected {
+                cached(ReplyShown::Markdown(masked), source)
+            } else {
+                cached(ReplyShown::Plain(expected.clone()), expected)
+            }
+        }
+        _ => {
+            let plain = mask_str(&content.replace(['*', '_', '`'], ""));
+            cached(ReplyShown::Plain(plain.clone()), plain)
+        }
+    }
+}
+
+/// O texto que o Markdown desenha, bloco por bloco. `None` com tabela (celulas privadas no iced).
+pub(super) fn rendered_text(items: &[markdown::Item]) -> Option<String> {
+    let style = markdown::Style::from_palette(iced::theme::Palette::DARK);
+    let mut out = String::new();
+    for item in items {
+        push_item(item, style, &mut out)?;
+    }
+    Some(out)
+}
+
+fn push_text(text: &markdown::Text, style: markdown::Style, out: &mut String) {
+    for span in text.spans(style).iter() {
+        out.push_str(&span.text);
+    }
+    out.push('\n');
+}
+
+fn push_item(item: &markdown::Item, style: markdown::Style, out: &mut String) -> Option<()> {
+    match item {
+        markdown::Item::Heading(_, text) | markdown::Item::Paragraph(text) => {
+            push_text(text, style, out);
+        }
+        markdown::Item::CodeBlock { lines, .. } => {
+            for line in lines {
+                push_text(line, style, out);
+            }
+        }
+        markdown::Item::List { bullets, .. } => {
+            for bullet in bullets {
+                let (markdown::Bullet::Point { items } | markdown::Bullet::Task { items, .. }) =
+                    bullet;
+                for item in items {
+                    push_item(item, style, out)?;
+                }
+            }
+        }
+        markdown::Item::Image { alt, .. } => push_text(alt, style, out),
+        markdown::Item::Quote(items) => {
+            for item in items {
+                push_item(item, style, out)?;
+            }
+        }
+        markdown::Item::Rule => {}
+        markdown::Item::Table { .. } => return None,
+    }
+    Some(())
+}
+
+/// Corpo 14 em Inter Hub; titulos contidos (o padrao do iced faz o h1 com o dobro do corpo, alto
+/// demais num painel de 400) e codigo na mesma fonte, a 12: o app nao embute monoespacada.
+fn markdown_settings(t: &'static Tokens) -> markdown::Settings {
+    let style = markdown::Style {
+        font: fonts::INTER,
+        inline_code_highlight: markdown::Highlight {
+            background: t.surface_2.into(),
+            border: iced::border::rounded(4),
+        },
+        inline_code_padding: Padding::from([0, 3]),
+        inline_code_color: t.text,
+        inline_code_font: fonts::INTER,
+        code_block_font: fonts::INTER,
+        // Link nao abre (a UI so abre URL constante): na cor de apoio, sem cara de botao.
+        link_color: t.text_soft(),
+    };
+    markdown::Settings {
+        h1_size: 18.into(),
+        h2_size: 16.into(),
+        h3_size: 15.into(),
+        h4_size: 14.into(),
+        h5_size: 14.into(),
+        h6_size: 14.into(),
+        code_size: 12.into(),
+        spacing: 10.into(),
+        ..markdown::Settings::with_text_size(14, style)
+    }
+}
+
+/// Desenho do Markdown da resposta: link nao faz nada (`Noop`), codigo numa caixa interna e
+/// imagem so com o texto alternativo (nada e baixado).
+struct ReplyViewer {
+    t: &'static Tokens,
+}
+
+impl<'a> markdown::Viewer<'a, Message> for ReplyViewer {
+    fn on_link_click(_url: markdown::Uri) -> Message {
+        Message::Noop
+    }
+
+    fn image(
+        &self,
+        settings: markdown::Settings,
+        _url: &'a markdown::Uri,
+        _title: &'a str,
+        alt: &markdown::Text,
+    ) -> Element<'a, Message> {
+        rich_text(alt.spans(settings.style))
+            .size(settings.text_size)
+            .into()
+    }
+
+    fn code_block(
+        &self,
+        settings: markdown::Settings,
+        _language: Option<&'a str>,
+        _code: &'a str,
+        lines: &'a [markdown::Text],
+    ) -> Element<'a, Message> {
+        widgets::inset(
+            self.t,
+            column(lines.iter().map(|line| {
+                rich_text(line.spans(settings.style))
+                    .size(settings.code_size)
+                    .font(settings.style.code_block_font)
+                    .into()
+            })),
+        )
+        .padding(10)
+        .into()
     }
 }
 
@@ -398,10 +931,10 @@ fn preview_intro(open: &OpenConversation) -> &'static str {
     }
 }
 
-/// O card que toma o lugar do campo de pergunta enquanto a conversa de nuvem espera aprovacao:
-/// o envelope **desta conversa** (o que de fato vai; o `Resend` do nucleo le o mesmo texto),
-/// o modelo, a politica, e "Enviar"/"Cancelar". Na tela o texto segue o "Ocultar valores"; o
-/// que sai nunca e mascarado.
+/// A previa que toma o lugar do campo de pergunta enquanto a conversa de nuvem espera
+/// aprovacao: o envelope **desta conversa** (o que de fato vai; o `Resend` do nucleo le o mesmo
+/// texto), o modelo, a politica, e "Enviar"/"Cancelar". Na tela o texto segue o "Ocultar
+/// valores"; o que sai nunca e mascarado.
 fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, Message> {
     let t = app.tokens;
     let cloud = &app.snapshot.assistant.settings.cloud;
@@ -415,13 +948,13 @@ fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, 
             .font(fonts::INTER)
             .color(t.text),
     );
-    // Caixa interna, nao card: ela ja mora num card. O `padding(4)` mantem o cursor da rolagem
-    // longe do canto arredondado (o texto continua a 12 px: 4 + 8).
+    // O `padding(4)` mantem o cursor da rolagem longe do canto arredondado (o texto continua a
+    // 12 px: 4 + 8).
     let envelope = widgets::inset(
         t,
         scrollable(container(body).padding(8).width(Length::Fill)).style(theme::scrollbar(t)),
     )
-    .height(220)
+    .height(180)
     .padding(4);
     let actions = row![
         Space::new().width(Length::Fill),
@@ -435,7 +968,7 @@ fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, 
     column![
         text(PREVIEW_TITLE)
             .size(15)
-            .font(fonts::INTER_SEMIBOLD)
+            .font(fonts::INTER_MEDIUM)
             .color(t.text),
         text(preview_intro(open))
             .size(13)
@@ -467,30 +1000,6 @@ fn retry_button(t: &'static Tokens) -> Element<'static, Message> {
     .into()
 }
 
-fn streaming_bubble<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> {
-    let t = app.tokens;
-    let shown = if partial.is_empty() {
-        Cow::Borrowed("…")
-    } else {
-        mask(app, partial)
-    };
-    row![
-        container(
-            column![
-                text(shown).size(14).color(t.text),
-                widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Parar")
-                    .on_press(Message::ChatStop),
-            ]
-            .spacing(8)
-        )
-        .padding([8, 12])
-        .max_width(560)
-        .style(theme::outlined(t.divider(), 10.0)),
-        Space::new().width(Length::Fill),
-    ]
-    .into()
-}
-
 /// Rotulo do botao "Apagar todas" conforme esteja armado ou nao.
 pub(super) fn delete_all_label(armed: bool) -> &'static str {
     if armed {
@@ -500,7 +1009,8 @@ pub(super) fn delete_all_label(armed: bool) -> &'static str {
     }
 }
 
-/// Conversas da conta que a tela mostra, com abrir e apagar em cada uma.
+/// Conversas anteriores da conta que a tela mostra, com data e hora (todas se chamam "Análise
+/// de <mês>"), abrir e apagar com "Desfazer".
 fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
     let t = app.tokens;
     let items = conversations_of_book(app);
@@ -516,31 +1026,18 @@ fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
     let delete_all =
         widgets::action_button(t, delete_kind, ButtonSize::Compact, delete_all_label(armed))
             .on_press(Message::DeleteAllConversations);
-    let open_id = open_conversation(app).map(|c| c.id.as_str());
     let mut col = column![
         row![
-            widgets::kicker(t, "Conversas"),
+            widgets::kicker(t, "Conversas anteriores"),
             Space::new().width(Length::Fill),
             delete_all,
         ]
         .align_y(Alignment::Center)
     ]
-    .spacing(8)
+    .spacing(6)
     .width(Length::Fill);
     for c in items {
-        let is_open = open_id == Some(c.id.as_str());
-        // Todas se chamam "Analise de <mes>": a data e a hora e que distinguem uma da outra.
-        let mut label = column![
-            text(c.title.as_str())
-                .size(14)
-                .font(if is_open {
-                    fonts::INTER_SEMIBOLD
-                } else {
-                    fonts::INTER
-                })
-                .color(if is_open { t.accent_300 } else { t.text }),
-        ]
-        .spacing(2);
+        let mut label = column![text(c.title.as_str()).size(14).color(t.text)].spacing(2);
         if let Some(when) = time::date_time(&c.created_at, app.offset) {
             label = label.push(text(when).size(12).color(t.text_muted));
         }
@@ -561,7 +1058,7 @@ fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
             Some(size::ROW_RICH),
         ));
     }
-    Some(widgets::card(t, col).padding([18, 20]).into())
+    Some(col.into())
 }
 
 /// O texto da prévia como aparece na tela: com "Ocultar valores" ligado cada R$ vira a máscara
@@ -614,39 +1111,6 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
         Some(height),
         Message::CloseEnvelope,
     ))
-}
-
-fn severity_color(t: &'static Tokens, s: Severity) -> Color {
-    match s {
-        Severity::Alert => t.expense,
-        Severity::Attention => t.warning,
-        Severity::GoodSign => t.income,
-    }
-}
-
-fn finding_card<'a>(app: &'a App, f: &'a Finding) -> Element<'a, Message> {
-    let t = app.tokens;
-    let tag = row![
-        widgets::dot(severity_color(t, f.severity), 8.0),
-        text(f.severity.label()).size(12).color(t.text_muted),
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
-    let mut body = column![
-        tag,
-        text(mask(app, &f.title))
-            .size(16)
-            .font(fonts::INTER_SEMIBOLD)
-            .color(t.text),
-        text(mask(app, &f.detail)).size(14).color(t.text_muted),
-    ]
-    .spacing(6);
-    if let Some(action) = &f.action {
-        body = body
-            .push(Space::new().height(4))
-            .push(text(mask(app, action)).size(14).color(t.text_accent()));
-    }
-    widgets::card(t, body).padding([18, 20]).into()
 }
 
 /// "Ocultar valores": os textos dos achados trazem o dinheiro ja formatado ("R$ 1.234,56"),
@@ -1059,7 +1523,7 @@ mod tests {
             assert!(!text.contains("Toque"), "{text:?}");
         }
         assert!(MODELS_NOT_LISTED.starts_with("Clique em Atualizar modelos"));
-        assert!(ASSISTANT_OFF.contains("achados abaixo"));
+        assert!(ASSISTANT_OFF.contains("achados ao lado"));
         assert!(NO_MODELS_HINT.contains("ollama pull llama3.1:8b no terminal"));
         assert_eq!(PREVIEW_SEND, "Enviar ao OpenRouter");
     }
@@ -1068,6 +1532,149 @@ mod tests {
     fn texto_da_previa_nao_tem_espaco_duplo() {
         assert!(!INTRO.contains("  "), "{INTRO:?}");
         assert!(INTRO.contains("sem lançamentos, descrições"));
+    }
+
+    #[test]
+    fn linha_resumo_conta_por_gravidade_no_singular_e_no_plural() {
+        use crate::advisor::FindingKind;
+        let f = |severity| Finding {
+            kind: FindingKind::Pace,
+            severity,
+            title: String::new(),
+            detail: String::new(),
+            action: None,
+            figures: Vec::new(),
+            impact_minor: 0,
+        };
+        let many = vec![
+            f(Severity::Alert),
+            f(Severity::Alert),
+            f(Severity::Attention),
+            f(Severity::Attention),
+            f(Severity::Attention),
+            f(Severity::GoodSign),
+        ];
+        assert_eq!(
+            summary_line(&many),
+            "2 alertas, 3 atenções, 1 bom sinal. Calculado no seu PC."
+        );
+        let few = vec![
+            f(Severity::Attention),
+            f(Severity::GoodSign),
+            f(Severity::GoodSign),
+        ];
+        assert_eq!(
+            summary_line(&few),
+            "1 atenção, 2 bons sinais. Calculado no seu PC."
+        );
+        assert_eq!(summary_line(&[]), "Nada a apontar. Calculado no seu PC.");
+    }
+
+    #[test]
+    fn dois_paineis_contra_o_segmentado_em_728() {
+        use crate::ui::app::tests::app_with_fixtures;
+        use crate::ui::app::{AnalysisTab, Screen, update};
+        // 1024 de janela = 728 de largura util: segmentado. 1440 = 1144: dois paineis.
+        assert!(!two_panels(728.0));
+        assert!(two_panels(1144.0));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        app.window_size.width = 1024.0;
+        assert_eq!(shell::content_width(&app), 728.0);
+        assert!(!two_panels(shell::content_width(&app)));
+        assert_eq!(app.analysis_tab, AnalysisTab::Findings);
+        for tab in [AnalysisTab::Chat, AnalysisTab::Findings] {
+            let _ = update(&mut app, Message::AnalysisTab(tab));
+            assert_eq!(app.analysis_tab, tab);
+            let _ = shell::root(&app);
+        }
+        // Abrir uma conversa leva ao painel da conversa.
+        let _ = update(&mut app, Message::OpenConversation("C1".into()));
+        assert_eq!(app.analysis_tab, AnalysisTab::Chat);
+        app.window_size.width = 1440.0;
+        assert!(two_panels(shell::content_width(&app)));
+        let _ = shell::root(&app);
+    }
+
+    /// Respostas com dinheiro em Markdown: o que a tela desenha (texto dos itens, ou o texto
+    /// puro de reserva) nunca deixa valor, nem quando a marcacao corta o numero.
+    #[test]
+    fn markdown_mascarado_nao_vaza_valor() {
+        use crate::dashboard::money::leaks;
+        let cases = [
+            "**Mercado:** R$ 1.234,56 em novembro.",
+            "1. Delivery: *R$ 612,00*\n2. Mercado: `R$ 980,10`\n",
+            "# Resumo\n\n- saldo -R$ 3,00\n- meta de 5.500,00\n\n> sobram 1.500 reais",
+            "Valor 1.**234**,56 com enfase no meio.",
+            "Escapado 1\\.234,56 no texto.",
+            "Entidade &#49;.234,56 no texto.",
+            "```\ntotal R$ 9.876,54\n```",
+            "[R$ 10,00](https://exemplo.invalid) de link e ![R$ 20,00](img.png)",
+            "| Categoria | Valor |\n|---|---|\n| Mercado | R$ 1.**234**,56 |",
+        ];
+        for case in cases {
+            let r = render_reply(case, true);
+            let shown = match &r.shown {
+                ReplyShown::Markdown(items) => rendered_text(items).expect("sem tabela"),
+                ReplyShown::Plain(s) => s.clone(),
+            };
+            assert_eq!(leaks(&shown), None, "{case:?} -> {shown:?}");
+            assert_eq!(mask_str(&shown), shown, "{case:?} -> {shown:?}");
+            assert_eq!(leaks(&r.copy), None, "copia: {case:?} -> {:?}", r.copy);
+            assert_eq!(mask_str(&r.copy), r.copy, "copia: {case:?}");
+        }
+        // Os casos comuns continuam em Markdown; os tortos caem no texto puro.
+        assert!(matches!(
+            render_reply("**Mercado:** R$ 1.234,56", true).shown,
+            ReplyShown::Markdown(_)
+        ));
+        assert!(matches!(
+            render_reply("Valor 1.**234**,56", true).shown,
+            ReplyShown::Plain(_)
+        ));
+        // Com os valores a mostra e o Markdown da resposta, e a copia e o texto inteiro.
+        let shown = render_reply("**R$ 1.234,56**", false);
+        assert!(matches!(shown.shown, ReplyShown::Markdown(_)));
+        assert_eq!(shown.copy, "**R$ 1.234,56**");
+    }
+
+    #[test]
+    fn copiar_a_resposta_leva_o_texto_mascarado_com_o_olho_ligado() {
+        use crate::assistant::view::MessageRole;
+        use crate::ui::app::tests::app_with_fixtures;
+        use crate::ui::app::{Screen, update};
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        let mut reply = msg(MessageRole::Assistant, None);
+        reply.id = "R1".into();
+        reply.content = "Gastou **R$ 1.234,56** no mercado.".into();
+        let mut open = conversation_with(vec![msg(MessageRole::User, None), reply]);
+        open.book = app.book;
+        let mut snapshot = app.snapshot.clone();
+        snapshot.assistant.open = Some(open);
+        let _ = update(&mut app, Message::Snapshot(Box::new(snapshot)));
+
+        app.hide_values = false;
+        app.refresh_replies();
+        assert_eq!(app.replies["R1"].copy, "Gastou **R$ 1.234,56** no mercado.");
+        let _ = update(&mut app, Message::ToggleHideValues);
+        assert!(app.hide_values);
+        // A troca do olho refaz o cache: nada montado com os valores a mostra fica valendo.
+        let cached = &app.replies["R1"];
+        assert!(cached.hidden);
+        assert_eq!(cached.copy, format!("Gastou **{MASK}** no mercado."));
+        let task = update(&mut app, Message::CopyReply("R1".into()));
+        assert_eq!(task.units(), 2);
+        assert!(app.is_copied(CopyTarget::Reply));
+        assert_eq!(app.copied_reply.as_deref(), Some("R1"));
+        let _ = view(&app);
+        // Mensagem que nao esta na conversa aberta: nada a copiar.
+        app.copied = None;
+        let task = update(&mut app, Message::CopyReply("X".into()));
+        assert_eq!(task.units(), 0);
+        assert!(!app.is_copied(CopyTarget::Reply));
     }
 
     #[test]

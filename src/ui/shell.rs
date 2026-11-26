@@ -751,7 +751,8 @@ fn content(app: &App) -> Element<'_, Message> {
     let page = page.push(body);
     let scroll: Element<'_, Message> = if owns_scroll(app) {
         // A tela tem rolagem propria (Lancamentos: filtros, resumo e cabecalho da tabela fixos,
-        // so as linhas rolam). Aqui ela so ganha o respiro e a altura que sobra; a rolagem dela
+        // so as linhas rolam; Analise: os achados com `CONTENT_SCROLL` e a conversa com o seu
+        // id). Aqui ela so ganha o respiro e a altura que sobra; a rolagem dela
         // usa o mesmo `CONTENT_SCROLL`, entao o `snap_to` da troca de tela continua valendo. A
         // roda do mouse so rola sobre as linhas (nao mais sobre as margens), e o respiro de baixo
         // e 32 (a margem da pagina) e nao os 40 da rolagem geral: aqui ele nao e fim de rolagem,
@@ -797,10 +798,11 @@ fn content(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-/// A tela atual gerencia a propria rolagem? So Lancamentos (B7), e so quando aparece de fato:
-/// com o hub em erro o card de falha entra no lugar e volta a rolagem geral.
+/// A tela atual gerencia a propria rolagem? Lancamentos (B7: so as linhas rolam) e Analise
+/// (8.5: cada painel com a sua), e so quando aparecem de fato: com o hub em erro o card de falha
+/// entra no lugar e volta a rolagem geral.
 pub(super) fn owns_scroll(app: &App) -> bool {
-    app.screen == Screen::Transactions && failure(app).is_none()
+    matches!(app.screen, Screen::Transactions | Screen::Analysis) && failure(app).is_none()
 }
 
 /// Largura util do conteudo (sem a lateral e o padding de 32 + 32; a divisoria vertical saiu
@@ -987,10 +989,7 @@ pub(super) fn titles(app: &App) -> (&str, String) {
                 RESERVES_QUESTION.into()
             },
         ),
-        Screen::Analysis => (
-            "Análise",
-            "Onde dá para melhorar · calculado no seu PC".into(),
-        ),
+        Screen::Analysis => ("Análise", analysis_view::QUESTION.into()),
         Screen::Connection => ("Aparelhos", "Quem sincroniza com esta casa?".into()),
         Screen::Settings => ("Ajustes", "Preferências deste computador".into()),
     }
@@ -1406,14 +1405,14 @@ mod tests {
     }
 
     #[test]
-    fn so_lancamentos_rola_por_conta_propria_e_o_erro_devolve_a_rolagem_geral() {
+    fn lancamentos_e_analise_rolam_por_conta_propria_e_o_erro_devolve_a_rolagem_geral() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
         for screen in nav_entries(&app).map(|e| e.screen) {
             app.screen = screen;
             assert_eq!(
                 owns_scroll(&app),
-                screen == Screen::Transactions,
+                matches!(screen, Screen::Transactions | Screen::Analysis),
                 "{screen:?}"
             );
             let _ = root(&app);

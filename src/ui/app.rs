@@ -122,6 +122,17 @@ pub enum CopyTarget {
     LogsDir,
     /// Fallback quando o navegador nao abre: a URL das releases com "Copiar".
     ReleasesUrl,
+    /// "Copiar" de uma resposta do assistente; qual delas fica em `App::copied_reply`. Nao
+    /// passa por `Message::Copy` (o texto depende da mensagem): sai por `CopyReply`.
+    Reply,
+}
+
+/// Painel visivel da Analise na janela estreita (segmentado [Achados | Conversa]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AnalysisTab {
+    #[default]
+    Findings,
+    Chat,
 }
 
 /// Foto decodificada e o data URI de onde veio: so decodifica de novo quando o URI muda.
@@ -263,6 +274,14 @@ pub struct App {
     pub(super) hide_values: bool,
     /// Texto digitado no chat da Analise.
     pub(super) chat_input: String,
+    /// Painel da Analise no segmentado da janela estreita.
+    pub(super) analysis_tab: AnalysisTab,
+    /// Respostas do assistente ja interpretadas (Markdown), pelo id da mensagem. O `view` so le
+    /// (o Markdown do iced desenha a partir de itens que precisam viver fora dele); quem monta
+    /// e `refresh_replies`, a cada snapshot e a cada troca do olho.
+    pub(super) replies: HashMap<String, super::analysis_view::CachedReply>,
+    /// A resposta cujo "Copiar" virou "Copiado" (`CopyTarget::Reply`).
+    pub(super) copied_reply: Option<String>,
     /// Painel "Configurar assistente" aberto.
     pub(super) assistant_settings_open: bool,
     /// O que esta no campo "Porta": so digitos, ate 5. Pode estar invalido (vazio, 0, 70000)
@@ -358,6 +377,10 @@ pub enum Message {
     SetAutostart(bool),
     Copy(CopyTarget),
     CopyExpired,
+    /// "Copiar" de uma resposta do assistente (id da mensagem).
+    CopyReply(String),
+    /// Segmentado [Achados | Conversa] da Analise na janela estreita.
+    AnalysisTab(AnalysisTab),
     /// "Versoes no GitHub" de Ajustes > Sobre.
     OpenReleases,
     HoverRow(String),
@@ -502,6 +525,9 @@ impl App {
             autostart_failed: false,
             hide_values: prefs.hide_values,
             chat_input: String::new(),
+            analysis_tab: AnalysisTab::Findings,
+            replies: HashMap::new(),
+            copied_reply: None,
             assistant_settings_open: false,
             port_input: snapshot_port,
             model_input: snapshot_model,
@@ -518,7 +544,41 @@ impl App {
         app.refresh_people();
         app.sync_tooltip();
         app.set_today(local_today(offset));
+        app.refresh_replies();
         app
+    }
+
+    /// Interpreta as respostas da conversa aberta que ainda nao estao no cache (ou que mudaram
+    /// de texto, ou de olho) e esquece as de conversas que sairam da tela. So o que muda e
+    /// refeito: o parse do Markdown nao roda a cada quadro.
+    pub(super) fn refresh_replies(&mut self) {
+        let hidden = self.hide_values;
+        let Some(open) = self.snapshot.assistant.open.as_ref() else {
+            self.replies.clear();
+            return;
+        };
+        let current: HashSet<&str> = open
+            .messages
+            .iter()
+            .filter(|m| m.role == crate::assistant::view::MessageRole::Assistant)
+            .map(|m| m.id.as_str())
+            .collect();
+        self.replies.retain(|id, _| current.contains(id.as_str()));
+        for m in &open.messages {
+            if m.role != crate::assistant::view::MessageRole::Assistant {
+                continue;
+            }
+            let fresh = self
+                .replies
+                .get(&m.id)
+                .is_some_and(|c| c.hidden == hidden && c.content == m.content);
+            if !fresh {
+                self.replies.insert(
+                    m.id.clone(),
+                    super::analysis_view::render_reply(&m.content, hidden),
+                );
+            }
+        }
     }
 
     /// O que vai para o `ui.json`. Toda gravacao leva o arquivo inteiro: montar `UiPrefs` campo
@@ -1032,6 +1092,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             }
             app.snapshot = *s;
             app.resync_drafts();
+            app.refresh_replies();
             if people_changed {
                 app.refresh_people();
                 app.rebuild();
@@ -1309,6 +1370,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
         Message::ToggleHideValues => {
             app.hide_values = !app.hide_values;
             app.rebuild_valued();
+            app.refresh_replies();
             // Os rotulos em R$ dos graficos estao gravados na geometria em cache.
             app.clear_charts();
             Task::perform(save_prefs(app.prefs(), app.prefs_dir.clone()), |_| {
@@ -1378,6 +1440,8 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                         .to_string(),
                 ),
                 CopyTarget::ReleasesUrl => Some(config::RELEASES_URL.to_string()),
+                // Sai por `CopyReply`, que sabe qual resposta.
+                CopyTarget::Reply => None,
             };
             let Some(text) = text else {
                 return Task::none();
@@ -1398,6 +1462,33 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 tracing::warn!("nao foi possivel abrir o navegador: {err}");
                 app.releases_open_failed = true;
             }
+            Task::none()
+        }
+        Message::CopyReply(id) => {
+            let Some(m) = super::analysis_view::open_conversation(app)
+                .and_then(|o| o.messages.iter().find(|m| m.id == id))
+            else {
+                return Task::none();
+            };
+            // O mesmo texto da tela: mascarado com o olho ligado (decisao registrada em
+            // `CachedReply::copy`). Sem cache valido, monta na hora pelo mesmo caminho.
+            let copy = match app
+                .replies
+                .get(&id)
+                .filter(|c| c.hidden == app.hide_values && c.content == m.content)
+            {
+                Some(c) => c.copy.clone(),
+                None => super::analysis_view::render_reply(&m.content, app.hide_values).copy,
+            };
+            app.copied = Some((CopyTarget::Reply, Instant::now() + COPIED_FOR));
+            app.copied_reply = Some(id);
+            Task::batch([
+                iced::clipboard::write(copy),
+                Task::perform(delay(COPIED_FOR), |_| Message::CopyExpired),
+            ])
+        }
+        Message::AnalysisTab(tab) => {
+            app.analysis_tab = tab;
             Task::none()
         }
         Message::CopyExpired => {
@@ -1570,6 +1661,8 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 return Task::none();
             };
             app.chat_input.clear();
+            // Na janela estreita a conversa nova fica a vista, e nao atras do segmentado.
+            app.analysis_tab = AnalysisTab::Chat;
             let title = format!("Análise de {}", month_label(&app.analysis.month));
             // O envelope sai inteiro, nunca o mascarado: "Ocultar valores" e so de quem olha.
             let envelope = app.current_envelope();
@@ -1621,6 +1714,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::OpenConversation(id) => {
+            app.analysis_tab = AnalysisTab::Chat;
             send_assistant(app, AssistantCommand::Open(id));
             Task::none()
         }

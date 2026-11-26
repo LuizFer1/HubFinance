@@ -15,9 +15,9 @@ use crate::assistant::settings::ProviderChoice;
 /// Dica da lista vazia; constante para o teste conferir o texto.
 pub(super) const NO_MODELS_HINT: &str = "Nenhum modelo instalado. Rode ollama pull llama3.1:8b no terminal e clique em Atualizar modelos.";
 
-/// Com o assistente desligado. O painel fica acima dos achados, entao eles estao "abaixo".
+/// Com o assistente desligado. O painel fica ao lado dos achados (8.5), entao eles estao "ao lado".
 pub(super) const ASSISTANT_OFF: &str =
-    "O assistente está desligado. Os achados abaixo continuam valendo.";
+    "O assistente está desligado. Os achados ao lado continuam valendo.";
 
 /// Antes da primeira listagem. "Clique", e nao "Toque": o hub e programa de mesa.
 pub(super) const MODELS_NOT_LISTED: &str =

@@ -20,6 +20,7 @@ use super::charts::{
     PACE_HEIGHT, PaceProgram, SwatchProgram,
 };
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
+use super::widgets::TagTone;
 use super::{fonts, icons, shell, time, widgets};
 use crate::dashboard::grafite::{
     BusinessBlock, EmergencyBlock, HistoryBody, Line, Section, Tone, UpcomingLine,
@@ -331,18 +332,6 @@ fn info<'a>(t: &'static Tokens, tip: &str) -> Element<'a, Message> {
     .into()
 }
 
-/// Pilula de 11 px ("hoje", "Mensal", "↑ 38% do normal").
-fn pill<'a>(label: &str, color: Color, bg: Color, padding: [u16; 2]) -> Element<'a, Message> {
-    container(txt(label.to_string(), 11.0, color).wrapping(Wrapping::None))
-        .padding(padding)
-        .style(theme::fill(bg, 999.0))
-        .into()
-}
-
-fn today_chip<'a>(t: &'static Tokens, label: &str) -> Element<'a, Message> {
-    pill(label, t.accent_300, t.accent_900, [3, 9])
-}
-
 /// Quadrado/circulo de cor da legenda.
 fn swatch<'a>(color: Color, size: f32, radius: f32) -> Element<'a, Message> {
     container(Space::new())
@@ -546,7 +535,7 @@ fn business_capital<'a>(t: &'static Tokens, b: &BusinessBlock) -> Element<'a, Me
     let mut col = column![
         row![
             txt(b.capital_title.clone(), 13.0, t.text_muted).width(Length::Fill),
-            today_chip(t, &b.today_chip),
+            widgets::tag(t, TagTone::Accent, &b.today_chip),
         ]
         .align_y(Alignment::Center)
     ]
@@ -853,7 +842,7 @@ fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
             let mut col = column![
                 row![
                     txt(e.title.clone(), 13.0, t.text_muted).width(Length::Fill),
-                    today_chip(t, &e.chip),
+                    widgets::tag(t, TagTone::Accent, &e.chip),
                 ]
                 .align_y(Alignment::Center),
                 big_value(
@@ -1254,7 +1243,7 @@ fn category_row<'a>(t: &'static Tokens, r: CategoryRow<'a, '_>) -> Element<'a, M
         .spacing(10)
         .align_y(Alignment::Center);
     if let Some(chip) = r.above_normal {
-        name = name.push(pill(chip, t.text, t.divider(), [2, 8]));
+        name = name.push(widgets::tag(t, TagTone::Neutral, chip));
     }
     let token = (!r.color.is_empty()).then_some(r.color);
     container(
@@ -1507,11 +1496,11 @@ fn recent(app: &App) -> Element<'_, Message> {
             .spacing(8)
             .align_y(Alignment::Center);
         if let Some(chip) = &l.chip {
-            title = title.push(pill(chip, t.accent_300, t.accent_900, [2, 8]));
+            title = title.push(widgets::tag(t, TagTone::Accent, chip));
         }
         if let Some(tag) = &l.tag {
             // `text_soft`: o `text_muted` sobre o divisor fica abaixo de 4,5:1 no claro.
-            title = title.push(pill(tag, t.text_soft(), t.divider(), [2, 8]));
+            title = title.push(widgets::tag(t, TagTone::Neutral, tag));
         }
         let mut meta = row![].spacing(6).align_y(Alignment::Center);
         if let Some(dot) = &l.dot {

@@ -13,7 +13,7 @@ use iced::{Alignment, Color, Element, Length, Padding};
 use super::app::{App, Message};
 use super::rows::{author_cell, category_tile, hover_row, value_cell};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, alpha, mix};
-use super::widgets::{ChipShape, SegmentedVariant};
+use super::widgets::{ChipShape, SegmentedVariant, TagTone};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::list::{
     ALL_CATEGORIES_COLOR, CategoryOption, Filters, ListRow, NONE_KEY, TypeFilter,
@@ -404,42 +404,6 @@ fn table(app: &App) -> Element<'_, Message> {
     widgets::card(t, col).padding(1).clip(true).into()
 }
 
-/// Tag de lancamento que nao conta nas somas ("Transferência", "Oculto").
-fn state_tag<'a>(t: &'static Tokens, label: &str) -> Element<'a, Message> {
-    container(
-        text(label.to_string())
-            .size(11)
-            .font(fonts::INTER_MEDIUM)
-            .line_height(1.0)
-            .color(t.text_soft()),
-    )
-    .height(20)
-    .padding([0, 7])
-    .align_y(Alignment::Center)
-    .style(theme::fill(t.neutral_800, 999.0))
-    .into()
-}
-
-fn recurrence_tag<'a>(t: &'static Tokens, label: &str) -> Element<'a, Message> {
-    container(
-        row![
-            icons::icon(icons::REPEAT, 11.0, t.accent_300),
-            text(label.to_string())
-                .size(11)
-                .font(fonts::INTER_MEDIUM)
-                .line_height(1.0)
-                .color(t.accent_300),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center),
-    )
-    .height(20)
-    .padding([0, 7])
-    .align_y(Alignment::Center)
-    .style(theme::fill(t.accent_900, 999.0))
-    .into()
-}
-
 fn table_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
     let t = app.tokens;
     let mut description = row![
@@ -453,10 +417,10 @@ fn table_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
     .spacing(12)
     .align_y(Alignment::Center);
     if let Some(label) = &r.recurrence_label {
-        description = description.push(recurrence_tag(t, label));
+        description = description.push(widgets::tag_icon(t, TagTone::Accent, icons::REPEAT, label));
     }
     if let Some(state) = r.report_state {
-        description = description.push(state_tag(t, state.label()));
+        description = description.push(widgets::tag(t, TagTone::Neutral, state.label()));
     }
     let category_color = r
         .category_color

@@ -14,6 +14,7 @@ use super::charts::{
 };
 use super::rows::{author_cell_of, hover_row, kicker_with_icon};
 use super::theme::{self, Tokens, mix};
+use super::widgets::TagTone;
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::contract::MovementKind;
 use crate::dashboard::money::{format_brl, money_parts, whole_brl};
@@ -432,21 +433,6 @@ fn lifebuoy_box<'a>(t: &'static Tokens) -> Element<'a, Message> {
         .into()
 }
 
-fn pill<'a>(t: &'static Tokens, label: String) -> Element<'a, Message> {
-    container(
-        text(label)
-            .size(11)
-            .font(fonts::INTER_MEDIUM)
-            .line_height(1.0)
-            .color(t.accent_300),
-    )
-    .height(24)
-    .padding([0, 9])
-    .align_y(Alignment::Center)
-    .style(theme::fill(t.accent_900, 999.0))
-    .into()
-}
-
 fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
     let t = app.tokens;
     let padding = pad(18.0, 20.0, 20.0);
@@ -489,7 +475,7 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
                 .color(t.text_muted),
         ]
         .width(Length::Fill),
-        pill(t, e.pct_label.clone()),
+        widgets::tag(t, TagTone::Accent, &e.pct_label.clone()),
     ]
     .spacing(12)
     .align_y(Alignment::Center);
@@ -901,27 +887,6 @@ fn movement_tile<'a>(t: &'static Tokens, kind: MovementKind) -> Element<'a, Mess
         .into()
 }
 
-/// Tag "Mensal" de 18 px do deposito recorrente.
-fn recurring_tag<'a>(t: &'static Tokens) -> Element<'a, Message> {
-    container(
-        row![
-            icons::icon(icons::REPEAT, 10.0, t.accent_300),
-            text("Mensal")
-                .size(10)
-                .font(fonts::INTER_MEDIUM)
-                .line_height(1.0)
-                .color(t.accent_300),
-        ]
-        .spacing(3)
-        .align_y(Alignment::Center),
-    )
-    .height(18)
-    .padding([0, 6])
-    .align_y(Alignment::Center)
-    .style(theme::fill(t.accent_900, 999.0))
-    .into()
-}
-
 fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
     let t = app.tokens;
     let [desc_w, reserve_w, author_w] = MOVEMENT_COLUMNS;
@@ -934,7 +899,12 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
     .spacing(6)
     .align_y(Alignment::Center);
     if m.recurring {
-        meta = meta.push(recurring_tag(t));
+        meta = meta.push(widgets::tag_icon(
+            t,
+            TagTone::Accent,
+            icons::REPEAT,
+            "Mensal",
+        ));
     }
     let description = row![
         movement_tile(t, m.kind),

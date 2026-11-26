@@ -11,12 +11,14 @@ use super::icons;
 use super::theme::{self, Tokens};
 
 mod controls;
+mod marks;
 mod surface;
 
 pub use controls::{
     ChipShape, SegmentedVariant, action_button, action_button_icon, action_button_with, chip,
     icon_button, segmented,
 };
+pub use marks::{TagTone, color_tag, partial_tag, tag, tag_icon};
 pub use surface::{card, divider, inset, section_heading, vdivider};
 
 /// Rotulo em frase normal ("Saldo do mês"), 12 Medium em `text_muted`. Desvio do handoff, que pede
@@ -157,30 +159,6 @@ pub fn avatar<'a, M: 'a>(
     .into()
 }
 
-/// Tag da cor da pessoa: pilula de 20 px, fundo a cor a 16 % sobre a superficie, ponto de 6 na
-/// cor e o nome da cor ("Magenta") em 11 Medium no texto de apoio. O nome na propria cor ficava
-/// abaixo de 4,5:1 em varios tokens do claro; o texto sai da cor, que fica no ponto e na tinta.
-pub fn color_tag<'a, M: 'a>(t: &'static Tokens, token: &str) -> Element<'a, M> {
-    let color = t.token(token);
-    container(
-        row![
-            dot(color, 6.0),
-            text(crate::dashboard::colors::color_name(token))
-                .size(11)
-                .font(fonts::INTER_MEDIUM)
-                .line_height(1.0)
-                .color(t.text_soft()),
-        ]
-        .spacing(5)
-        .align_y(Alignment::Center),
-    )
-    .height(20)
-    .padding([0, 7])
-    .align_y(Alignment::Center)
-    .style(theme::fill(t.token_tint(token, 0.16), 999.0))
-    .into()
-}
-
 /// Passo numerado: circulo de 20 px (`accent_900` / `accent_300`, 11 SemiBold) + texto 13 no
 /// apoio (o texto vem pronto, pode ter link no meio).
 pub fn step<'a, M: 'a>(t: &'static Tokens, n: u8, content: Element<'a, M>) -> Element<'a, M> {
@@ -234,20 +212,6 @@ pub fn money_big<'a, M: 'a>(
     ]
     .spacing(4)
     .align_y(Alignment::End)
-    .into()
-}
-
-/// Chip "Parcial · até 19 nov" (texto pronto do modelo): pilula `accent_900` com 12 Regular em
-/// `accent_300`, 7 x 12 de respiro. Avisa que o mes corrente ainda pode crescer.
-pub fn partial_tag<'a, M: 'a>(t: &'static Tokens, label: &str) -> Element<'a, M> {
-    container(
-        text(label.to_string())
-            .size(12)
-            .line_height(1.0)
-            .color(t.accent_300),
-    )
-    .padding([7, 12])
-    .style(theme::fill(t.accent_900, 999.0))
     .into()
 }
 

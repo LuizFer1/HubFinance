@@ -367,7 +367,6 @@ impl Tokens {
     }
 
     /// Tinta de 10 % de um tom, opaca sobre o pai (banner, tile de severidade).
-    #[cfg_attr(not(test), expect(dead_code, reason = "banner e tile da Fase 7"))]
     pub fn tint(&self, tone: Tone, parent: Color) -> Color {
         let color = match tone {
             Tone::Accent => self.accent,

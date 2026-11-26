@@ -36,7 +36,8 @@ const VALUE_WIDTH: f32 = 128.0;
 
 pub fn view(app: &App) -> Element<'_, Message> {
     // Altura cheia: a casca nao rola esta tela (`shell::owns_scroll`). Filtros, resumo e o
-    // cabecalho da tabela ficam parados; so as linhas rolam, dentro do card (`table`).
+    // cabecalho da tabela ficam parados; so as linhas rolam, dentro do card (`table`). A roda do
+    // mouse so rola sobre as linhas: sobre os filtros e as margens nao ha o que rolar.
     let mut base = column![filter_bar(app)];
     if shows_summary(&app.transactions) {
         base = base.push(summary_line(app));
@@ -46,28 +47,32 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .spacing(GAP)
         .width(Length::Fill)
         .height(Length::Fill);
-    if !app.cat_menu_open {
-        return base.into();
+    // Sempre um `stack` com a tela no indice 0, aberto ou fechado o menu: o iced casa o estado
+    // dos widgets pela posicao na arvore, e trocar `Column` por `Stack` ao abrir o menu jogava
+    // fora o estado da rolagem das linhas (voltava ao topo a cada abertura e fechamento).
+    // Sem teste: a arvore de estado (`Tree`) so e publica com a feature `advanced` do iced, que
+    // o hub nao liga; ligar so para um teste nao compensa. Conferir na tela.
+    let mut layers = stack![base].width(Length::Fill).height(Length::Fill);
+    if app.cat_menu_open {
+        // Camada que fecha o menu ao clicar fora (dentro da area da tela) e, por cima, o menu.
+        // A tela ocupa a altura toda da regiao de conteudo (720 de janela minima deixa perto de
+        // 500 px), e o menu tem no maximo 42 + 360: cabe sem empurrar nada. Se a janela ficar
+        // mais baixa que isso, o menu passa da borda de baixo e e cortado.
+        let catcher = opaque(
+            mouse_area(
+                container(Space::new())
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_press(Message::CloseCategoryMenu),
+        );
+        let menu = column![
+            Space::new().height(MENU_OFFSET),
+            row![opaque(category_menu(app)), Space::new().width(Length::Fill)],
+        ];
+        layers = layers.push(catcher).push(menu);
     }
-    // Camada que fecha o menu ao clicar fora (dentro da area da tela) e, por cima, o menu. A
-    // tela ocupa a altura toda da regiao de conteudo, entao o menu (no maximo 42 + 360) cabe
-    // mesmo com poucas linhas: na janela minima (720) a regiao tem perto de 500 px.
-    let catcher = opaque(
-        mouse_area(
-            container(Space::new())
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .on_press(Message::CloseCategoryMenu),
-    );
-    let menu = column![
-        Space::new().height(MENU_OFFSET),
-        row![opaque(category_menu(app)), Space::new().width(Length::Fill)],
-    ];
-    stack![base, catcher, menu]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    layers.into()
 }
 
 /// Cor de um token de categoria, com o marcador "neutral" de "Todas as categorias".

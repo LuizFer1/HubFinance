@@ -513,8 +513,11 @@ impl Tokens {
 /// Tom de uma tinta (`Tokens::tint`). Nao e o `dashboard::grafite::Tone`: aquele e o tom
 /// semantico de um texto do modelo, sem acento; este so escolhe a cor da tinta.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "banner e tile da Fase 7"))]
 pub enum Tone {
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "sem banner de acento nas telas ainda")
+    )]
     Accent,
     Income,
     Expense,

@@ -310,6 +310,12 @@ pub fn copy_button<'a, M: Clone + 'a>(
     .into()
 }
 
+/// Mensagem do "Copiar" do campo: so com valor. Sem endereco nao ha o que copiar, e o botao
+/// fica desabilitado.
+fn copy_message<M>(value: Option<&str>, on_copy: M) -> Option<M> {
+    value.map(|_| on_copy)
+}
+
 /// Campo de 44 px com "Copiar": icone `(glifo, cor)`, o valor em Medium no tamanho `size` (cortado na borda se
 /// ainda nao couber: o iced 0.14 nao tem reticencias) e o botao a direita. Sem valor mostra
 /// `placeholder` em `text_muted` e o botao fica desabilitado.
@@ -322,7 +328,7 @@ pub fn field_copy<'a, M: Clone + 'a>(
     copied: bool,
     on_copy: M,
 ) -> Element<'a, M> {
-    let enabled = value.is_some();
+    let on_copy = copy_message(value.as_deref(), on_copy);
     let shown = match value {
         Some(v) => text(v).size(size).font(fonts::INTER_MEDIUM).color(t.text),
         None => text(placeholder.to_string())
@@ -332,7 +338,7 @@ pub fn field_copy<'a, M: Clone + 'a>(
     let value = container(shown.wrapping(Wrapping::None))
         .width(Length::Fill)
         .clip(true);
-    let copy = copy_button(t, copied, enabled.then_some(on_copy));
+    let copy = copy_button(t, copied, on_copy);
     container(
         row![icons::icon(glyph, 15.0, glyph_color), value, copy]
             .spacing(10)
@@ -498,6 +504,12 @@ mod tests {
                 let _ = list_row(t, text("Linha"), hover(), None, [10, 8], RowEdge::Inset);
             }
         }
+    }
+
+    #[test]
+    fn copiar_do_campo_fica_desabilitado_sem_valor() {
+        assert_eq!(copy_message(None, 7), None);
+        assert_eq!(copy_message(Some("https://192.168.0.2:7777"), 7), Some(7));
     }
 
     #[test]

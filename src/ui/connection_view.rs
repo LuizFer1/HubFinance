@@ -8,15 +8,13 @@
 use std::net::Ipv4Addr;
 use std::time::{Duration, SystemTime};
 
-use iced::widget::text::Wrapping;
 use iced::widget::{Space, column, container, qr_code, rich_text, row, span, text};
 use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
 use super::app::{App, CopyTarget, Message};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
-use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
+use super::widgets::RowEdge;
 use super::{fonts, icons, measure, rows, shell, time, widgets};
-use crate::config;
 use crate::dashboard::people::{Person, presence};
 use crate::dashboard::periods::paired_label;
 use crate::hub::snapshot::{ActivityKind, Snapshot, Status};
@@ -60,27 +58,20 @@ pub fn view(app: &App) -> Element<'_, Message> {
     let width = shell::content_width(app);
     let two_columns = width >= 2.0 * GRID_MIN + GAP;
     let card_width = grid_card_width(width);
-    // A spec pede "Sobre o hub" como terceiro card do grid (auto-fit, minimo 420). Fica sempre
-    // em duas colunas, embaixo do endereco: o card de usuarios cresce com a lista e uma terceira
-    // coluna o deixaria estreito demais para os nomes.
+    // "Sobre o hub" foi para Ajustes; ficam o endereco e os usuarios lado a lado (o card de
+    // usuarios cresce com a lista).
     let grid: Element<'_, Message> = if two_columns {
         row![
-            column![address_card(app, card_width), about_card(app)]
-                .spacing(GAP)
-                .width(Length::FillPortion(1)),
+            container(address_card(app, card_width)).width(Length::FillPortion(1)),
             container(users_card(app)).width(Length::FillPortion(1)),
         ]
         .spacing(GAP)
         .align_y(Alignment::Start)
         .into()
     } else {
-        column![
-            address_card(app, card_width),
-            users_card(app),
-            about_card(app)
-        ]
-        .spacing(GAP)
-        .into()
+        column![address_card(app, card_width), users_card(app)]
+            .spacing(GAP)
+            .into()
     };
     column![grid, certificate_card(app, width), activity_card(app)]
         .spacing(GAP)
@@ -355,173 +346,6 @@ fn field<'a>(
     )
 }
 
-/// "Copiar" do card "Sobre" (pastas e URL das versoes), com o "Copiado" desta tela.
-fn copy_button(app: &App, target: CopyTarget, enabled: bool) -> Element<'_, Message> {
-    widgets::copy_button(
-        app.tokens,
-        app.is_copied(target),
-        enabled.then_some(Message::Copy(target)),
-    )
-}
-
-// ---- sobre o hub ----
-
-/// "Versoes no GitHub" abre o navegador do sistema; se nao abrir, a URL com "Copiar", sem
-/// dialogo (spec de atualizacao, "Tratamento de erros").
-fn releases_link(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
-    if app.releases_open_failed {
-        return row![
-            text(config::RELEASES_URL).size(12).color(t.text_muted),
-            copy_button(app, CopyTarget::ReleasesUrl, true),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center)
-        .into();
-    }
-    let size = ButtonSize::Compact;
-    widgets::action_button_with(
-        t,
-        ButtonKind::Ghost,
-        size,
-        row![
-            text("Versões no GitHub")
-                .size(size.text_size())
-                .font(fonts::INTER_MEDIUM),
-            icons::icon_inherit(icons::ARROW_SQUARE_OUT, 14.0),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center),
-    )
-    .on_press(Message::OpenReleases)
-    .into()
-}
-
-/// Textos do card "Sobre o hub", separados do layout para o teste.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct AboutLines {
-    pub version: String,
-    pub data_dir: String,
-    pub logs_dir: String,
-}
-
-pub(super) fn about_lines(snap: &Snapshot) -> AboutLines {
-    AboutLines {
-        version: format!("{} v{}", config::HUB_NAME, config::VERSION),
-        data_dir: snap.data_dir.display().to_string(),
-        logs_dir: config::logs_dir(&snap.data_dir).display().to_string(),
-    }
-}
-
-/// Caminho com um espaco de largura zero depois de cada separador: o iced so quebra linha em
-/// oportunidade de quebra do Unicode, e `\` nao e uma (com `Word` a quebra cairia no meio de
-/// um nome, com `Glyph` em qualquer letra). Assim ela cai entre pastas. So para exibir.
-fn breakable_path(path: &str) -> String {
-    let mut out = String::with_capacity(path.len() + 16);
-    for c in path.chars() {
-        out.push(c);
-        if c == '\\' || c == '/' {
-            out.push('\u{200B}');
-        }
-    }
-    out
-}
-
-fn about_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
-    let lines = about_lines(&app.snapshot);
-    let version = row![
-        icons::icon(icons::INFO, 16.0, t.accent_300),
-        rich_text::<(), _, _, _>([
-            span(format!("{} ", config::HUB_NAME)),
-            span(format!("v{}", config::VERSION)).font(fonts::INTER_MEDIUM),
-        ])
-        .size(14)
-        .color(t.text),
-        Space::new().width(Length::Fill),
-        releases_link(app),
-    ]
-    .spacing(10)
-    .height(32)
-    .align_y(Alignment::Center);
-    // Rotulo e "Copiar" numa linha, o caminho inteiro embaixo na largura do card: a pessoa
-    // precisa le-lo todo para achar a pasta (o iced 0.14 nao tem reticencias). "Copiar" copia o
-    // caminho do snapshot, nao o texto exibido com as quebras.
-    let path_row = |label: &'static str, path: &str, target: CopyTarget| {
-        column![
-            row![
-                text(label).size(12).color(t.text_muted).width(Length::Fill),
-                copy_button(app, target, true),
-            ]
-            .align_y(Alignment::Center),
-            text(breakable_path(path))
-                .size(12)
-                .line_height(1.45)
-                .color(t.text_soft())
-                .wrapping(Wrapping::WordOrGlyph)
-                .width(Length::Fill),
-        ]
-    };
-    let autostart: Option<Element<'_, Message>> = app.autostart.map(|enabled| {
-        let switch = container(widgets::segmented(
-            t,
-            SegmentedVariant::Bordered,
-            SegmentedSize::Compact,
-            true,
-            [
-                ("Sim", enabled, Message::SetAutostart(true)),
-                ("Não", !enabled, Message::SetAutostart(false)),
-            ],
-        ))
-        .width(140);
-        let head = row![
-            text("Iniciar com o Windows").size(12).color(t.text),
-            Space::new().width(Length::Fill),
-            switch,
-        ]
-        .align_y(Alignment::Center);
-        let mut col = column![head].spacing(6);
-        if app.autostart_failed {
-            col = col.push(
-                text("Não foi possível alterar. Veja o log.")
-                    .size(12)
-                    .color(t.expense_fg),
-            );
-        }
-        col.push(
-            text(
-                "Com a opção ligada, o hub abre com o Windows sem mostrar a janela. Fechar a \
-                 janela não desliga o hub: use Desligar o hub no ícone ao lado do relógio.",
-            )
-            .size(12)
-            .color(t.text_muted),
-        )
-        .into()
-    });
-    let footer = row![
-        icons::icon(icons::HOUSE_SIMPLE, 12.0, t.text_muted),
-        text(network_note(&app.snapshot.assistant.settings))
-            .size(12)
-            .color(t.text_muted),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
-    let mut body = column![
-        widgets::card_title(t, "Sobre o hub", None),
-        Space::new().height(4),
-        version,
-        path_row("Dados em", &lines.data_dir, CopyTarget::DataDir),
-        path_row("Logs em", &lines.logs_dir, CopyTarget::LogsDir),
-    ]
-    .spacing(10);
-    // `Column` do iced 0.14 nao tem `push_maybe`.
-    if let Some(autostart) = autostart {
-        body = body.push(Space::new().height(4)).push(autostart);
-    }
-    let body = body.push(Space::new().height(4)).push(footer);
-    widgets::card(t, body).padding(24).into()
-}
-
 // ---- usuarios conectados ----
 
 fn users_card(app: &App) -> Element<'_, Message> {
@@ -785,7 +609,7 @@ fn activity_card(app: &App) -> Element<'_, Message> {
     let epoch: String = snap.epoch.chars().take(8).collect();
     col = col.push(
         container(
-            // O caminho dos dados mora no card "Sobre o hub".
+            // O caminho dos dados mora em Ajustes > Sobre.
             text(format!("epoch {epoch}")).size(11).color(t.text_muted),
         )
         .padding(Padding {
@@ -803,17 +627,6 @@ fn activity_card(app: &App) -> Element<'_, Message> {
             left: 20.0,
         })
         .into()
-}
-
-/// Rodape do "Sobre o hub". Com a nuvem do assistente como destino, "nunca consulta a internet"
-/// deixaria de ser verdade; o criterio e o mesmo do envio (`Settings::destination`), entao o
-/// texto muda exatamente quando algo pode sair.
-pub(super) fn network_note(settings: &crate::assistant::settings::Settings) -> &'static str {
-    if settings.destination().is_some_and(|d| d.is_cloud()) {
-        "Só o assistente na nuvem sai da rede, e só quando você envia."
-    } else {
-        "Este programa nunca consulta a internet"
-    }
 }
 
 #[cfg(test)]
@@ -852,52 +665,5 @@ mod tests {
         }
         // Com espaco, fica no tamanho do design.
         assert_eq!(field_value_size(url, 600.0), 15.0);
-    }
-
-    #[test]
-    fn caminho_quebra_so_depois_do_separador() {
-        assert_eq!(
-            breakable_path(r"C:\Users\ana"),
-            "C:\\\u{200B}Users\\\u{200B}ana"
-        );
-        assert_eq!(breakable_path("/home/ana"), "/\u{200B}home/\u{200B}ana");
-        // Tirando o espaco de largura zero volta o caminho exato.
-        let path = r"C:\x\HubFinance\data\logs";
-        assert_eq!(breakable_path(path).replace('\u{200B}', ""), path);
-    }
-
-    #[test]
-    fn rodape_diz_que_so_a_nuvem_sai_da_rede() {
-        use crate::assistant::settings::{ProviderChoice, Settings};
-        let mut s = Settings::default();
-        assert_eq!(network_note(&s), "Este programa nunca consulta a internet");
-        s.provider = ProviderChoice::Local;
-        s.cloud.enabled = true;
-        assert_eq!(network_note(&s), "Este programa nunca consulta a internet");
-        s.provider = ProviderChoice::Cloud;
-        s.cloud.enabled = false;
-        assert_eq!(network_note(&s), "Este programa nunca consulta a internet");
-        s.cloud.enabled = true;
-        assert_eq!(
-            network_note(&s),
-            "Só o assistente na nuvem sai da rede, e só quando você envia."
-        );
-    }
-
-    #[test]
-    fn sobre_mostra_versao_e_as_duas_pastas() {
-        let snap = Snapshot {
-            data_dir: std::path::PathBuf::from("C:/x/HubFinance/data"),
-            ..Snapshot::default()
-        };
-        let lines = about_lines(&snap);
-        assert_eq!(lines.version, format!("HubFinance v{}", config::VERSION));
-        assert_eq!(lines.data_dir, "C:/x/HubFinance/data");
-        assert_eq!(
-            lines.logs_dir,
-            config::logs_dir(&snap.data_dir).display().to_string()
-        );
-        assert!(lines.logs_dir.starts_with(&lines.data_dir));
-        assert!(lines.logs_dir.ends_with("logs"));
     }
 }

@@ -13,6 +13,7 @@ mod measure;
 mod remove_view;
 mod reserves_view;
 mod rows;
+mod settings_view;
 mod shell;
 mod theme;
 mod time;

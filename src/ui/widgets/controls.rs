@@ -2,7 +2,7 @@
 //! O estilo por `Status` mora em `theme` (testado la); aqui a altura, o respiro e o texto.
 
 use iced::widget::text::Wrapping;
-use iced::widget::{Button, Row, button, container, mouse_area, row, text, tooltip};
+use iced::widget::{Button, Row, button, container, mouse_area, row, text, toggler, tooltip};
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use crate::ui::theme::{self, ButtonKind, ButtonSize, Tokens, radius, size, space, type_scale};
@@ -292,6 +292,21 @@ pub fn list_row<'a, M: Clone + 'a>(
         .into()
 }
 
+/// Interruptor de 20 px (o `toggler` do iced com o estilo da secao 9), sem rotulo: o rotulo
+/// mora na linha (`settings_row`), a esquerda, e o interruptor fica alinhado a direita. Sem
+/// `on_toggle` fica desabilitado.
+pub fn toggle<'a, M: 'a>(
+    t: &'static Tokens,
+    is_on: bool,
+    on_toggle: Option<impl Fn(bool) -> M + 'a>,
+) -> Element<'a, M> {
+    toggler(is_on)
+        .on_toggle_maybe(on_toggle)
+        .size(20)
+        .style(theme::toggle(t))
+        .into()
+}
+
 /// "Copiar" fantasma compacto que vira "Copiado" com o check enquanto `copied` (1,6 s, quem
 /// conta e a tela). Sem `on_copy` fica desabilitado (nada a copiar).
 pub fn copy_button<'a, M: Clone + 'a>(
@@ -385,6 +400,16 @@ mod tests {
             for size in SIZES {
                 let _ = icon_button(t, icons::EYE, size, "Ocultar valores", Some(()));
                 let _ = icon_button::<()>(t, icons::EYE, size, "Ocultar valores", None);
+            }
+        }
+    }
+
+    #[test]
+    fn interruptor_monta_ligado_desligado_e_desabilitado() {
+        for t in [&DARK, &LIGHT] {
+            for on in [true, false] {
+                let _ = toggle(t, on, Some(|_: bool| ()));
+                let _ = toggle::<()>(t, on, None::<fn(bool)>);
             }
         }
     }

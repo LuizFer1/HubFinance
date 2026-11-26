@@ -55,6 +55,32 @@ pub fn vdivider<'a, M: 'a>(t: &'static Tokens) -> Element<'a, M> {
     .into()
 }
 
+/// Linha de ajuste: rotulo 14 em `fg` a esquerda, ocupando o que sobra, com um detalhe
+/// opcional embaixo (frase de apoio, caminho de pasta), e o controle a direita. Altura minima
+/// de 52 px (`size::ROW_RICH`), e nao fixa: o detalhe pode quebrar (o iced 0.14 nao tem
+/// reticencias, e um caminho cortado nao serve) e a linha cresce com ele. O `Space` de 52 na
+/// propria linha e o que segura a altura: o `container` do iced nao tem altura minima.
+pub fn settings_row<'a, M: 'a>(
+    t: &'static Tokens,
+    label: &str,
+    detail: Option<Element<'a, M>>,
+    control: impl Into<Element<'a, M>>,
+) -> Element<'a, M> {
+    let mut left = column![text(label.to_string()).size(type_scale::BODY).color(t.text)].spacing(2);
+    if let Some(detail) = detail {
+        left = left.push(detail);
+    }
+    row![
+        Space::new().width(0).height(size::ROW_RICH),
+        container(left.padding([space::S, 0.0])).width(Length::Fill),
+        control.into()
+    ]
+    .spacing(space::L)
+    .align_y(Alignment::Center)
+    .width(Length::Fill)
+    .into()
+}
+
 /// Titulo de secao, fora do card: titulo 16 Medium, pergunta 13 `text_muted` ao lado (vazia
 /// nao entra) e um aparte 12 a direita. `top` e o respiro acima, que o Resumo varia por secao.
 pub fn section_heading<'a, M: 'a>(
@@ -283,6 +309,9 @@ mod tests {
             let _: Element<'_, ()> = inset(t, "conteudo").padding(4).into();
             let _: Element<'_, ()> = divider(t);
             let _: Element<'_, ()> = vdivider(t);
+            let _: Element<'_, ()> = settings_row(t, "Tema", None, "controle");
+            let _: Element<'_, ()> =
+                settings_row(t, "Dados em", Some(text(r"C:\dados").into()), "Copiar");
             let _: Element<'_, ()> = section_heading(t, "Título", "pergunta", Some("aparte"), 8.0);
             let _: Element<'_, ()> = section_heading(t, "Título", "", None, 0.0);
             let _: Element<'_, ()> = empty_state(

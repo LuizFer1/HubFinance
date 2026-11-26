@@ -1,5 +1,5 @@
 //! Casca da janela: barra de titulo propria, moldura de redimensionar, barra lateral com o
-//! card de status e o seletor de tema, e a area de conteudo rolavel.
+//! card de status, e a area de conteudo rolavel. O tema mora em Ajustes.
 
 use std::net::Ipv4Addr;
 
@@ -12,10 +12,9 @@ use super::app::{App, Message, Screen};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
 use super::widgets::{SegmentedSize, SegmentedVariant};
 use super::{
-    analysis_view, connection_view, dashboard_view, fonts, icons, remove_view, reserves_view, time,
-    transactions_view, widgets,
+    analysis_view, connection_view, dashboard_view, fonts, icons, remove_view, reserves_view,
+    settings_view, time, transactions_view, widgets,
 };
-use crate::config::ThemeMode;
 use crate::dashboard::contract::Book;
 use crate::dashboard::money::group_thousands;
 use crate::hub::snapshot::Status;
@@ -251,7 +250,7 @@ fn sidebar(app: &App) -> Element<'_, Message> {
         brand,
         nav,
         Space::new().height(Length::Fill),
-        column![status_card(app), theme_switch(app)].spacing(10),
+        status_card(app),
     ]
     .spacing(28)
     .padding([28, 14])
@@ -270,8 +269,8 @@ pub(super) struct NavEntry {
     pub count: Option<usize>,
 }
 
-/// As cinco linhas na ordem do design; "Conexão" fica sob a secao "Hub".
-pub(super) fn nav_entries(app: &App) -> [NavEntry; 5] {
+/// As seis linhas na ordem do design; "Conexão" e "Ajustes" ficam sob a secao "Hub".
+pub(super) fn nav_entries(app: &App) -> [NavEntry; 6] {
     [
         NavEntry {
             screen: Screen::Dashboard,
@@ -302,6 +301,12 @@ pub(super) fn nav_entries(app: &App) -> [NavEntry; 5] {
             glyph: icons::QR_CODE,
             label: "Conexão",
             count: Some(active_devices(app)),
+        },
+        NavEntry {
+            screen: Screen::Settings,
+            glyph: icons::GEAR,
+            label: "Ajustes",
+            count: None,
         },
     ]
 }
@@ -509,28 +514,6 @@ fn status_card(app: &App) -> Element<'_, Message> {
     widgets::card(t, col).padding(14).into()
 }
 
-/// Escuro | Claro sem icone, como o design.
-fn theme_switch(app: &App) -> Element<'_, Message> {
-    widgets::segmented(
-        app.tokens,
-        SegmentedVariant::Pill,
-        SegmentedSize::Regular,
-        true,
-        [
-            (
-                "Escuro",
-                app.theme == ThemeMode::Dark,
-                Message::SetTheme(ThemeMode::Dark),
-            ),
-            (
-                "Claro",
-                app.theme == ThemeMode::Light,
-                Message::SetTheme(ThemeMode::Light),
-            ),
-        ],
-    )
-}
-
 // ---- conteudo ----
 
 fn content(app: &App) -> Element<'_, Message> {
@@ -544,6 +527,7 @@ fn content(app: &App) -> Element<'_, Message> {
             Screen::Reserves => reserves_view::view(app),
             Screen::Analysis => analysis_view::view(app),
             Screen::Connection => connection_view::view(app),
+            Screen::Settings => settings_view::view(app),
         }
     };
     let mut page = column![header(app)].spacing(14);
@@ -667,9 +651,10 @@ fn hide_values_button(app: &App) -> Element<'_, Message> {
 }
 
 /// Seletor de conta. So aparece com uma linha `books` viva de conta comercial (derivado das
-/// linhas, como no app) e fora da Conexao, que e do hub e nao de uma conta.
+/// linhas, como no app) e fora da Conexao e de Ajustes, que sao do hub e nao de uma conta.
 pub(super) fn book_switch(app: &App) -> Option<Element<'_, Message>> {
-    if app.screen == Screen::Connection || !app.snapshot.dashboard.has_business_book() {
+    let of_the_hub = matches!(app.screen, Screen::Connection | Screen::Settings);
+    if of_the_hub || !app.snapshot.dashboard.has_business_book() {
         return None;
     }
     let option = |book: Book| (book.label(), app.book == book, Message::SelectBook(book));
@@ -715,6 +700,7 @@ pub(super) fn titles(app: &App) -> (&str, String) {
             "Conexão",
             "Abra este endereço no celular para conectar ao hub".into(),
         ),
+        Screen::Settings => ("Ajustes", "Preferências deste computador".into()),
     }
 }
 
@@ -1039,13 +1025,21 @@ mod tests {
                 Screen::Transactions,
                 Screen::Reserves,
                 Screen::Analysis,
-                Screen::Connection
+                Screen::Connection,
+                Screen::Settings
             ]
         );
         let labels: Vec<&str> = entries.iter().map(|e| e.label).collect();
         assert_eq!(
             labels,
-            ["Dashboard", "Lançamentos", "Reservas", "Análise", "Conexão"]
+            [
+                "Dashboard",
+                "Lançamentos",
+                "Reservas",
+                "Análise",
+                "Conexão",
+                "Ajustes"
+            ]
         );
         assert_eq!(entries[0].count, None);
         assert_eq!(entries[1].count, Some(app.dashboard.sidebar.transactions));

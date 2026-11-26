@@ -248,6 +248,7 @@ mod tests {
                 Code::Digit3,
                 Code::Digit4,
                 Code::Digit5,
+                Code::Digit6,
             ][i];
             app.screen = if entry.screen == Screen::Dashboard {
                 Screen::Connection
@@ -269,7 +270,7 @@ mod tests {
         let end = press(Key::Named(Named::End), Code::Numpad1, Modifiers::CTRL);
         assert!(shortcut(&app, &end).is_none());
         // Alem da ultima tela, a tela atual, sem Ctrl ou segurado: nada.
-        assert!(shortcut(&app, &ctrl_digit('6', Code::Digit6)).is_none());
+        assert!(shortcut(&app, &ctrl_digit('7', Code::Digit7)).is_none());
         assert!(shortcut(&app, &ctrl_digit('1', Code::Digit1)).is_none());
         assert!(
             shortcut(

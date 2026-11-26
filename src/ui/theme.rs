@@ -12,7 +12,7 @@ use iced::gradient::{self, Gradient};
 use iced::overlay::menu;
 // `button::{self}` traz so o modulo: a funcao `button` daqui e o estilo unico de botao.
 use iced::widget::button::{self};
-use iced::widget::{container, pick_list, scrollable, text_input};
+use iced::widget::{container, pick_list, scrollable, text_input, toggler};
 use iced::{Background, Border, Color, Degrees, Shadow, Theme, Vector};
 
 use crate::config::ThemeMode;
@@ -1115,6 +1115,56 @@ pub fn input(t: &'static Tokens) -> impl Fn(&Theme, text_input::Status) -> text_
                 t.text
             },
             selection: alpha(t.accent, 0.35),
+        }
+    }
+}
+
+/// Interruptor (secao 9): ligado com trilho `accent_800`, borda `accent` e botao `accent_200`;
+/// desligado com trilho `neutral_900`, borda `idle()` e botao `text_muted`. Sob o mouse a borda
+/// sobe um degrau (`accent_300` ou `text_soft()`), a unica resposta que cabe sem animacao.
+/// Desabilitado perde a tinta: trilho sem cor, borda `divider()`, botao `idle()`.
+pub fn toggle(t: &'static Tokens) -> impl Fn(&Theme, toggler::Status) -> toggler::Style {
+    move |_, status| {
+        let (on, hovered) = match status {
+            toggler::Status::Active { is_toggled } => (is_toggled, false),
+            toggler::Status::Hovered { is_toggled } => (is_toggled, true),
+            toggler::Status::Disabled { .. } => {
+                return toggler::Style {
+                    background: Background::Color(Color::TRANSPARENT),
+                    background_border_width: size::BORDER,
+                    background_border_color: t.divider(),
+                    foreground: Background::Color(t.idle()),
+                    foreground_border_width: 0.0,
+                    foreground_border_color: Color::TRANSPARENT,
+                    text_color: Some(t.text_muted),
+                    border_radius: None,
+                    padding_ratio: 0.2,
+                };
+            }
+        };
+        let (track, border, knob) = if on {
+            (
+                t.accent_800,
+                if hovered { t.accent_300 } else { t.accent },
+                t.accent_200,
+            )
+        } else {
+            (
+                t.neutral_900,
+                if hovered { t.text_soft() } else { t.idle() },
+                t.text_muted,
+            )
+        };
+        toggler::Style {
+            background: Background::Color(track),
+            background_border_width: size::BORDER,
+            background_border_color: border,
+            foreground: Background::Color(knob),
+            foreground_border_width: 0.0,
+            foreground_border_color: Color::TRANSPARENT,
+            text_color: Some(t.text),
+            border_radius: None,
+            padding_ratio: 0.2,
         }
     }
 }
@@ -2270,5 +2320,27 @@ mod tests {
         assert_eq!(DARK.token("fuchsia"), Color::from_rgb8(0xe0, 0x93, 0xcf));
         assert_eq!(LIGHT.token("fuchsia"), Color::from_rgb8(0xae, 0x53, 0x9d));
         assert_eq!(DARK.token("neon"), DARK.token("slate"));
+    }
+
+    #[test]
+    fn interruptor_ligado_no_acento_e_desligado_neutro() {
+        let theme = DARK.iced_theme();
+        for t in [&DARK, &LIGHT] {
+            let style = toggle(t);
+            let on = style(&theme, toggler::Status::Active { is_toggled: true });
+            assert_eq!(on.background, Background::Color(t.accent_800));
+            assert_eq!(on.background_border_color, t.accent);
+            assert_eq!(on.foreground, Background::Color(t.accent_200));
+            let off = style(&theme, toggler::Status::Active { is_toggled: false });
+            assert_eq!(off.background, Background::Color(t.neutral_900));
+            assert_eq!(off.background_border_color, t.idle());
+            assert_eq!(off.foreground, Background::Color(t.text_muted));
+            // Sob o mouse so a borda muda.
+            let hover = style(&theme, toggler::Status::Hovered { is_toggled: false });
+            assert_eq!(hover.background, off.background);
+            assert_ne!(hover.background_border_color, off.background_border_color);
+            let disabled = style(&theme, toggler::Status::Disabled { is_toggled: true });
+            assert_eq!(disabled.background_border_color, t.divider());
+        }
     }
 }

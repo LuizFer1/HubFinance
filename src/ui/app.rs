@@ -134,6 +134,8 @@ pub enum Screen {
     Reserves,
     Analysis,
     Connection,
+    /// Ajustes: tema, ocultar valores, iniciar com o Windows, assistente e sobre.
+    Settings,
 }
 
 pub struct App {
@@ -324,14 +326,16 @@ pub enum Message {
     Resize(window::Direction),
     SelectScreen(Screen),
     SetTheme(ThemeMode),
+    /// "Configurar" do assistente em Ajustes: vai a Analise com o painel aberto.
+    ConfigureAssistant,
     /// O sistema trocou entre escuro e claro (`system::theme_changes`), ou respondeu a
     /// consulta do boot (`system::theme`).
     SystemTheme(iced::theme::Mode),
-    /// "Iniciar com o Windows" do card "Sobre o hub".
+    /// "Iniciar com o Windows" de Ajustes.
     SetAutostart(bool),
     Copy(CopyTarget),
     CopyExpired,
-    /// "Versoes no GitHub" do card "Sobre o hub".
+    /// "Versoes no GitHub" de Ajustes > Sobre.
     OpenReleases,
     HoverRow(String),
     UnhoverRow(String),
@@ -1078,6 +1082,16 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 super::shell::CONTENT_SCROLL,
                 iced::widget::operation::RelativeOffset::START,
             )
+        }
+        Message::ConfigureAssistant => {
+            // O mesmo caminho da navegacao (remocao pendente, chave, rolagem ao topo) e o
+            // mesmo jeito de abrir do botao da Analise, que semeia os rascunhos; ja aberto,
+            // fica como esta para nao perder o que a pessoa digitou.
+            let task = update(app, Message::SelectScreen(Screen::Analysis));
+            if !app.assistant_settings_open {
+                app.open_assistant_settings();
+            }
+            task
         }
         Message::ToggleCategoryMenu => {
             app.cat_menu_open = !app.cat_menu_open;
@@ -1889,6 +1903,24 @@ pub(super) mod tests {
         let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
         let _ = update(&mut app, Message::SelectScreen(Screen::Connection));
         assert_eq!(app.screen, Screen::Connection);
+    }
+
+    #[test]
+    fn configurar_o_assistente_abre_a_analise_com_o_painel() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        let _ = update(&mut app, Message::SelectScreen(Screen::Settings));
+        assert_eq!(app.screen, Screen::Settings);
+        let task = update(&mut app, Message::ConfigureAssistant);
+        assert_eq!(app.screen, Screen::Analysis);
+        assert!(app.assistant_settings_open);
+        // Volta ao topo como qualquer troca de tela.
+        assert_eq!(task.units(), 1);
+        // Ja aberto: nao refaz os rascunhos que a pessoa digitou.
+        app.port_input = "1234".into();
+        let _ = update(&mut app, Message::ConfigureAssistant);
+        assert!(app.assistant_settings_open);
+        assert_eq!(app.port_input, "1234");
     }
 
     #[test]

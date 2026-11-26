@@ -18,7 +18,7 @@ mod values;
 pub use controls::{
     ChipShape, RowEdge, RowHover, SegmentedSize, SegmentedVariant, action_button,
     action_button_icon, action_button_with, chip, copy_button, field_copy, icon_button, list_row,
-    segmented,
+    segmented, toggle,
 };
 pub use marks::{
     Bar, CompactTone, TagTone, bar, color_tag, neutral_tile, partial_tag, tag, tag_compact,
@@ -26,7 +26,7 @@ pub use marks::{
 };
 pub use surface::{
     banner, card, dialog, divider, empty_copy, empty_icon, empty_state, inset, section_heading,
-    vdivider,
+    settings_row, vdivider,
 };
 pub use values::{StatSize, baseline_pad, money, stat, value_line};
 

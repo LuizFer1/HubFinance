@@ -88,7 +88,7 @@ impl OpenConversation {
 pub struct AssistantView {
     pub settings: Settings,
     pub has_key: bool,
-    /// A chave fica cifrada no disco (DPAPI). `false` = texto puro: o painel avisa.
+    /// A chave fica cifrada no disco (DPAPI). `false` = texto puro: o dialogo avisa.
     pub key_encrypted: bool,
     /// `None` = nunca listado; `Some(Err)` = falhou (mensagem pt-BR).
     pub models: Option<Result<Vec<String>, String>>,

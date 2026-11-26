@@ -147,8 +147,7 @@ pub(super) fn assistant_summary(settings: &Settings) -> String {
     }
 }
 
-/// "Configurar" leva a Analise com o painel do assistente aberto; o dialogo em passos vem na
-/// issue 12.
+/// "Configurar" abre o dialogo em passos do assistente aqui mesmo, por cima de Ajustes.
 fn assistant_row(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let summary = assistant_summary(&app.snapshot.assistant.settings);

@@ -1601,7 +1601,7 @@ fn first_use_card(app: &App) -> Element<'_, Message> {
         lan_note(t),
     ]
     .spacing(20);
-    widgets::card(t, col).padding(Padding::new(24.0)).into()
+    widgets::card(t, col).padding(Padding::new(20.0)).into()
 }
 
 /// Ha aparelho pareado mas nada chegou: quem o hub espera e o passo que falta (o 3, o sync).
@@ -1615,7 +1615,7 @@ fn waiting_card(app: &App, line: String) -> Element<'_, Message> {
         lan_note(t),
     ]
     .spacing(20);
-    widgets::card(t, col).padding(Padding::new(24.0)).into()
+    widgets::card(t, col).padding(Padding::new(20.0)).into()
 }
 
 fn empty_card(app: &App) -> Element<'_, Message> {

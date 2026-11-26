@@ -434,7 +434,9 @@ pub(super) const OPENING_TEXT: &str = "Abrindo os dados da casa";
 
 /// Esqueleto do boot, o mesmo em Resumo, Lancamentos e Reservas: o texto e blocos de
 /// `surface_2` no lugar das secoes (uma faixa larga, duas lado a lado na proporcao 2:1 do
-/// Resumo e mais uma larga). Nao imita cada tela: dura o tempo de abrir o banco. A altura total\n/// (~480) cabe na janela minima sem rolar, porque em Lancamentos a casca nao rola (owns_scroll).
+/// Resumo e mais uma larga). Nao imita cada tela: dura o tempo de abrir o banco. A altura total
+/// (~480) cabe na janela minima sem rolar, porque em Lancamentos a casca nao rola
+/// (`owns_scroll`).
 pub(super) fn opening(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let block = |height: f32| {

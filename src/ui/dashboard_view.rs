@@ -22,7 +22,7 @@ use super::charts::{
     PACE_HEIGHT, PaceProgram, SwatchProgram,
 };
 use super::theme::{self, Tokens};
-use super::{fonts, icons, shell, time};
+use super::{fonts, icons, shell, time, widgets};
 use crate::dashboard::grafite::{
     BusinessBlock, EmergencyBlock, HistoryBody, Line, Section, Tone, UpcomingLine,
 };
@@ -224,8 +224,12 @@ fn section(app: &App, s: Section, width: f32) -> Element<'_, Message> {
         Section::Empty => empty_card(app),
         Section::Business => business(app, width),
         Section::HowAmI => how_am_i(app, width),
-        Section::Reserve => card(t, reserve_body(app, width - 40.0), Padding::new(20.0)),
-        Section::History => card(t, history_body(app), Padding::new(20.0)),
+        Section::Reserve => widgets::card(t, reserve_body(app, width - 40.0))
+            .padding(Padding::new(20.0))
+            .into(),
+        Section::History => widgets::card(t, history_body(app))
+            .padding(Padding::new(20.0))
+            .into(),
         Section::WhereItWent => where_it_went(app, width),
         Section::WhatsNext => whats_next(app, width),
         Section::Recent => recent(app),
@@ -307,19 +311,6 @@ fn tone_color(t: &'static Tokens, tone: Tone, neutral: Color) -> Color {
         Tone::Expense => t.expense_fg,
         Tone::Warning => t.warning,
     }
-}
-
-/// Card de superficie, raio 8.
-fn card<'a>(
-    t: &'static Tokens,
-    content: impl Into<Element<'a, Message>>,
-    padding: Padding,
-) -> Element<'a, Message> {
-    container(content)
-        .padding(padding)
-        .width(Length::Fill)
-        .style(theme::card(t))
-        .into()
 }
 
 /// Titulo de secao (16 Medium) + pergunta (13 apoio) e um aparte a direita.
@@ -519,7 +510,7 @@ fn business(app: &App, width: f32) -> Element<'_, Message> {
     let right = business_capital(t, b);
     column![
         heading(t, &b.title, &b.question, None, 8.0),
-        card(
+        widgets::card(
             t,
             column![
                 tiles(
@@ -545,9 +536,9 @@ fn business(app: &App, width: f32) -> Element<'_, Message> {
                 ),
                 txt(b.note.clone(), 12.0, t.text_muted),
             ]
-            .spacing(16),
-            Padding::new(20.0),
-        ),
+            .spacing(16)
+        )
+        .padding(Padding::new(20.0)),
     ]
     .spacing(GAP)
     .into()
@@ -640,7 +631,7 @@ fn how_am_i(app: &App, width: f32) -> Element<'_, Message> {
     );
     column![
         heading(t, &h.title, &h.question, None, 8.0),
-        card(t, body, Padding::new(6.0)),
+        widgets::card(t, body).padding(Padding::new(6.0)),
     ]
     .spacing(GAP)
     .into()
@@ -1271,16 +1262,12 @@ fn where_it_went(app: &App, width: f32) -> Element<'_, Message> {
     ];
     column![
         heading(t, &w.title, &w.question, Some(&w.summary), 20.0),
-        card(
-            t,
-            body,
-            Padding {
-                top: 20.0,
-                right: 20.0,
-                bottom: 12.0,
-                left: 20.0,
-            }
-        ),
+        widgets::card(t, body).padding(Padding {
+            top: 20.0,
+            right: 20.0,
+            bottom: 12.0,
+            left: 20.0,
+        }),
     ]
     .spacing(GAP)
     .into()
@@ -1606,16 +1593,12 @@ fn recent(app: &App) -> Element<'_, Message> {
     .align_y(Alignment::Center);
     column![
         heading(t, &r.title, "", Some(&r.count), 0.0),
-        card(
-            t,
-            column![list, hline(t), foot],
-            Padding {
-                top: 10.0,
-                right: 20.0,
-                bottom: 8.0,
-                left: 20.0,
-            }
-        ),
+        widgets::card(t, column![list, hline(t), foot]).padding(Padding {
+            top: 10.0,
+            right: 20.0,
+            bottom: 8.0,
+            left: 20.0,
+        }),
     ]
     .spacing(GAP)
     .into()
@@ -1651,7 +1634,7 @@ fn people(app: &App) -> Option<Element<'_, Message>> {
         );
     }
     col = col.push(txt(p.footnote.clone(), 12.0, t.text_muted).line_height(1.5));
-    Some(card(t, col, Padding::new(20.0)))
+    Some(widgets::card(t, col).padding(Padding::new(20.0)).into())
 }
 
 // ---- sem dados ----
@@ -1694,10 +1677,8 @@ fn empty_card(app: &App) -> Element<'_, Message> {
     if let Some(connect) = shell::connect_phone_button(app) {
         copy = copy.push(Space::new().height(20)).push(connect);
     }
-    container(row![sketch, copy].spacing(56).align_y(Alignment::Center))
+    widgets::card(t, row![sketch, copy].spacing(56).align_y(Alignment::Center))
         .padding([56, 32])
-        .width(Length::Fill)
-        .style(theme::card(t))
         .into()
 }
 

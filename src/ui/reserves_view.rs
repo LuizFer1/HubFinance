@@ -54,19 +54,6 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .into()
 }
 
-/// Card de superficie, raio 8, sem borda.
-fn card<'a>(
-    t: &'static Tokens,
-    padding: Padding,
-    content: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    container(content)
-        .padding(padding)
-        .width(Length::Fill)
-        .style(theme::card(t))
-        .into()
-}
-
 fn pad(top: f32, x: f32, bottom: f32) -> Padding {
     Padding {
         top,
@@ -209,7 +196,9 @@ fn kpi_card<'a>(
     t: &'static Tokens,
     content: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    card(t, pad(18.0, 20.0, 18.0), content)
+    widgets::card(t, content)
+        .padding(pad(18.0, 20.0, 18.0))
+        .into()
 }
 
 fn total_card(app: &App) -> Element<'_, Message> {
@@ -471,9 +460,8 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
         ]
         .spacing(12)
         .align_y(Alignment::Center);
-        return card(
+        return widgets::card(
             t,
-            padding,
             column![
                 header,
                 Space::new().height(16),
@@ -481,7 +469,9 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
                     .size(13)
                     .color(t.text_muted),
             ],
-        );
+        )
+        .padding(padding)
+        .into();
     };
     let header = row![
         lifebuoy_box(t),
@@ -544,7 +534,7 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
         .push(essential_section(app, e.cost.as_ref(), inner_width))
         .push(Space::new().height(14))
         .push(eta);
-    card(t, padding, col)
+    widgets::card(t, col).padding(padding).into()
 }
 
 /// "de R$ 2.400,00" ao lado do saldo. Sem meta, nada: a pilula do cabecalho ja diz "Sem meta"
@@ -707,7 +697,7 @@ fn pots_card(app: &App) -> Element<'_, Message> {
     for p in &v.pots {
         col = col.push(widgets::hdivider(t)).push(pot_row(app, p));
     }
-    card(t, pad(18.0, 20.0, 8.0), col)
+    widgets::card(t, col).padding(pad(18.0, 20.0, 8.0)).into()
 }
 
 /// Icone e cor da linha de ritmo (tabela de `Pace` da spec).
@@ -849,11 +839,9 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
         .height(EVOLUTION_HEIGHT)
         .into()
     };
-    card(
-        t,
-        pad(18.0, 20.0, 20.0),
-        column![header, Space::new().height(18), body],
-    )
+    widgets::card(t, column![header, Space::new().height(18), body])
+        .padding(pad(18.0, 20.0, 20.0))
+        .into()
 }
 
 // ---- linha 4: movimentacoes ----
@@ -890,7 +878,7 @@ fn movements_card(app: &App) -> Element<'_, Message> {
     for m in &v.movements {
         col = col.push(widgets::hdivider(t)).push(movement_row(app, m));
     }
-    card(t, pad(18.0, 12.0, 8.0), col)
+    widgets::card(t, col).padding(pad(18.0, 12.0, 8.0)).into()
 }
 
 /// Tile de 32: guardar e seta para baixo no acento; retirar e seta para cima na cor de despesa.
@@ -1043,10 +1031,8 @@ fn empty_card(app: &App) -> Element<'_, Message> {
     } else {
         column![sketch, copy].spacing(32).into()
     };
-    container(body)
+    widgets::card(t, body)
         .padding([56.0, EMPTY_PADDING_X])
-        .width(Length::Fill)
-        .style(theme::card(t))
         .into()
 }
 

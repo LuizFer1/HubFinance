@@ -527,11 +527,7 @@ fn status_card(app: &App) -> Element<'_, Message> {
     if let Some(detail) = lines.detail {
         col = col.push(text(detail).size(12).line_height(1.45).color(t.text_muted));
     }
-    container(col)
-        .padding(14)
-        .width(Length::Fill)
-        .style(theme::card(t))
-        .into()
+    widgets::card(t, col).padding(14).into()
 }
 
 /// Escuro | Claro sem icone, como o design.
@@ -784,7 +780,8 @@ pub(super) fn thousands(n: usize) -> String {
 /// Hub que nao subiu: no lugar de qualquer tela, o motivo e onde ficam os dados.
 fn failed_card<'a>(app: &'a App, msg: &'a str) -> Element<'a, Message> {
     let t = app.tokens;
-    container(
+    widgets::card(
+        t,
         column![
             icons::icon(icons::WARNING_CIRCLE, 28.0, t.expense_fg),
             text("O hub não iniciou")
@@ -799,8 +796,6 @@ fn failed_card<'a>(app: &'a App, msg: &'a str) -> Element<'a, Message> {
         .spacing(8),
     )
     .padding(24)
-    .width(Length::Fill)
-    .style(theme::card(t))
     .into()
 }
 

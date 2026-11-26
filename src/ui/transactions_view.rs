@@ -424,12 +424,7 @@ fn table(app: &App) -> Element<'_, Message> {
     }
     // `padding(1)`: as faixas de dia sao opacas e de largura cheia, e o iced desenha a borda por
     // dentro; sem o respiro elas, os divisores e o hover da ultima linha cobrem a borda do card.
-    container(col)
-        .width(Length::Fill)
-        .padding(1)
-        .clip(true)
-        .style(theme::card(t))
-        .into()
+    widgets::card(t, col).padding(1).clip(true).into()
 }
 
 /// Tag de lancamento que nao conta nas somas ("Transferência", "Oculto").

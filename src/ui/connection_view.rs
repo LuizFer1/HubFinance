@@ -124,11 +124,7 @@ fn address_card(app: &App, card_width: f32) -> Element<'_, Message> {
             .into()
     };
     let body = column![address_head(app, inner), Space::new().height(20), body];
-    container(body)
-        .padding(24)
-        .width(Length::Fill)
-        .style(theme::card(t))
-        .into()
+    widgets::card(t, body).padding(24).into()
 }
 
 /// Quadro do QR (fundo `neutral_100` do escuro nos dois temas, raio 12, contorno `accent_700`)
@@ -565,11 +561,7 @@ fn about_card(app: &App) -> Element<'_, Message> {
         body = body.push(Space::new().height(4)).push(autostart);
     }
     let body = body.push(Space::new().height(4)).push(footer);
-    container(body)
-        .padding(24)
-        .width(Length::Fill)
-        .style(theme::card(t))
-        .into()
+    widgets::card(t, body).padding(24).into()
 }
 
 // ---- usuarios conectados ----
@@ -596,15 +588,13 @@ fn users_card(app: &App) -> Element<'_, Message> {
     }
     // Padding lateral de 12 (e nao 20) para o hover da linha passar 8 px do conteudo, como o
     // `margin: 0 -8px` do prototipo.
-    container(col)
+    widgets::card(t, col)
         .padding(Padding {
             top: 18.0,
             right: 12.0,
             bottom: 8.0,
             left: 12.0,
         })
-        .width(Length::Fill)
-        .style(theme::card(t))
         .into()
 }
 
@@ -813,7 +803,8 @@ fn certificate_card(app: &App, width: f32) -> Element<'_, Message> {
     } else {
         column![android, iphone].spacing(20).into()
     };
-    container(
+    widgets::card(
+        t,
         column![
             widgets::kicker_accent(t, "Certificado do hub"),
             Space::new().height(10),
@@ -839,8 +830,6 @@ fn certificate_card(app: &App, width: f32) -> Element<'_, Message> {
         .width(Length::Fill),
     )
     .padding(24)
-    .width(Length::Fill)
-    .style(theme::card(t))
     .into()
 }
 
@@ -887,15 +876,13 @@ fn activity_card(app: &App) -> Element<'_, Message> {
             left: 0.0,
         }),
     );
-    container(col)
+    widgets::card(t, col)
         .padding(Padding {
             top: 18.0,
             right: 20.0,
             bottom: 8.0,
             left: 20.0,
         })
-        .width(Length::Fill)
-        .style(theme::card(t))
         .into()
 }
 

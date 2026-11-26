@@ -54,10 +54,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
     if let Some(err) = &view.last_error {
         body = body.push(text(err.as_str()).size(13).color(t.expense_fg));
     }
-    container(body)
+    widgets::card(t, body)
         .padding(Padding::from([18, 20]))
-        .width(Length::Fill)
-        .style(theme::card(t))
         .into()
 }
 

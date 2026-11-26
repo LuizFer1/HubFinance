@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use iced::widget::{
     Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text, text_input,
 };
-use iced::{Alignment, Color, Element, Length, Padding};
+use iced::{Alignment, Color, Element, Length};
 
 use super::app::{App, Message, awaiting_cloud_consent};
 use super::assistant_settings_view;
@@ -57,7 +57,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     ]
     .spacing(8);
     let body: Element<'_, Message> = if app.analysis.findings.is_empty() {
-        card(
+        widgets::card(
             t,
             column![
                 widgets::kicker(t, "Nada a apontar"),
@@ -69,6 +69,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
             ]
             .spacing(6),
         )
+        .padding([18, 20])
+        .into()
     } else {
         column(app.analysis.findings.iter().map(|f| finding_card(app, f)))
             .spacing(GAP)
@@ -82,7 +84,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
     page = page.push(body);
     if matches!(app.snapshot.status, Status::Failed(_)) {
         // Sem o nucleo nao ha assistente; os achados (do ultimo snapshot) seguem valendo.
-        page = page.push(card(t, text(HUB_DOWN).size(14).color(t.text_muted)));
+        page = page
+            .push(widgets::card(t, text(HUB_DOWN).size(14).color(t.text_muted)).padding([18, 20]));
     } else {
         if let Some(chat) = chat_area(app) {
             page = page.push(chat);
@@ -237,7 +240,7 @@ fn chat_area(app: &App) -> Option<Element<'_, Message>> {
     );
     if awaiting {
         col = col.push(consent_preview(app, open));
-        return Some(card(t, col));
+        return Some(widgets::card(t, col).padding([18, 20]).into());
     }
     // Sem `on_input` o campo fica desabilitado enquanto ha resposta chegando.
     let mut input = text_input("Pergunte algo sobre estes números", &app.chat_input)
@@ -260,7 +263,7 @@ fn chat_area(app: &App) -> Option<Element<'_, Message>> {
         .style(theme::outline_accent(t))
         .on_press_maybe(can_send.then_some(Message::ChatSubmit));
     col = col.push(row![input, send].spacing(8).align_y(Alignment::Center));
-    Some(card(t, col))
+    Some(widgets::card(t, col).padding([18, 20]).into())
 }
 
 fn message_bubble<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<'a, Message> {
@@ -424,12 +427,12 @@ fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, 
     );
     // Caixa interna, nao card: ela ja mora num card. O `padding(4)` mantem o cursor da rolagem
     // longe do canto arredondado (o texto continua a 12 px: 4 + 8).
-    let envelope = container(
+    let envelope = widgets::inset(
+        t,
         scrollable(container(body).padding(8).width(Length::Fill)).style(theme::scrollbar(t)),
     )
     .height(220)
-    .padding(4)
-    .style(theme::inset(t));
+    .padding(4);
     let actions = row![
         Space::new().width(Length::Fill),
         button(text("Cancelar").size(13).font(fonts::INTER_MEDIUM))
@@ -572,7 +575,7 @@ fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
         let line = row![title, delete].spacing(8).align_y(Alignment::Center);
         col = col.push(rows::hover_row(app, &c.id, line, [0, 4], 8.0, 52.0));
     }
-    Some(card(t, col))
+    Some(widgets::card(t, col).padding([18, 20]).into())
 }
 
 /// O texto da prévia como aparece na tela: com "Ocultar valores" ligado cada R$ vira a máscara
@@ -596,7 +599,8 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
     // Fonte padrão do app (Inter Hub, com `tnum`: os dígitos alinham). O app não embute uma
     // monoespaçada, e a do sistema teria cobertura incerta para "—" e "−".
     // Caixa interna dentro do dialogo, com o mesmo respiro da previa para o cursor da rolagem.
-    let content = container(
+    let content = widgets::inset(
+        t,
         scrollable(
             container(text(preview).size(12).font(fonts::INTER).color(t.text))
                 .padding(8)
@@ -605,8 +609,7 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
         .style(theme::scrollbar(t)),
     )
     .height(Length::Fill)
-    .padding(4)
-    .style(theme::inset(t));
+    .padding(4);
     let close = button(text("Fechar").size(13).font(fonts::INTER_MEDIUM))
         .height(38)
         .padding([0, 16])
@@ -676,7 +679,7 @@ fn finding_card<'a>(app: &'a App, f: &'a Finding) -> Element<'a, Message> {
             .push(Space::new().height(4))
             .push(text(mask(app, action)).size(14).color(t.text_accent()));
     }
-    card(t, body)
+    widgets::card(t, body).padding([18, 20]).into()
 }
 
 /// "Ocultar valores": os textos dos achados trazem o dinheiro ja formatado ("R$ 1.234,56"),
@@ -723,14 +726,6 @@ fn mask_str(s: &str) -> String {
     }
     out.push_str(rest);
     out
-}
-
-fn card<'a>(t: &'static Tokens, content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    container(content)
-        .padding(Padding::from([18, 20]))
-        .width(Length::Fill)
-        .style(theme::card(t))
-        .into()
 }
 
 #[cfg(test)]

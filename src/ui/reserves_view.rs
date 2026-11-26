@@ -476,16 +476,21 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
 }
 
 /// "1", "2", …, "6 meses": um rotulo sob cada segmento, com a mesma largura.
+/// Rotulo do segmento `i` de `n`: so o numero, e no ultimo a unidade ("6 meses"; "1 mês" na meta
+/// de um mes so, que saia "1 meses").
+fn meter_label(i: usize, n: usize) -> String {
+    match (i == n, i) {
+        (true, 1) => "1 mês".to_string(),
+        (true, _) => format!("{i} meses"),
+        (false, _) => i.to_string(),
+    }
+}
+
 fn meter_labels<'a>(t: &'static Tokens, e: &EmergencyView) -> Element<'a, Message> {
     let n = e.segments.len();
     iced::widget::Row::with_children((1..=n).map(|i| {
-        let label = if i == n {
-            format!("{i} meses")
-        } else {
-            i.to_string()
-        };
         container(
-            text(label)
+            text(meter_label(i, n))
                 .size(11)
                 .wrapping(Wrapping::None)
                 .color(t.text_muted),
@@ -1003,7 +1008,10 @@ mod tests {
                 suffix: "de 6 meses".to_string()
             }
         );
-        // Meta de um mes so: o complemento concorda com o numero.
+        // Meta de um mes so: o complemento e o rotulo do medidor concordam com o numero.
+        assert_eq!(meter_label(1, 1), "1 mês");
+        assert_eq!(meter_label(6, 6), "6 meses");
+        assert_eq!(meter_label(2, 6), "2");
         let one = EmergencyView {
             multiple: 1,
             ..emergency(Some(0.5), "0,5")

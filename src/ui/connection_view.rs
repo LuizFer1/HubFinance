@@ -568,7 +568,9 @@ fn flow_body(app: &App, flow: ConnectFlow, modal: bool) -> Element<'_, Message> 
     ]
     .width(Length::Fill);
     col = if modal {
-        col.push(Space::new().height(Length::Fill))
+        // A caixa tem altura fixa: a coluna a preenche e o rodape fica sempre no mesmo lugar.
+        col.height(Length::Fill)
+            .push(Space::new().height(Length::Fill))
     } else {
         col.push(Space::new().height(24))
     };

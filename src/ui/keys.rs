@@ -63,12 +63,7 @@ pub fn shortcut(app: &App, press: &KeyPress) -> Option<Message> {
     if press.key == Key::Named(Named::Escape) {
         return escape(app);
     }
-    if app.confirm_remove.is_some()
-        || app.envelope_preview.is_some()
-        || connection_view::dialog_open(app)
-        || app.assistant_setup.is_some()
-        || analysis_view::shown_consent(app).is_some()
-    {
+    if app.any_dialog_open() {
         return None;
     }
     if press.key == Key::Named(Named::Tab) && !mods.control() && !mods.alt() {

@@ -323,6 +323,7 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
         DIALOG_WIDTH,
         details.then(|| dialog_height(app.window_size.height)),
         Message::CloseAssistantSetup,
+        app.motion.scrim(),
     ))
 }
 

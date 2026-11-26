@@ -711,10 +711,11 @@ pub fn list_row(
     }
 }
 
-/// Fundo do dialogo: preto a 55 % sobre a janela inteira.
-pub fn scrim() -> impl Fn(&Theme) -> container::Style {
-    |_| container::Style {
-        background: bg(Color::from_rgba8(0, 0, 0, 0.55)),
+/// Fundo do dialogo: preto a 55 % sobre a janela inteira. `fraction` (0 a 1) e a entrada
+/// animada (`ui::motion`): a opacidade sobe de 0 aos 55 %.
+pub fn scrim(fraction: f32) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: bg(Color::from_rgba8(0, 0, 0, 0.55 * fraction.clamp(0.0, 1.0))),
         ..container::Style::default()
     }
 }

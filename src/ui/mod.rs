@@ -10,6 +10,7 @@ mod fonts;
 mod icons;
 mod keys;
 mod measure;
+mod motion;
 mod remove_view;
 mod reserves_view;
 mod rows;

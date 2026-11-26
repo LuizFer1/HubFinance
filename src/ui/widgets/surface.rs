@@ -215,6 +215,8 @@ fn dialog_width(window_width: f32, max_width: f32) -> f32 {
 /// Dialogo sobre o scrim (nivel 2): caixa `surface` de raio 12 com `shadow_lg` e padding 24,
 /// ate `max_width` de largura (menos a margem na janela estreita) e, com `height`, altura fixa.
 /// A caixa e `opaque`: o clique dentro dela nao chega ao scrim, que fecha com `dismiss`.
+/// `scrim` e a fracao da opacidade do fundo (`Motion::scrim`): so ele anima, a caixa entra
+/// inteira, para o texto nunca aparecer pela metade.
 pub fn dialog<'a, M: Clone + 'a>(
     t: &'static Tokens,
     content: impl Into<Element<'a, M>>,
@@ -222,6 +224,7 @@ pub fn dialog<'a, M: Clone + 'a>(
     max_width: f32,
     height: Option<f32>,
     dismiss: M,
+    scrim: f32,
 ) -> Element<'a, M> {
     let dialog_box = container(content)
         .width(dialog_width(window_width, max_width))
@@ -236,7 +239,7 @@ pub fn dialog<'a, M: Clone + 'a>(
             container(Space::new())
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(theme::scrim()),
+                .style(theme::scrim(scrim)),
         )
         .on_press(dismiss),
     );
@@ -327,8 +330,8 @@ mod tests {
                 Some(text("Ação").into()),
             );
             let _: Element<'_, ()> = empty_copy(t, "Nada", "Corpo", false).into();
-            let _: Element<'_, u8> = dialog(t, text("Corpo"), 1280.0, 460.0, None, 1);
-            let _: Element<'_, u8> = dialog(t, text("Corpo"), 1280.0, 720.0, Some(640.0), 1);
+            let _: Element<'_, u8> = dialog(t, text("Corpo"), 1280.0, 460.0, None, 1, 0.5);
+            let _: Element<'_, u8> = dialog(t, text("Corpo"), 1280.0, 720.0, Some(640.0), 1, 1.0);
             let _: Element<'_, ()> = banner(
                 t,
                 Tone::Warning,

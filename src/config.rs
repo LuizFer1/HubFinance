@@ -115,6 +115,8 @@ pub struct UiPrefs {
     pub system_dark: bool,
     pub autostart: Option<bool>,
     pub hide_values: bool,
+    /// "Reduzir movimento" de Ajustes: desliga as tres animacoes da janela (spec 11).
+    pub reduce_motion: bool,
 }
 
 /// O `ui.json` como esta no disco.
@@ -141,6 +143,9 @@ struct PrefsFile {
     /// de quem nunca usou o olho fica igual ao de antes.
     #[serde(default, skip_serializing_if = "is_false")]
     hide_values: bool,
+    /// "Reduzir movimento": desligado nao vai para o arquivo, e um hub antigo ignora o campo.
+    #[serde(default, skip_serializing_if = "is_false")]
+    reduce_motion: bool,
 }
 
 impl From<PrefsFile> for UiPrefs {
@@ -155,6 +160,7 @@ impl From<PrefsFile> for UiPrefs {
             system_dark,
             autostart: file.autostart,
             hide_values: file.hide_values,
+            reduce_motion: file.reduce_motion,
         }
     }
 }
@@ -171,6 +177,7 @@ impl From<UiPrefs> for PrefsFile {
             follow_system: prefs.theme == ThemeMode::System,
             autostart: prefs.autostart,
             hide_values: prefs.hide_values,
+            reduce_motion: prefs.reduce_motion,
         }
     }
 }
@@ -324,6 +331,23 @@ mod tests {
     }
 
     #[test]
+    fn reduzir_movimento_grava_le_de_volta_e_desligado_nao_aparece() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefs = UiPrefs {
+            reduce_motion: true,
+            ..UiPrefs::default()
+        };
+        prefs.save(dir.path()).unwrap();
+        assert_eq!(UiPrefs::load(dir.path()), prefs);
+        UiPrefs::default().save(dir.path()).unwrap();
+        let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
+        assert!(!raw.contains("reduce_motion"), "{raw}");
+        // Arquivo de um hub anterior, sem o campo: desligado.
+        std::fs::write(dir.path().join("ui.json"), r#"{"theme":"light"}"#).unwrap();
+        assert!(!UiPrefs::load(dir.path()).reduce_motion);
+    }
+
+    #[test]
     fn tema_sistema_grava_o_modo_resolvido_e_le_de_volta() {
         let dir = tempfile::tempdir().unwrap();
         for (system_dark, stored) in [(false, "\"light\""), (true, "\"dark\"")] {
@@ -370,10 +394,12 @@ mod tests {
             system_dark: false,
             autostart: Some(false),
             hide_values: true,
+            reduce_motion: true,
         }
         .save(dir.path())
         .unwrap();
         let raw = std::fs::read(dir.path().join("ui.json")).unwrap();
+        assert!(String::from_utf8_lossy(&raw).contains("\"reduce_motion\": true"));
         let old: OldPrefs = serde_json::from_slice(&raw).unwrap();
         assert_eq!(old.theme, OldTheme::Light);
         assert_eq!(old.autostart, Some(false));

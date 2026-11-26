@@ -273,6 +273,7 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
         460.0,
         None,
         Message::CancelRemove,
+        app.motion.scrim(),
     ))
 }
 

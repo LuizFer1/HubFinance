@@ -6,7 +6,7 @@
 use std::borrow::Cow;
 
 use iced::widget::{
-    Space, button, column, container, markdown, rich_text, row, scrollable, text, text_input,
+    Space, button, column, container, markdown, rich_text, row, scrollable, span, text, text_input,
 };
 use iced::{Alignment, Color, Element, Length, Padding};
 
@@ -652,8 +652,21 @@ fn streaming_view<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> {
     } else {
         Cow::Borrowed(partial)
     };
+    // Cursor que pisca no fim do texto (`ui::motion`). Apagado fica transparente, e nao some:
+    // o texto nao muda de largura a cada piscada. O "|" e o que a Inter tem; os blocos (U+258x)
+    // cairiam numa fonte do sistema.
+    let cursor = if app.motion.cursor_on() {
+        t.text_accent()
+    } else {
+        Color::TRANSPARENT
+    };
     column![
-        text(shown).size(14).line_height(1.5).color(t.text),
+        rich_text![
+            span::<(), _>(shown).color(t.text),
+            span(" |").color(cursor).font(fonts::INTER_MEDIUM),
+        ]
+        .size(14)
+        .line_height(1.5),
         widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Parar")
             .on_press(Message::ChatStop),
     ]
@@ -1100,6 +1113,7 @@ pub(super) fn consent_dialog(app: &App) -> Option<Element<'_, Message>> {
         640.0,
         Some(height),
         Message::ClosePreview,
+        app.motion.scrim(),
     ))
 }
 
@@ -1225,6 +1239,7 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
         720.0,
         Some(height),
         Message::CloseEnvelope,
+        app.motion.scrim(),
     ))
 }
 

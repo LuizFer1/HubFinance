@@ -25,7 +25,7 @@ const SECTION_LABEL: f32 = 120.0;
 pub fn view(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let mut sections: Vec<Element<'_, Message>> = vec![
-        section(t, "Aparência", vec![theme_row(app)]),
+        section(t, "Aparência", vec![theme_row(app), reduce_motion_row(app)]),
         section(t, "Privacidade", vec![hide_values_row(app)]),
     ];
     if let Some(rows) = startup_rows(app) {
@@ -83,6 +83,26 @@ fn theme_row(app: &App) -> Element<'_, Message> {
                 option("Claro", ThemeMode::Light),
                 option("Sistema", ThemeMode::System),
             ],
+        ),
+    )
+}
+
+/// Desliga as tres animacoes (scrim, toast, cursor da resposta): o estado final aparece na hora.
+fn reduce_motion_row(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    widgets::settings_row(
+        t,
+        "Reduzir movimento",
+        Some(
+            text("Sem animação ao abrir diálogos, nos avisos e no cursor da resposta.")
+                .size(type_scale::META)
+                .color(t.text_muted)
+                .into(),
+        ),
+        widgets::toggle(
+            t,
+            app.motion.reduce(),
+            Some(|_| Message::ToggleReduceMotion),
         ),
     )
 }

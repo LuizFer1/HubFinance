@@ -522,6 +522,7 @@ pub(super) fn connect_dialog(app: &App) -> Option<Element<'_, Message>> {
         FLOW_WIDTH,
         Some(dialog_height(app.window_size.height)),
         Message::ConnectClose,
+        app.motion.scrim(),
     ))
 }
 

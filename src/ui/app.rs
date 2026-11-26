@@ -265,6 +265,8 @@ pub struct App {
     pub(super) tooltip: String,
     /// Ultimo desenho mandado ao icone da bandeja; nasce `Normal`, que e o do `install`.
     pub(super) tray_icon: crate::desktop::tray::TrayIcon,
+    /// As tres animacoes (scrim, toast, cursor) e o "Reduzir movimento".
+    pub(super) motion: super::motion::Motion,
     /// "Iniciar com o Windows" como o sistema diz (cache do registro, lido no boot e depois de
     /// cada troca); `None` = sistema sem a opcao, e a secao some de Ajustes.
     pub(super) autostart: Option<bool>,
@@ -334,6 +336,10 @@ pub enum Message {
     SelectBook(Book),
     /// Olho do cabecalho do Dashboard: "Ocultar valores" / "Mostrar valores".
     ToggleHideValues,
+    /// "Reduzir movimento" de Ajustes.
+    ToggleReduceMotion,
+    /// Um quadro de `window::frames()`, so enquanto alguma animacao anda.
+    Frame(Instant),
     /// "Ver todas as N" de "Próximas saídas": abre a lista inteira no card.
     ExpandUpcoming,
     /// Abre ou fecha o menu de categoria (o botao alterna, como no prototipo).
@@ -545,6 +551,7 @@ impl App {
             desktop,
             tooltip: String::new(),
             tray_icon: crate::desktop::tray::TrayIcon::Normal,
+            motion: super::motion::Motion::new(prefs.reduce_motion, Instant::now()),
         };
         app.refresh_people();
         app.sync_tray();
@@ -594,6 +601,42 @@ impl App {
             system_dark: self.theme == ThemeMode::System && self.system_dark,
             autostart: self.autostart_pref,
             hide_values: self.hide_values,
+            reduce_motion: self.motion.reduce(),
+        }
+    }
+
+    /// Algum dialogo sobre o scrim. O mesmo criterio do Esc e dos atalhos bloqueados
+    /// (`keys::shortcut`) e da pilha de `shell::root`.
+    pub(super) fn any_dialog_open(&self) -> bool {
+        self.confirm_remove.is_some()
+            || self.envelope_preview.is_some()
+            || connection_view::dialog_open(self)
+            || self.assistant_setup.is_some()
+            || super::analysis_view::shown_consent(self).is_some()
+    }
+
+    /// O que as animacoes olham: dialogo, toast (o "Desfazer" ganha do aviso, como na tela) e
+    /// resposta chegando com a Analise na tela.
+    fn scene(&self) -> super::motion::Scene {
+        use super::motion::ShownToast;
+        let toast = match (&self.pending_removal, &self.notice) {
+            (Some(pending), _) => Some(ShownToast {
+                text: pending.toast.clone(),
+                undo: true,
+            }),
+            (None, Some((notice, _))) => Some(ShownToast {
+                text: notice.clone(),
+                undo: false,
+            }),
+            (None, None) => None,
+        };
+        let assistant = &self.snapshot.assistant;
+        super::motion::Scene {
+            dialog: self.any_dialog_open(),
+            toast,
+            streaming: self.screen == Screen::Analysis
+                && assistant.busy
+                && assistant.streaming.is_some(),
         }
     }
 
@@ -1081,6 +1124,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
     if app.connect.is_some() && !app.connect_showing() {
         app.close_connect();
     }
+    // Uma vez por mensagem, depois de tudo: a deteccao de "abriu agora" nao depende de qual
+    // dos cinco dialogos (ou qual caminho, snapshot incluso) mudou o estado.
+    let scene = app.scene();
+    app.motion.sync(scene, Instant::now());
     task
 }
 
@@ -2029,6 +2076,17 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
         Message::FocusNext => super::keys::focus(true),
         Message::FocusPrevious => super::keys::focus(false),
         Message::Noop => Task::none(),
+        Message::Frame(at) => {
+            app.motion.frame(at);
+            Task::none()
+        }
+        Message::ToggleReduceMotion => {
+            let reduce = !app.motion.reduce();
+            app.motion.set_reduce(reduce);
+            Task::perform(save_prefs(app.prefs(), app.prefs_dir.clone()), |_| {
+                Message::Noop
+            })
+        }
     }
 }
 
@@ -2154,15 +2212,21 @@ fn is_up(snap: &Snapshot) -> bool {
     matches!(snap.status, Status::Running | Status::NoNetwork)
 }
 
-pub fn subscription(_app: &App) -> Subscription<Message> {
-    Subscription::batch([
+pub fn subscription(app: &App) -> Subscription<Message> {
+    let mut subs = vec![
         window::close_requests().map(|_| Message::CloseRequested),
         window::close_events().map(Message::WindowClosed),
         window::resize_events().map(|(_, size)| Message::Resized(size)),
         Subscription::run(ticks).map(|()| Message::Tick),
         super::keys::subscription(),
         iced::system::theme_changes().map(Message::SystemTheme),
-    ])
+    ];
+    // Quadros so enquanto algo anda: ligado o tempo todo, a janela redesenharia a 60 por
+    // segundo parada.
+    if app.motion.animating() {
+        subs.push(window::frames().map(Message::Frame));
+    }
+    Subscription::batch(subs)
 }
 
 pub fn view(app: &App, window: window::Id) -> Element<'_, Message> {
@@ -2292,6 +2356,40 @@ pub(super) mod tests {
             assert!(std::time::Instant::now() < deadline, "ui.json nao gravado");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    #[test]
+    fn dialogo_liga_os_quadros_so_durante_a_entrada() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        assert!(!app.motion.animating(), "parada, sem quadros");
+        let _ = update(&mut app, Message::ShowEnvelope);
+        assert!(app.any_dialog_open());
+        assert!(app.motion.animating());
+        let _ = update(
+            &mut app,
+            Message::Frame(Instant::now() + super::super::motion::SCRIM_IN),
+        );
+        assert!(!app.motion.animating());
+        assert_eq!(app.motion.scrim(), 1.0);
+    }
+
+    #[test]
+    fn reduzir_movimento_grava_e_sobrevive_a_outra_preferencia() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::ToggleReduceMotion);
+        assert!(app.motion.reduce());
+        wait_prefs(dir.path(), |p| p.reduce_motion);
+        let _ = update(&mut app, Message::ShowEnvelope);
+        assert!(!app.motion.animating(), "sem animacao com a opcao ligada");
+        assert_eq!(app.motion.scrim(), 1.0);
+        // A gravacao e do arquivo inteiro: trocar o olho nao apaga a escolha.
+        let _ = update(&mut app, Message::ToggleHideValues);
+        wait_prefs(dir.path(), |p| p.hide_values);
+        assert!(UiPrefs::load(dir.path()).reduce_motion);
+        let _ = update(&mut app, Message::ToggleReduceMotion);
+        wait_prefs(dir.path(), |p| !p.reduce_motion);
     }
 
     #[test]

@@ -52,17 +52,28 @@ pub fn root(app: &App) -> Element<'_, Message> {
     if let Some(preview) = analysis_view::envelope_dialog(app) {
         layers = layers.push(preview);
     }
-    // O "Desfazer" ganha do aviso: tem acao e prazo que manda algo ao nucleo.
-    if let Some(pending) = &app.pending_removal {
-        layers = layers.push(toast(app.tokens, &pending.toast, true));
-    } else if let Some((notice, _)) = &app.notice {
-        layers = layers.push(toast(app.tokens, notice, false));
+    // O "Desfazer" ganha do aviso (tem acao e prazo que manda algo ao nucleo); a escolha e
+    // feita em `App::scene`, e o `motion` guarda o que desce depois de sair do estado.
+    if let Some((progress, shown, live)) = app.motion.toast() {
+        layers = layers.push(toast(app.tokens, &shown.text, shown.undo, live, progress));
     }
     layers.into()
 }
 
-/// Toast de 40 px centralizado embaixo, com "Desfazer" quando `undo`.
-fn toast<'a>(t: &'static Tokens, message: &'a str, undo: bool) -> Element<'a, Message> {
+/// Altura do toast mais a margem de baixo: o quanto ele sobe da borda da janela.
+const TOAST_SLOT: f32 = 40.0 + 24.0;
+
+/// Toast de 40 px centralizado embaixo, com "Desfazer" quando `undo`. `progress` (0 a 1) e a
+/// subida: uma faixa de `TOAST_SLOT * progress` presa a borda de baixo, que corta o toast, e o
+/// faz nascer da borda. O que desce (`live` falso) ja saiu do estado: o "Desfazer" fica sem
+/// clique, porque a remocao ja foi enviada.
+fn toast<'a>(
+    t: &'static Tokens,
+    message: &'a str,
+    undo: bool,
+    live: bool,
+    progress: f32,
+) -> Element<'a, Message> {
     let mut content = row![
         icons::icon(icons::CHECK_CIRCLE, 14.0, t.income_fg),
         text(message).size(13).color(t.text),
@@ -70,10 +81,12 @@ fn toast<'a>(t: &'static Tokens, message: &'a str, undo: bool) -> Element<'a, Me
     .spacing(12)
     .align_y(Alignment::Center);
     if undo {
-        content = content.push(
-            widgets::action_button(t, ButtonKind::Ghost, ButtonSize::Compact, "Desfazer")
-                .on_press(Message::UndoRemove),
-        );
+        let button = widgets::action_button(t, ButtonKind::Ghost, ButtonSize::Compact, "Desfazer");
+        content = content.push(if live {
+            button.on_press(Message::UndoRemove)
+        } else {
+            button
+        });
     }
     let toast_box = container(content)
         .height(40)
@@ -85,15 +98,15 @@ fn toast<'a>(t: &'static Tokens, message: &'a str, undo: bool) -> Element<'a, Me
         })
         .align_y(Alignment::Center)
         .style(theme::toast(t));
-    container(opaque(toast_box))
+    let slot = container(opaque(toast_box))
+        .height(TOAST_SLOT * progress.clamp(0.0, 1.0))
+        .align_y(Alignment::Start)
+        .clip(true);
+    container(slot)
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(Alignment::Center)
         .align_y(Alignment::End)
-        .padding(Padding {
-            bottom: 24.0,
-            ..Padding::ZERO
-        })
         .into()
 }
 

@@ -13,7 +13,7 @@ use iced::widget::{Space, column, container, qr_code, row, text};
 use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
 use super::app::{App, CopyTarget, Message, Screen};
-use super::theme::{self, ButtonKind, ButtonSize, Tokens, space, type_scale};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, radius, size, space, type_scale};
 use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
 use super::{fonts, icons, measure, rows, shell, time, widgets};
 use crate::dashboard::people::{Person, presence};
@@ -23,9 +23,9 @@ use crate::hub::snapshot::{ActivityKind, Snapshot, Status};
 /// Largura minima de cada card da grade antes de empilhar (`minmax(420px, 1fr)`). Na janela
 /// minima (1024) o conteudo tem 728 e fica numa coluna so, com o endereco primeiro.
 const GRID_MIN: f32 = 420.0;
-const GAP: f32 = 14.0;
-/// Padding dos cards de endereco e do fluxo.
-const CARD_PAD: f32 = 24.0;
+const GAP: f32 = space::BETWEEN_CARDS;
+/// Padding dos cards de endereco e do fluxo: o de todo card.
+const CARD_PAD: f32 = space::CARD;
 /// O QR do passo 3: 220 px (spec 8.4), contando a zona de silencio que o widget do iced
 /// desenha (2 modulos de cada lado).
 const QR_SIZE: f32 = 220.0;
@@ -582,9 +582,9 @@ fn flow_body(app: &App, flow: ConnectFlow, modal: bool) -> Element<'_, Message> 
     };
     let mut col = column![
         head,
-        Space::new().height(14),
+        Space::new().height(space::L),
         progress,
-        Space::new().height(20),
+        Space::new().height(space::XL),
         body
     ]
     .width(Length::Fill);
@@ -711,6 +711,7 @@ fn certificate_step(app: &App, os: PhoneOs) -> Element<'_, Message> {
         switch,
         steps,
     ]
+    // Validado; fora da escala de proposito.
     .spacing(14)
     .width(Length::Fill)
     .into()
@@ -719,6 +720,7 @@ fn certificate_step(app: &App, os: PhoneOs) -> Element<'_, Message> {
 /// Passo 3: QR e codigo a esquerda, os passos e o endereco a direita.
 fn pair_step(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
+    // Validado; fora da escala de proposito.
     let mut info = column![].spacing(10).width(Length::Fill);
     for (i, line) in PAIR_STEPS.iter().enumerate() {
         let n = u8::try_from(i + 1).unwrap_or(u8::MAX);
@@ -853,8 +855,8 @@ fn qr_frame<'a>(
             background: Some(theme::DARK.neutral_100.into()),
             border: Border {
                 color: t.accent_700,
-                width: 1.0,
-                radius: 12.0.into(),
+                width: size::BORDER,
+                radius: radius::DIALOG.into(),
             },
             ..container::Style::default()
         })
@@ -892,7 +894,7 @@ mod tests {
         assert_eq!(widgets::FIELD_SPACING, 10.0);
         for window in 1024..=2560 {
             // Mesma conta de `shell::content_width`; `address_inner` e a que a tela usa, nas
-            // duas disposicoes (uma coluna ate 853 de conteudo, duas dai em diante).
+            // duas disposicoes (uma coluna ate 855 de conteudo, duas dai em diante).
             let content = window as f32 - 232.0 - 64.0;
             let inner = address_inner(content);
             let size = field_value_size(url, inner);
@@ -903,8 +905,9 @@ mod tests {
         }
         // Na janela minima (728 de conteudo) e uma coluna so, com o card na largura toda.
         assert!(!two_columns(728.0));
-        assert_eq!(address_inner(728.0), 728.0 - 48.0);
-        assert!(two_columns(854.0));
+        assert_eq!(address_inner(728.0), 728.0 - 2.0 * space::CARD);
+        assert!(!two_columns(855.0));
+        assert!(two_columns(856.0));
         // Com espaco, fica no tamanho do design.
         assert_eq!(field_value_size(url, 600.0), 15.0);
     }

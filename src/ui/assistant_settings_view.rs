@@ -427,6 +427,7 @@ fn local_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
         widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Regular, test_label)
             .on_press_maybe((!view.listing && port.is_some()).then_some(Message::SetupTest)),
     ]
+    // Validado; fora da escala de proposito.
     .spacing(10)
     .align_y(Alignment::Center);
     let mut section = column![port_row].spacing(12);

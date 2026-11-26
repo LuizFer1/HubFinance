@@ -89,9 +89,13 @@ const fn rgb(c: Rgb) -> Color {
 
 // ---- escalas (relatorio Grafite · Mesa 7.4) ----
 //
-// Uma regua para todas as telas: hoje convivem tres geracoes de UI (14 contra 16 entre cards,
-// padding de 18, 20 e 24, oito alturas de botao). As telas migram para estas constantes uma a
-// uma nas proximas tarefas; ate la, valor fora da escala numa tela e divida, nao regra nova.
+// Uma regua para todas as telas: antes conviviam tres geracoes de UI (14 contra 16 entre cards,
+// padding de 18, 20 e 24, oito alturas de botao). Valor fora da escala numa tela e divida, nao
+// regra nova. Isentos de proposito: o Resumo (`dashboard_view.rs`), de onde a escala foi
+// derivada e que o dono validou como esta, e os pontos marcados "Validado; fora da escala de
+// proposito" (respiros do card de status, da pagina e do cabecalho em `shell.rs`, do passo 2 e
+// do passo 3 em `connection_view.rs`, da linha da porta em `assistant_settings_view.rs` e do
+// passo numerado em `widgets/mod.rs`).
 
 /// Espacamento. Os valores 3, 5, 7, 10, 14 e 28 que as telas ainda usam arredondam para o
 /// vizinho daqui.
@@ -759,7 +763,7 @@ pub fn segment(
             neutral_layer(t, status)
         },
         text_color: if active { t.text } else { t.text_soft() },
-        border: rounded(6.0),
+        border: rounded(radius::INSET),
         ..button::Style::default()
     })
 }
@@ -770,7 +774,7 @@ pub fn icon_button(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> but
     disabled_aware(t, move |_, status| button::Style {
         background: neutral_layer(t, status),
         text_color: t.text_soft(),
-        border: rounded(8.0),
+        border: rounded(radius::CONTROL),
         ..button::Style::default()
     })
 }
@@ -788,7 +792,7 @@ pub fn seg_option(
             neutral_layer(t, status)
         },
         text_color: if active { t.accent_200 } else { t.text_soft() },
-        border: rounded(6.0),
+        border: rounded(radius::INSET),
         ..button::Style::default()
     })
 }
@@ -1029,7 +1033,7 @@ pub fn menu_item(
             None => None,
         },
         text_color: t.text,
-        border: rounded(6.0),
+        border: rounded(radius::INSET),
         ..button::Style::default()
     })
 }

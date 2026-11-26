@@ -20,7 +20,8 @@ use crate::assistant::settings::{ProviderChoice, Settings};
 use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
 use crate::dashboard::money::{MASK, MASK_DIGITS, MINUS, group_thousands};
 
-const GAP: f32 = 14.0;
+/// Entre os cards da tela.
+const GAP: f32 = space::BETWEEN_CARDS;
 
 /// Largura do painel do assistente (8.5).
 const ASSISTANT_WIDTH: f32 = 400.0;
@@ -680,7 +681,10 @@ fn message_view<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<
             container(body)
                 .padding([8, 12])
                 .max_width(REPLY_MAX)
-                .style(theme::outlined(theme::alpha(t.expense, 0.55), 10.0))
+                .style(theme::outlined(
+                    theme::alpha(t.expense, 0.55),
+                    radius::CONTROL,
+                ))
                 .into()
         }
     }

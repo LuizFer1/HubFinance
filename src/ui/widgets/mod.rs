@@ -190,6 +190,7 @@ pub fn step<'a, M: 'a>(t: &'static Tokens, n: u8, content: Element<'a, M>) -> El
     .center(20)
     .style(theme::fill(t.accent_900, 10.0));
     row![number, container(content).width(Length::Fill)]
+        // Validado; fora da escala de proposito.
         .spacing(10)
         .align_y(Alignment::Start)
         .into()
@@ -245,7 +246,7 @@ pub fn month_picker<'a, M: Clone + 'a>(
         .align_y(Alignment::Center),
     )
     .padding(1)
-    .style(theme::outlined(t.neutral_800, 8.0))
+    .style(theme::outlined(t.neutral_800, theme::radius::CONTROL))
     .into()
 }
 

@@ -263,9 +263,9 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
         t,
         column![
             header,
-            Space::new().height(14),
+            Space::new().height(space::L),
             body,
-            Space::new().height(22),
+            Space::new().height(space::XXL),
             buttons
         ]
         .width(Length::Fill),

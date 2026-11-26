@@ -383,7 +383,7 @@ fn custom_emergency_name(name: &str) -> Option<&str> {
 fn lifebuoy_box<'a>(t: &'static Tokens) -> Element<'a, Message> {
     container(icons::icon(icons::LIFEBUOY, 18.0, t.accent_300))
         .center(36)
-        .style(theme::outlined(t.accent, 8.0))
+        .style(theme::outlined(t.accent, theme::radius::CONTROL))
         .into()
 }
 

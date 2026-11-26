@@ -174,6 +174,8 @@ pub fn empty_icon<'a, M: 'a>(t: &'static Tokens, glyph: &'static str) -> Element
         .style(move |_: &iced::Theme| container::Style {
             border: iced::Border {
                 color: ring,
+                // 1,5 e o anel do avatar (spec 9): o icone de vazio repete o circulo do
+                // avatar dos conectados, e nao a borda de 1 px dos cards.
                 width: 1.5,
                 radius: (size::CTRL_L / 2.0).into(),
             },

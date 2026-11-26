@@ -221,12 +221,8 @@ fn section(app: &App, s: Section, width: f32) -> Element<'_, Message> {
         Section::Empty => empty_section(app),
         Section::Business => business(app, width),
         Section::HowAmI => how_am_i(app, width),
-        Section::Reserve => widgets::card(t, reserve_body(app, width - 40.0))
-            .padding(Padding::new(20.0))
-            .into(),
-        Section::History => widgets::card(t, history_body(app))
-            .padding(Padding::new(20.0))
-            .into(),
+        Section::Reserve => widgets::card(t, reserve_body(app, width - 40.0)).into(),
+        Section::History => widgets::card(t, history_body(app)).into(),
         Section::WhereItWent => where_it_went(app, width),
         Section::WhatsNext => whats_next(app, width),
         Section::Recent => recent(app),
@@ -402,8 +398,7 @@ fn business(app: &App, width: f32) -> Element<'_, Message> {
                 txt(b.note.clone(), 12.0, t.text_muted),
             ]
             .spacing(16)
-        )
-        .padding(Padding::new(20.0)),
+        ),
     ]
     .spacing(GAP)
     .into()
@@ -1522,7 +1517,7 @@ fn people(app: &App) -> Option<Element<'_, Message>> {
         );
     }
     col = col.push(txt(p.footnote.clone(), 12.0, t.text_muted).line_height(1.5));
-    Some(widgets::card(t, col).padding(Padding::new(20.0)).into())
+    Some(widgets::card(t, col).into())
 }
 
 // ---- sem dados ----
@@ -1603,7 +1598,7 @@ fn first_use_card(app: &App) -> Element<'_, Message> {
         .push(first_use_step(t, 2, None))
         .push(first_use_step(t, 3, None))
         .push(lan_note(t));
-    widgets::card(t, col).padding(Padding::new(20.0)).into()
+    widgets::card(t, col).into()
 }
 
 /// Ha aparelho pareado mas nada chegou: quem o hub espera e o passo que falta (o 3, o sync).
@@ -1619,7 +1614,7 @@ fn waiting_card(app: &App, line: String) -> Element<'_, Message> {
         col = col.push(note);
     }
     col = col.push(first_use_step(t, 3, None)).push(lan_note(t));
-    widgets::card(t, col).padding(Padding::new(20.0)).into()
+    widgets::card(t, col).into()
 }
 
 /// Aviso dos cards de primeiro uso e de espera quando o computador esta sem rede local: os

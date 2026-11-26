@@ -498,7 +498,7 @@ pub(super) fn opening(app: &App) -> Element<'_, Message> {
         container(Space::new())
             .width(Length::Fill)
             .height(height)
-            .style(theme::fill(t.surface_2, 8.0))
+            .style(theme::fill(t.surface_2, theme::radius::CARD))
     };
     column![
         text(OPENING_TEXT).size(13).color(t.text_muted),
@@ -723,9 +723,11 @@ fn status_card(app: &App) -> Element<'_, Message> {
             halo_dot(lines.dot),
             text(lines.title).size(13).color(t.text)
         ]
+        // Validado; fora da escala de proposito.
         .spacing(5)
         .align_y(Alignment::Center)
     ]
+    // Validado; fora da escala de proposito.
     .spacing(5);
     if let Some(address) = lines.address {
         col = col.push(text(address).size(12).color(t.text_muted));
@@ -770,6 +772,7 @@ fn content(app: &App) -> Element<'_, Message> {
     // ele comeria a altura de toda tela ate a pessoa decidir. Excecao: em Lancamentos, que rola
     // so as linhas (`owns_scroll`), ele fica fixo acima dos filtros e tira altura das linhas ate
     // a pessoa decidir.
+    // Validado; fora da escala de proposito.
     let mut page = column![].spacing(14);
     if let Some(banner) = remove_view::orphan_banner(app) {
         page = page.push(banner);
@@ -874,6 +877,7 @@ pub(super) fn header_controls(screen: Screen) -> HeaderControls {
 fn header(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let (title, line) = header_line(app);
+    // Validado; fora da escala de proposito.
     let mut controls = row![].spacing(10).align_y(Alignment::Center);
     if let Some(switch) = book_switch(app) {
         controls = controls.push(switch);

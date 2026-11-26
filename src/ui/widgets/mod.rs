@@ -4,78 +4,31 @@
 //! Tudo recebe `&'static Tokens`: o estilo e decidido aqui, a tela so monta.
 
 use iced::widget::{Space, button, container, image, row, text};
-use iced::{Alignment, Border, Color, Element, Length, Padding, Theme};
+use iced::{Alignment, Border, Color, Element, Length, Theme};
 
 use super::fonts;
 use super::icons;
 use super::theme::{self, Tokens};
 
-/// Controle segmentado de duas opcoes (o "toggle" do hub): `(glifo opcional, rotulo, ativo,
-/// mensagem)` para cada lado.
-pub fn seg_switch<'a, M: Clone + 'a>(
-    t: &'static Tokens,
-    options: [(Option<&'static str>, &'static str, bool, M); 2],
-) -> Element<'a, M> {
-    let option =
-        |(glyph, label, active, message): (Option<&'static str>, &'static str, bool, M)| {
-            let mut content = row![].spacing(6).align_y(Alignment::Center);
-            if let Some(glyph) = glyph {
-                content = content.push(text(glyph).font(fonts::PHOSPHOR).size(12).line_height(1.0));
-            }
-            content = content.push(text(label).size(12).font(fonts::INTER_MEDIUM));
-            button(
-                container(content)
-                    .center_x(Length::Fill)
-                    .height(26)
-                    .align_y(Alignment::Center),
-            )
-            .padding(0)
-            .width(Length::Fill)
-            .style(theme::seg_option(t, active))
-            .on_press(message)
-        };
-    let [a, b] = options;
-    container(row![option(a), option(b)].width(Length::Fill))
-        .padding(3)
-        .width(Length::Fill)
-        .style(theme::outlined(t.divider(), 8.0))
-        .into()
-}
+mod controls;
+mod marks;
+mod surface;
+mod values;
 
-/// Segmentado Grafite (tema, Pessoal | Comercial): trilho `surface` raio 8 com 4 px de
-/// respiro, opcoes de 36 px em 13 Regular. `fill` divide a largura (seletor de tema da lateral);
-/// sem ele cada opcao tem o tamanho do rotulo + 14 px de cada lado (cabecalho).
-pub fn segmented<'a, M: Clone + 'a>(
-    t: &'static Tokens,
-    fill: bool,
-    options: [(&'static str, bool, M); 2],
-) -> Element<'a, M> {
-    let option = |(label, active, message): (&'static str, bool, M)| {
-        let content = container(text(label).size(13).line_height(1.0))
-            .height(36)
-            .align_y(Alignment::Center);
-        let content = if fill {
-            content.center_x(Length::Fill)
-        } else {
-            content.padding([0, 14])
-        };
-        let b = button(content)
-            .padding(0)
-            .style(theme::segment(t, active))
-            .on_press(message);
-        if fill { b.width(Length::Fill) } else { b }
-    };
-    let [a, b] = options;
-    let line = row![option(a), option(b)].spacing(4);
-    let rail = container(if fill { line.width(Length::Fill) } else { line })
-        .padding(4)
-        .style(theme::fill(t.surface, 8.0));
-    if fill {
-        rail.width(Length::Fill).into()
-    } else {
-        rail.into()
-    }
-}
+pub use controls::{
+    ChipShape, FIELD_ICON, FIELD_PAD_LEFT, FIELD_PAD_RIGHT, FIELD_SPACING, RowEdge, RowHover,
+    SegmentedSize, SegmentedVariant, action_button, action_button_icon, action_button_with, chip,
+    copy_button, field_copy, icon_button, list_row, segmented, toggle,
+};
+pub use marks::{
+    Bar, CompactTone, TagTone, bar, color_tag, neutral_tile, progress_steps, tag, tag_compact,
+    tag_icon, tile, token_tile,
+};
+pub use surface::{
+    banner, card, dialog, divider, empty_copy, empty_icon, empty_sketch_card, empty_state, inset,
+    section_heading, settings_row, vdivider,
+};
+pub use values::{StatSize, baseline_pad, figure, money, stat, stat_label, value_line};
 
 /// Rotulo em frase normal ("Saldo do mês"), 12 Medium em `text_muted`. Desvio do handoff, que pede
 /// caixa alta com `letter-spacing`: sem o espacamento (o iced nao tem) a caixa alta ficava
@@ -103,7 +56,7 @@ pub fn kicker_accent<'a, M: 'a>(t: &'static Tokens, content: &str) -> Element<'a
 pub fn page_title<'a, M: 'a>(t: &'static Tokens, title: &str, subtitle: &str) -> Element<'a, M> {
     iced::widget::column![
         text(title.to_string())
-            .size(30)
+            .size(theme::type_scale::PAGE)
             .line_height(1.1)
             .color(t.text),
         text(subtitle.to_string()).size(13).color(t.text_muted),
@@ -142,21 +95,13 @@ pub fn dot<'a, M: 'a>(color: Color, size: f32) -> Element<'a, M> {
         .into()
 }
 
-/// Tile de categoria: 32 x 32, raio 8, fundo a cor a 18 % sobre a superficie, icone 16 na cor
-/// cheia.
-pub fn tile<'a, M: 'a>(t: &'static Tokens, glyph: &'static str, token: &str) -> Element<'a, M> {
-    container(icons::icon(glyph, 16.0, t.token(token)))
-        .width(32)
-        .height(32)
-        .center(32)
-        .style(theme::fill(t.token_tint(token, 0.18), 8.0))
-        .into()
-}
-
-/// Tamanho da inicial por diametro do avatar (40 / 24 / 22 no design).
+/// Tamanho da inicial por diametro do avatar (40 / 28 / 24 / 22 no design; o de 28 e o de
+/// "Quem lançou" no Resumo).
 fn initial_size(size: f32) -> f32 {
     if size >= 40.0 {
         16.0
+    } else if size >= 28.0 {
+        12.0
     } else if size >= 24.0 {
         11.0
     } else {
@@ -164,10 +109,13 @@ fn initial_size(size: f32) -> f32 {
     }
 }
 
+/// Espessura do anel na cor da pessoa, com e sem foto (spec 9).
+const AVATAR_RING: f32 = 1.5;
+
 /// Avatar redondo. Com foto: a imagem recortada em circulo, anel de 2 px na superficie e anel
 /// de 1,5 px na cor da pessoa (os aneis ficam por fora, como o `box-shadow` do prototipo).
-/// Sem foto: a inicial (SemiBold, cor `bg`) sobre um circulo solido na cor; sem token,
-/// `neutral_600` (aparelho sem perfil conhecido).
+/// Sem foto (spec 9): anel de 1,5 px na cor, fundo na tinta de 18 % dela e a inicial
+/// (SemiBold) em `fg`; sem token, o anel e o cinza de controle (`Tokens::avatar_colors`).
 pub fn avatar<'a, M: 'a>(
     t: &'static Tokens,
     name: &str,
@@ -175,10 +123,16 @@ pub fn avatar<'a, M: 'a>(
     photo: Option<&image::Handle>,
     size: f32,
 ) -> Element<'a, M> {
-    let (neutral, neutral_initial) = t.avatar_neutral();
-    let (color, initial_color) = token.map_or((neutral, neutral_initial), |tk| (t.token(tk), t.bg));
+    let (color, fill) = t.avatar_colors(token);
     if let Some(handle) = photo {
-        let ring = 1.5;
+        // Com foto fica como antes da spec 9: sem cor de perfil, o anel e o cinza claro do
+        // avatar antigo (`neutral_300` no escuro, `neutral_700` no claro), nao o de controle.
+        let color = match (token, t.mode) {
+            (Some(_), _) => color,
+            (None, crate::dashboard::colors::Mode::Dark) => t.neutral_300,
+            (None, crate::dashboard::colors::Mode::Light) => t.neutral_700,
+        };
+        let ring = AVATAR_RING;
         let gap = 2.0;
         let outer = size + 2.0 * (ring + gap);
         let surface = t.surface;
@@ -208,33 +162,18 @@ pub fn avatar<'a, M: 'a>(
             .size(initial_size(size))
             .font(fonts::INTER_SEMIBOLD)
             .line_height(1.0)
-            .color(initial_color),
+            .color(t.text),
     )
     .center(size)
-    .style(theme::fill(color, size / 2.0))
-    .into()
-}
-
-/// Tag da cor da pessoa: pilula de 20 px, fundo a cor a 16 % sobre a superficie, ponto de 6 e o
-/// nome da cor ("Magenta") em 11 Medium na cor.
-pub fn color_tag<'a, M: 'a>(t: &'static Tokens, token: &str) -> Element<'a, M> {
-    let color = t.token(token);
-    container(
-        row![
-            dot(color, 6.0),
-            text(crate::dashboard::colors::color_name(token))
-                .size(11)
-                .font(fonts::INTER_MEDIUM)
-                .line_height(1.0)
-                .color(color),
-        ]
-        .spacing(5)
-        .align_y(Alignment::Center),
-    )
-    .height(20)
-    .padding([0, 7])
-    .align_y(Alignment::Center)
-    .style(theme::fill(t.token_tint(token, 0.16), 999.0))
+    .style(move |_: &Theme| container::Style {
+        background: Some(fill.into()),
+        border: Border {
+            color,
+            width: AVATAR_RING,
+            radius: (size / 2.0).into(),
+        },
+        ..container::Style::default()
+    })
     .into()
 }
 
@@ -251,6 +190,7 @@ pub fn step<'a, M: 'a>(t: &'static Tokens, n: u8, content: Element<'a, M>) -> El
     .center(20)
     .style(theme::fill(t.accent_900, 10.0));
     row![number, container(content).width(Length::Fill)]
+        // Validado; fora da escala de proposito.
         .spacing(10)
         .align_y(Alignment::Start)
         .into()
@@ -262,71 +202,6 @@ pub fn step_text<'a>(t: &'static Tokens, content: impl text::IntoFragment<'a>) -
         .size(13)
         .line_height(1.45)
         .color(t.text_soft())
-}
-
-/// Separador vertical de 1 x 20 no divisor, com 4 px de margem dos lados.
-pub fn vdivider<'a, M: 'a>(t: &'static Tokens) -> Element<'a, M> {
-    container(
-        container(Space::new())
-            .width(1)
-            .height(20)
-            .style(theme::fill(t.divider(), 0.0)),
-    )
-    .padding([0, 4])
-    .into()
-}
-
-/// Separador horizontal de 1 px no divisor (borda superior das linhas de lista).
-pub fn hdivider<'a, M: 'a>(t: &'static Tokens) -> Element<'a, M> {
-    container(Space::new())
-        .width(Length::Fill)
-        .height(1)
-        .style(theme::fill(t.divider(), 0.0))
-        .into()
-}
-
-/// Valor grande dos cards: prefixo ("R$", "+R$", "−R$") e centavos em 16 Regular, inteiro em
-/// 32 Medium. O iced nao alinha por linha de base; com altura de linha 1,0 a base da Inter fica
-/// a 0,136 em do fundo da caixa, entao os pedacos de 16 sobem 2 px para casar com o de 32.
-pub fn money_big<'a, M: 'a>(
-    prefix: &str,
-    whole: &str,
-    cents: &str,
-    main: Color,
-    small: Color,
-) -> Element<'a, M> {
-    let piece = |content: String| {
-        container(text(content).size(16).line_height(1.0).color(small)).padding(Padding {
-            bottom: 2.0,
-            ..Padding::ZERO
-        })
-    };
-    row![
-        piece(prefix.to_string()),
-        text(whole.to_string())
-            .size(32)
-            .font(fonts::INTER_MEDIUM)
-            .line_height(1.0)
-            .color(main),
-        piece(format!(",{cents}")),
-    ]
-    .spacing(4)
-    .align_y(Alignment::End)
-    .into()
-}
-
-/// Chip "Parcial · até 19 nov" (texto pronto do modelo): pilula `accent_900` com 12 Regular em
-/// `accent_300`, 7 x 12 de respiro. Avisa que o mes corrente ainda pode crescer.
-pub fn partial_tag<'a, M: 'a>(t: &'static Tokens, label: &str) -> Element<'a, M> {
-    container(
-        text(label.to_string())
-            .size(12)
-            .line_height(1.0)
-            .color(t.accent_300),
-    )
-    .padding([7, 12])
-    .style(theme::fill(t.accent_900, 999.0))
-    .into()
 }
 
 /// Largura do rotulo do seletor de mes ("Nov 2026" em 14 Medium mais os 4 px de cada lado).
@@ -346,7 +221,8 @@ pub fn month_picker<'a, M: Clone + 'a>(
         let color = if message.is_some() {
             t.text_soft()
         } else {
-            t.neutral_600
+            // O mesmo apagado dos botoes desabilitados (`theme::disabled`).
+            t.idle()
         };
         button(container(icons::icon(glyph, 16.0, color)).center(Length::Fill))
             .width(44)
@@ -370,7 +246,7 @@ pub fn month_picker<'a, M: Clone + 'a>(
         .align_y(Alignment::Center),
     )
     .padding(1)
-    .style(theme::outlined(t.neutral_800, 8.0))
+    .style(theme::outlined(t.neutral_800, theme::radius::CONTROL))
     .into()
 }
 
@@ -407,6 +283,18 @@ pub fn initial(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn avatar_monta_com_e_sem_cor_em_todo_tamanho() {
+        for t in [&theme::DARK, &theme::LIGHT] {
+            for size in [22.0, 24.0, 28.0, 40.0] {
+                let _: Element<'_, ()> = avatar(t, "Ana", Some("magenta"), None, size);
+                let _: Element<'_, ()> = avatar(t, "Pixel", None, None, size);
+            }
+        }
+        assert_eq!(initial_size(28.0), 12.0);
+        assert_eq!(initial_size(24.0), 11.0);
+    }
 
     #[test]
     fn inicial_maiuscula_e_vazio_vira_interrogacao() {

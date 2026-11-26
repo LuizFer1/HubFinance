@@ -8,7 +8,7 @@ authors = ["Luiz Fernando"]
 repository = "https://github.com/LuizFer1/HubFinance"
 
 [dependencies]
-iced = { version = "0.14", features = ["qr_code", "canvas", "image"] }
+iced = { version = "0.14", features = ["qr_code", "canvas", "image", "markdown"] }
 base64 = "0.23"
 axum = "0.8"
 axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
@@ -32,6 +32,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 tracing-appender = "0.2"
 open = "5"
+# Le os eventos do Markdown das respostas para a mascara de "Ocultar valores" conferir o texto
+# desenhado, tabelas inclusive (o iced nao expoe as celulas). Ja vem na arvore pelo `markdown`
+# do iced; mesma versao do lock.
+pulldown-cmark = { version = "0.12.2", default-features = false }
 # Cliente HTTP do assistente (Ollama local e OpenRouter). Bloqueante e pequeno: roda em
 # `spawn_blocking`. A feature `rustls` do ureq ja usa ring (mesmo provedor do servidor) e traz
 # os certificados raiz embutidos (webpki-roots), sem aws-lc-rs nem depender do sistema.
@@ -58,6 +62,9 @@ windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Cryptography",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
   "Win32_System_Registry",
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",

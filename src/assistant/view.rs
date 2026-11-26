@@ -88,10 +88,19 @@ impl OpenConversation {
 pub struct AssistantView {
     pub settings: Settings,
     pub has_key: bool,
-    /// A chave fica cifrada no disco (DPAPI). `false` = texto puro: o painel avisa.
+    /// A chave fica cifrada no disco (DPAPI). `false` = texto puro: o dialogo avisa.
     pub key_encrypted: bool,
     /// `None` = nunca listado; `Some(Err)` = falhou (mensagem pt-BR).
     pub models: Option<Result<Vec<String>, String>>,
+    /// A porta do Ollama de onde `models` veio: o dialogo so mostra a lista se for a porta que
+    /// esta no campo agora.
+    pub models_port: Option<u16>,
+    /// "Testar conexao" esperando a resposta do Ollama (A7: o botao mostra o carregando).
+    pub listing: bool,
+    /// A ultima gravacao do dialogo (`AssistantCommand::Configure`): o numero dela e como
+    /// terminou. O dialogo guarda o numero que espera e so olha o resultado com esse numero;
+    /// deduzir pelo `last_error` confundiria um erro antigo (do historico) com o desta gravacao.
+    pub configure_result: Option<(u64, Result<(), String>)>,
     pub conversations: Vec<ConversationSummary>,
     pub open: Option<OpenConversation>,
     /// Texto chegando agora; vira `MessageView` no fim.

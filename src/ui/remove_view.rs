@@ -6,11 +6,14 @@
 //! do plano que a escrita tambem usa; (2) confirmacao em vermelho com as contagens e um botao
 //! que nomeia a acao. Nada marcado e "Manter tudo", o padrao, e nao exige o passo 2.
 
-use iced::widget::{Space, button, column, container, mouse_area, opaque, row, stack, text};
+use iced::widget::{Space, button, column, row, text};
 use iced::{Alignment, Element, Length};
 
 use super::app::{App, Message, RemoveStep};
-use super::theme::{self, Tokens};
+// As contagens usam o "4.688" do resto da UI: numero grande sem separador e dificil de ler justo
+// no dialogo em que a pessoa decide o que apagar.
+use super::shell::{plural, thousands};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, space};
 use super::{fonts, icons, widgets};
 use crate::hub::snapshot::DeviceView;
 use crate::store::erase::{Area, AreaSet, DeviceData};
@@ -22,10 +25,6 @@ pub(super) fn area_title(area: Area) -> &'static str {
         Area::Reserves => "Reservas",
         Area::Recurrences => "Recorrências",
     }
-}
-
-fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 /// "128 lançamentos", "2 reservas e 14 movimentos": o que a area apaga.
@@ -65,7 +64,7 @@ pub(super) fn area_notes(area: Area, d: &DeviceData) -> Vec<String> {
                 let kept = if d.reserves_kept == 1 {
                     "1 reserva mantida: tem".to_string()
                 } else {
-                    format!("{} reservas mantidas: têm", d.reserves_kept)
+                    format!("{} reservas mantidas: têm", thousands(d.reserves_kept))
                 };
                 notes.push(format!(
                     "{kept} movimentos de outros aparelhos. Só os movimentos deste aparelho \
@@ -159,7 +158,7 @@ pub(super) fn toast_text(base: &str, d: &DeviceData, selected: AreaSet) -> Strin
     } else {
         "itens serão apagados"
     };
-    format!("{base} · {n} {verb}")
+    format!("{base} · {} {verb}", thousands(n))
 }
 
 /// Quem aparece no modal: a pessoa da lista (aparelho ativo) ou, para um aparelho ja removido
@@ -226,93 +225,56 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
             .into(),
     };
 
-    let action = |content: Element<'static, Message>| {
-        button(
-            container(content)
-                .height(Length::Fill)
-                .align_y(Alignment::Center),
-        )
-        .height(38)
-        .padding([0, 16])
-    };
-    let label = |s: String| -> Element<'static, Message> {
-        text(s).size(13).font(fonts::INTER_MEDIUM).into()
-    };
+    let size = ButtonSize::Regular;
     let buttons = match state.step {
         RemoveStep::Choose => {
             let first = if orphan { "Depois" } else { "Cancelar" };
-            let cancel = action(label(first.into()))
-                .style(theme::outline_divider(t))
+            let cancel = widgets::action_button(t, ButtonKind::Secondary, size, first)
                 .on_press(Message::CancelRemove);
             let nothing = state.selected.is_empty();
-            let (primary_label, style_danger) = match (nothing, orphan) {
-                (true, true) => ("Manter tudo", false),
-                (true, false) => ("Remover", false),
-                (false, _) => ("Continuar", true),
+            let (primary_label, kind) = match (nothing, orphan) {
+                (true, true) => ("Manter tudo", ButtonKind::Primary),
+                (true, false) => ("Remover", ButtonKind::DangerFilled),
+                (false, _) => ("Continuar", ButtonKind::Danger),
             };
-            let content: Element<'static, Message> = if nothing && !orphan {
-                row![
-                    icons::icon_inherit(icons::USER_MINUS, 13.0),
-                    text(primary_label).size(13).font(fonts::INTER_MEDIUM),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .into()
+            let primary = if nothing && !orphan {
+                widgets::action_button_icon(t, kind, size, icons::USER_MINUS, primary_label)
             } else {
-                label(primary_label.into())
-            };
-            let primary = action(content).on_press(Message::RemoveContinue);
-            let primary = if style_danger {
-                primary.style(theme::danger_outline(t))
-            } else if orphan {
-                primary.style(theme::outline_accent(t))
-            } else {
-                primary.style(theme::danger_filled(t))
-            };
-            row![Space::new().width(Length::Fill), cancel, primary].spacing(10)
+                widgets::action_button(t, kind, size, primary_label)
+            }
+            .on_press(Message::RemoveContinue);
+            row![Space::new().width(Length::Fill), cancel, primary].spacing(space::M)
         }
         RemoveStep::Confirm => {
-            let back = action(label("Voltar".into()))
-                .style(theme::outline_divider(t))
+            let back = widgets::action_button(t, ButtonKind::Secondary, size, "Voltar")
                 .on_press(Message::RemoveBack);
-            let confirm = action(label(confirm_label(data, state.selected, orphan)))
-                .style(theme::danger_filled(t))
-                .on_press(Message::ConfirmRemove);
-            row![Space::new().width(Length::Fill), back, confirm].spacing(10)
+            let confirm = widgets::action_button(
+                t,
+                ButtonKind::DangerFilled,
+                size,
+                confirm_label(data, state.selected, orphan),
+            )
+            .on_press(Message::ConfirmRemove);
+            row![Space::new().width(Length::Fill), back, confirm].spacing(space::M)
         }
     };
 
-    let width = (app.window_size.width - 48.0).clamp(240.0, 460.0);
-    let dialog_box = container(
+    Some(widgets::dialog(
+        t,
         column![
             header,
-            Space::new().height(14),
+            Space::new().height(space::L),
             body,
-            Space::new().height(22),
+            Space::new().height(space::XXL),
             buttons
         ]
         .width(Length::Fill),
-    )
-    .width(width)
-    .padding(24)
-    .style(theme::dialog(t));
-    // A caixa engole o clique: sem isso, clicar dentro dela chegaria ao fundo e cancelaria.
-    let dialog_box = opaque(mouse_area(dialog_box).on_press(Message::Noop));
-    let scrim = opaque(
-        mouse_area(
-            container(Space::new())
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(theme::scrim()),
-        )
-        .on_press(Message::CancelRemove),
-    );
-    Some(
-        stack![scrim, container(dialog_box).center(Length::Fill)]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into(),
-    )
+        app.window_size.width,
+        460.0,
+        None,
+        Message::CancelRemove,
+        app.motion.scrim(),
+    ))
 }
 
 fn choose_body<'a>(app: &'a App, who: &Subject<'a>, selected: AreaSet) -> Element<'a, Message> {
@@ -339,14 +301,12 @@ fn choose_body<'a>(app: &'a App, who: &Subject<'a>, selected: AreaSet) -> Elemen
         col = col.push(area_row(t, area, data, selected.contains(area)));
     }
     let shortcut = |label: &'static str, msg: Message, danger: bool| {
-        let b = button(text(label).size(12).font(fonts::INTER_MEDIUM))
-            .padding([6, 12])
-            .on_press(msg);
-        if danger {
-            b.style(theme::danger_outline(t))
+        let kind = if danger {
+            ButtonKind::Danger
         } else {
-            b.style(theme::outline_divider(t))
-        }
+            ButtonKind::Secondary
+        };
+        widgets::action_button(t, kind, ButtonSize::Compact, label).on_press(msg)
     };
     col.push(
         row![
@@ -378,10 +338,12 @@ fn area_row<'a>(
         icons::icon(icons::CIRCLE_DASHED, 18.0, t.text_muted)
     };
     let mut info = column![
+        // Desabilitada, o titulo apaga como o texto dos botoes desabilitados (`theme::disabled`):
+        // a cor fixa aqui passaria por cima do estilo do botao.
         text(area_title(area))
             .size(14)
             .font(fonts::INTER_MEDIUM)
-            .color(t.text),
+            .color(if enabled { t.text } else { t.idle() }),
     ]
     .spacing(2);
     if enabled {
@@ -407,12 +369,17 @@ fn area_row<'a>(
     let line = row![mark, info.width(Length::Fill)]
         .spacing(12)
         .align_y(Alignment::Center);
-    let b = button(line).width(Length::Fill).padding([10, 12]);
-    let b = if selected && enabled {
-        b.style(theme::danger_outline(t))
+    // Caixa de selecao inteira, nao botao de acao: o papel do botao so empresta o contorno e os
+    // estados (perigo marcada, secundario desmarcada).
+    let kind = if selected && enabled {
+        ButtonKind::Danger
     } else {
-        b.style(theme::outline_divider(t))
+        ButtonKind::Secondary
     };
+    let b = button(line)
+        .width(Length::Fill)
+        .padding([10, 12])
+        .style(theme::button(t, kind, ButtonSize::Regular));
     if enabled {
         b.on_press(Message::ToggleArea(area)).into()
     } else {
@@ -436,30 +403,18 @@ pub(super) fn orphan_banner(app: &App) -> Option<Element<'_, Message>> {
     } else {
         format!("{n} aparelhos removidos ainda têm dados no hub")
     };
-    let later = button(text("Depois").size(13).font(fonts::INTER_MEDIUM))
-        .padding([6, 12])
-        .style(theme::ghost(t))
+    let later = widgets::action_button(t, ButtonKind::Ghost, ButtonSize::Compact, "Depois")
         .on_press(Message::PostponeOrphans);
-    let decide = button(text("Decidir").size(13).font(fonts::INTER_MEDIUM))
-        .padding([6, 12])
-        .style(theme::outline_accent(t))
+    let decide = widgets::action_button(t, ButtonKind::Primary, ButtonSize::Compact, "Decidir")
         .on_press(Message::DecideOrphan);
-    Some(
-        container(
-            row![
-                icons::icon(icons::WARNING_CIRCLE, 18.0, t.warning),
-                text(message).size(13).color(t.text).width(Length::Fill),
-                later,
-                decide,
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
-        )
-        .padding([10, 14])
-        .width(Length::Fill)
-        .style(theme::outlined(t.warning, 10.0))
-        .into(),
-    )
+    Some(widgets::banner(
+        t,
+        Tone::Warning,
+        t.bg,
+        icons::WARNING_CIRCLE,
+        message,
+        vec![later.into(), decide.into()],
+    ))
 }
 
 #[cfg(test)]
@@ -509,6 +464,21 @@ mod tests {
             ]
         );
         assert!(area_notes(Area::Budgets, &d).is_empty());
+    }
+
+    #[test]
+    fn contagens_grandes_tem_separador_de_milhar() {
+        let d = DeviceData {
+            transactions: 4688,
+            reserves_kept: 1200,
+            ..data()
+        };
+        assert_eq!(area_count_text(Area::Transactions, &d), "4.688 lançamentos");
+        assert!(area_notes(Area::Reserves, &d)[0].starts_with("1.200 reservas mantidas"));
+        let mut only = AreaSet::default();
+        only.insert(Area::Transactions);
+        assert!(confirm_label(&d, only, true).contains("4.688 itens"));
+        assert!(toast_text("Dados de Pixel", &d, only).ends_with("4.688 itens serão apagados"));
     }
 
     #[test]

@@ -78,6 +78,12 @@ impl TokenBook {
         token
     }
 
+    /// Descarta o token ativo: a janela fechou o "Conectar um celular" e o codigo que estava
+    /// na tela nao pode continuar valendo sem ninguem olhando para ele. Sem token, nada.
+    pub fn revoke(&mut self) {
+        self.active = None;
+    }
+
     /// Token ativo e valido. So os testes consultam: o nucleo guarda o que `issue` devolveu.
     #[cfg(test)]
     pub fn current(&self, now: SystemTime) -> Option<PairingToken> {
@@ -190,6 +196,20 @@ mod tests {
             token.value
         );
         assert_eq!(token.expires_at, t0() + minutes(5));
+    }
+
+    #[test]
+    fn revoke_descarta_o_token_e_o_codigo_deixa_de_valer() {
+        let mut book = TokenBook::default();
+        book.revoke();
+        let token = book.issue(t0());
+        book.revoke();
+        assert_eq!(book.current(t0()), None);
+        assert_eq!(book.consume(&token.value, t0()), Err(TokenError::Missing));
+        assert_eq!(
+            book.check_guide(&token.value, t0()),
+            Err(TokenError::Missing)
+        );
     }
 
     #[test]

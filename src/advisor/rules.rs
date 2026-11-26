@@ -12,7 +12,7 @@ use crate::dashboard::budgets::{BudgetLevel, budget_report};
 use crate::dashboard::cards::upcoming_invoices;
 use crate::dashboard::dataset::Dataset;
 use crate::dashboard::insights::{self, SURPLUS_MONTHS};
-use crate::dashboard::money::{format_brl, signed_brl};
+use crate::dashboard::money::{Money, format_brl, signed_brl};
 use crate::dashboard::periods::{last_months, month_of, shift_month};
 use crate::dashboard::recurrence::next_month_free;
 use crate::dashboard::reserves::{div_round, emergency_view, ordered};
@@ -307,7 +307,9 @@ pub(super) fn emergency(ds: &Dataset, today: &str) -> Option<Finding> {
     let (Some(r), _) = ordered(ds) else {
         return None;
     };
-    let view = emergency_view(ds, r, &current);
+    // Sempre visivel: o achado vira texto do envelope do assistente, que leva os valores reais;
+    // "Ocultar valores" e so da tela, que mascara o achado na hora de desenhar.
+    let view = emergency_view(ds, r, &current, Money::SHOWN);
     let cost = view.cost.as_ref().filter(|c| c.total_minor > 0)?;
     // Decimos de mes por inteiros: o `coverage` f64 da view e so exibicao.
     let tenths = view.balance_minor.saturating_mul(10) / cost.total_minor;
@@ -914,8 +916,11 @@ mod tests {
             (FindingKind::Emergency, Severity::Attention)
         );
         assert_eq!(f.title, "Reserva de emergência cobre só 0,5 mês");
-        assert!(
-            f.action.as_deref().is_some_and(|a| a.starts_with("Faltam")),
+        // O valor real, nunca a mascara: o achado vai no envelope do assistente, e "Ocultar
+        // valores" e so da tela (`emergency_view` recebe o `Money` visivel aqui).
+        assert_eq!(
+            f.action.as_deref(),
+            Some("Faltam R$ 5.500,00 para a meta"),
             "{f:?}"
         );
         assert_eq!(f.impact_minor, 600_000 - 50_000);

@@ -20,7 +20,7 @@ use super::insights::{
     history, normal_balance, pace_axis_top, plan_fit, round_to_tens, savings_rate, spending_pace,
     zero_allowance,
 };
-use super::list::{Filters, list_month, to_row};
+use super::list::to_row;
 use super::money::{BigMoney, MINUS, Money};
 use super::periods::{
     days_between, days_in_month, month_long, month_of, month_short, month_short_year,
@@ -260,6 +260,10 @@ pub struct PaceChart {
     pub normal_label: Option<String>,
     /// "renda R$ 3.500".
     pub income_label: Option<String>,
+    /// Rotulo do hover, um por dia (`[0]` e o dia 1): "12 nov · acumulado R$ 1.234 · normal
+    /// R$ 1.100". Vem pronto e mascarado daqui: formatar na tela passaria por cima de "Ocultar
+    /// valores". Depois do corte so ha o normal; dia sem nenhum dos dois e `None` (sem hover).
+    pub tooltips: Vec<Option<String>>,
     pub sentence: PaceSentence,
 }
 
@@ -1039,6 +1043,13 @@ fn pace_chart(
         forecast_label: expected.map(|e| format!("~{}", m.whole(round_to_tens(e)))),
         normal_label: normal_end.map(|n| format!("normal {}", m.whole(n))),
         income_label: income.map(|i| format!("renda {}", m.whole(i))),
+        tooltips: pace_tooltips(
+            month,
+            days,
+            &sp.current[..sp.cutoff.min(sp.current.len())],
+            &sp.normal,
+            m,
+        ),
         sentence: PaceSentence {
             lead: if is_current {
                 format!("{} até o dia {}", m.brl(sp.spent_minor), sp.cutoff)
@@ -1051,6 +1062,30 @@ fn pace_chart(
     }
 }
 
+/// Textos do hover do ritmo, dia a dia: o acumulado so ate o corte (depois dele o mes ainda nao
+/// aconteceu) e o normal enquanto houver mes de referencia.
+fn pace_tooltips(
+    month: &str,
+    days: usize,
+    current: &[i64],
+    normal: &[i64],
+    m: Money,
+) -> Vec<Option<String>> {
+    let short = month_short(month);
+    (0..days)
+        .map(|i| {
+            let mut parts = Vec::new();
+            if let Some(v) = current.get(i) {
+                parts.push(format!("acumulado {}", m.whole(*v)));
+            }
+            if let Some(v) = normal.get(i) {
+                parts.push(format!("normal {}", m.whole(*v)));
+            }
+            (!parts.is_empty()).then(|| format!("{} {short} · {}", i + 1, parts.join(" · ")))
+        })
+        .collect()
+}
+
 fn reserve_card(ds: &Dataset, today: &str, month: &str, m: Money) -> ReserveCard {
     // A reserva e o saldo de hoje em qualquer mes escolhido (chip "hoje"); so "Neste mês" segue
     // o seletor.
@@ -1058,7 +1093,7 @@ fn reserve_card(ds: &Dataset, today: &str, month: &str, m: Money) -> ReserveCard
     let (emergency, rest) = ordered(ds);
     let emergency = match emergency {
         Some(r) => EmergencyBlock::Present(Box::new(emergency_card(
-            &emergency_view(ds, r, &current),
+            &emergency_view(ds, r, &current, m),
             r.recurring_amount_minor.filter(|v| *v > 0),
             m,
         ))),
@@ -1093,7 +1128,7 @@ fn reserve_card(ds: &Dataset, today: &str, month: &str, m: Money) -> ReserveCard
         .map(|r| {
             let derived = (r.kind == super::contract::ReserveKind::Emergency)
                 .then(|| super::reserves::emergency_goal(ds, r, &current));
-            pot_row(ds, r, &current, derived)
+            pot_row(ds, r, &current, derived, m)
         })
         .collect();
     let acting: Vec<_> = rows
@@ -1698,7 +1733,9 @@ fn upcoming_card(ds: &Dataset, today: &str, m: Money) -> UpcomingCard {
 }
 
 fn recent_card(ds: &Dataset, month: &str, m: Money) -> Recent {
-    let count = list_month(ds, month, &Filters::default()).count;
+    // A mesma contagem da tela Lancamentos sem filtro (`list_month` conta todo lancamento vivo
+    // do mes, marcado ou nao), sem montar a lista inteira so para contar.
+    let count = in_month(ds, month).count();
     let name = month_long(month);
     Recent {
         title: "Últimos lançamentos".to_string(),
@@ -1706,13 +1743,16 @@ fn recent_card(ds: &Dataset, month: &str, m: Money) -> Recent {
         lines: recent(ds, month, RECENT_LINES)
             .into_iter()
             .map(|tx| {
-                let row = to_row(ds, tx);
+                let row = to_row(ds, tx, m);
                 let income = row.kind == Kind::Income;
                 let mut meta = vec![row.category_name.clone()];
                 if let Some(a) = &row.author {
                     meta.push(a.name.clone());
                 }
                 meta.push(partial_label(&row.occurred_on));
+                // `row.amount` (o texto da tela Lancamentos) nao e usado de proposito: na despesa
+                // zerada o Resumo mostra "R$ 0,00" e a lista mostra "−R$ 0,00". Divergencia
+                // conhecida e so no zero, mantida para nao mudar o Resumo validado pelo dono.
                 RecentLine {
                     amount: if income {
                         m.signed_plus(row.amount_minor)
@@ -1779,6 +1819,7 @@ mod tests {
 
     use super::*;
     use crate::dashboard::dataset::{BOOKS, PAYMENT_METHODS, RESERVES, TRANSACTIONS};
+    use crate::dashboard::money::leaks;
     use crate::dashboard::{
         GRAFITE_TODAY, GrafiteRow, dataset_from, dataset_of, fixtures_grafite, grafite_rows,
     };
@@ -1824,25 +1865,6 @@ mod tests {
 
     fn close(a: f32, b: f64) -> bool {
         (f64::from(a) - b).abs() < 0.001
-    }
-
-    /// `\d{1,3}(\.\d{3})*,\d{2}|R\$\s?\d` (a regex de `privacy.test.tsx`), sem crate de regex:
-    /// a primeira alternativa casa sempre que ha digito, virgula e dois digitos.
-    fn leaks(text: &str) -> Option<String> {
-        let chars: Vec<char> = text.chars().collect();
-        for (i, w) in chars.windows(4).enumerate() {
-            let cents = w[0].is_ascii_digit()
-                && w[1] == ','
-                && w[2].is_ascii_digit()
-                && w[3].is_ascii_digit();
-            let currency = w[0] == 'R'
-                && w[1] == '$'
-                && (w[2].is_ascii_digit() || (w[2].is_whitespace() && w[3].is_ascii_digit()));
-            if cents || currency {
-                return Some(chars[i.saturating_sub(30)..(i + 4)].iter().collect());
-            }
-        }
-        None
     }
 
     /// A fixture com a linha `id` trocada por `patch` (campos de cima sobrescritos).
@@ -2123,6 +2145,44 @@ mod tests {
     }
 
     #[test]
+    fn rotulos_do_hover_do_ritmo_por_dia_e_mascarados() {
+        let p = nov().how_am_i.pace;
+        assert_eq!(p.tooltips.len(), 30);
+        // Ate o corte: acumulado e normal; depois dele, so o normal.
+        assert_eq!(
+            p.tooltips.get(18).cloned().flatten().as_deref(),
+            Some("19 nov · acumulado R$ 3.113 · normal R$ 2.705")
+        );
+        assert!(
+            p.tooltips
+                .get(19)
+                .cloned()
+                .flatten()
+                .is_some_and(|t| t.starts_with("20 nov · normal R$ "))
+        );
+        let hidden = build_grafite(
+            &fixtures_grafite(),
+            GRAFITE_TODAY,
+            "2026-11",
+            Book::Personal,
+            true,
+        );
+        let tips = &hidden.how_am_i.pace.tooltips;
+        assert_eq!(
+            tips.get(18).cloned().flatten().as_deref(),
+            Some("19 nov · acumulado R$ ••••• · normal R$ •••••")
+        );
+        for tip in tips.iter().flatten() {
+            assert_eq!(leaks(tip), None, "{tip}");
+        }
+        // Sem mes de referencia nem acumulado (dia no futuro): nada para mostrar.
+        assert_eq!(
+            pace_tooltips("2026-11", 3, &[100], &[], Money::SHOWN),
+            vec![Some("1 nov · acumulado R$ 1".to_string()), None, None]
+        );
+    }
+
+    #[test]
     fn ritmo_de_gastos_da_fixture() {
         let p = nov().how_am_i.pace;
         assert_eq!(p.title, "Ritmo de gastos");
@@ -2229,12 +2289,12 @@ mod tests {
     fn meta_final_com_custo_das_categorias_diz_custo_essencial() {
         let ds = fixtures_grafite();
         let (re, _) = ordered(&ds);
-        let mut view = emergency_view(&ds, re.expect("emergencia"), "2026-11");
+        let mut view = emergency_view(&ds, re.expect("emergencia"), "2026-11", Money::SHOWN);
         if let Some(c) = view.cost.as_mut() {
             c.informed = false;
         }
         assert_eq!(
-            emergency_card(&view, Some(55_000), Money::default()).goal_line,
+            emergency_card(&view, Some(55_000), Money::SHOWN).goal_line,
             "Meta final: 6 meses de custo essencial, R$ 15.000."
         );
     }

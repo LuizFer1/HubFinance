@@ -1,29 +1,38 @@
 //! Tela Reservas: total separado, emergencia coberta, ultimos 12 meses, o card da reserva de
 //! emergencia, as caixinhas, a evolucao empilhada e as movimentacoes; ou o estado vazio.
 //!
-//! Tudo vem de `app.reserves` (calculado em `App::rebuild`); aqui so se monta a arvore. Os
-//! textos seguem o bloco `isRes` do prototipo e o trecho de `renderVals()` a partir de `RD`.
+//! Tudo vem de `app.reserves` (calculado em `App::rebuild`); aqui so se monta a arvore. Todo
+//! valor em R$ ja chega formatado (e mascarado com "Ocultar valores"): formatar aqui vazaria o
+//! numero por cima do botao de ocultar. Os textos seguem o bloco `isRes` do prototipo e o
+//! trecho de `renderVals()` a partir de `RD`.
 
+use iced::widget::text::Text;
 use iced::widget::text::Wrapping;
-use iced::widget::{Space, canvas, column, container, row, text};
+use iced::widget::{Column, Space, canvas, column, container, row, text};
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{App, Message};
 use super::charts::{
     EMPTY_RESERVES_HEIGHT, EMPTY_RESERVES_WIDTH, EmptyReservesProgram, StackedBarsProgram,
+    series_color,
 };
-use super::rows::{author_cell_of, hover_row, kicker_with_icon};
-use super::theme::{self, Tokens, mix};
+use super::rows::{author_cell_of, hover_row};
+use super::shell::Arrival;
+use super::theme::{self, Tokens, space, type_scale};
+use super::widgets::{Bar, RowEdge, StatSize, TagTone};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::contract::MovementKind;
-use crate::dashboard::money::{format_brl, money_parts, whole_brl};
-use crate::dashboard::periods::{month_long, short_date};
+use crate::dashboard::periods::short_date;
 use crate::dashboard::reserves::{
     DEFAULT_MULTIPLE, EmergencyView, EssentialCost, EssentialPart, MovementRow, Pace, PotRow,
-    ReserveColor, pace_label,
+    ReserveColor, ReserveShare,
 };
+use crate::dashboard::view::ReservesView;
 
-const GAP: f32 = 14.0;
+/// Entre os blocos da tela: o espaco entre cards de toda tela (7.4).
+const GAP: f32 = space::BETWEEN_CARDS;
+/// Entre rotulo, valor, nota e barra dos cards de numero.
+const KPI_SPACING: f32 = space::S;
 /// `minmax(240px, 1fr)` dos KPIs e `minmax(440px, 1fr)` dos dois cards da linha 2.
 const KPI_MIN: f32 = 240.0;
 const CARD_MIN: f32 = 440.0;
@@ -33,14 +42,13 @@ const LEGEND_COL_GAP: f32 = 24.0;
 /// Padding lateral dos cards da linha 2 (20 + 20).
 const CARD_PADDING_X: f32 = 40.0;
 
-/// Largura minima da coluna de texto do estado vazio, ao lado do esqueleto.
-const EMPTY_TEXT_MIN: f32 = 260.0;
-const EMPTY_GAP_X: f32 = 56.0;
-const EMPTY_PADDING_X: f32 = 32.0;
-
 pub fn view(app: &App) -> Element<'_, Message> {
     let v = &app.reserves;
     if v.is_empty {
+        // No boot o vazio seria falso: o esqueleto comum das telas de dados no lugar.
+        if shell::screen_arrival(app, false) == Arrival::Opening {
+            return shell::opening(app);
+        }
         return empty_card(app);
     }
     column![
@@ -54,19 +62,6 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .into()
 }
 
-/// Card de superficie, raio 8, sem borda.
-fn card<'a>(
-    t: &'static Tokens,
-    padding: Padding,
-    content: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    container(content)
-        .padding(padding)
-        .width(Length::Fill)
-        .style(theme::card(t))
-        .into()
-}
-
 fn pad(top: f32, x: f32, bottom: f32) -> Padding {
     Padding {
         top,
@@ -76,20 +71,22 @@ fn pad(top: f32, x: f32, bottom: f32) -> Padding {
     }
 }
 
-/// Emergencia no acento do tema; caixinha no token da linha.
+/// Cor de identidade de uma reserva em toda a tela: a mesma das series do grafico
+/// (`charts::series_color`), para a barra do Total, o tile da caixinha, o ponto das
+/// movimentacoes e a pilha nunca discordarem. A emergencia sai em neutro; o `accent` fica so
+/// onde marca o agora (medidores de cobertura, contorno da boia, tag da % da meta), que usam o
+/// token direto. Duas reservas de emergencia (a extra vira linha de caixinha) ficam na mesma cor:
+/// o app so cria uma, e a segunda vem de dado torto; nao vale uma cor a mais por isso.
 fn reserve_color(t: &'static Tokens, c: &ReserveColor) -> Color {
-    match c {
-        ReserveColor::Accent => t.accent,
-        ReserveColor::Token(k) => t.token(k),
-    }
+    series_color(t, c)
 }
 
-/// Fundo do tile: a cor a 18 % sobre a superficie (o tile das categorias).
-fn reserve_tint(t: &'static Tokens, c: &ReserveColor) -> Color {
-    match c {
-        ReserveColor::Accent => mix(t.surface, t.accent, 0.18),
-        ReserveColor::Token(k) => t.token_tint(k, 0.18),
-    }
+/// Partes da barra do card Total: saldo e cor de identidade de cada reserva.
+fn share_parts(t: &'static Tokens, shares: &[ReserveShare]) -> Vec<(f64, Color)> {
+    shares
+        .iter()
+        .map(|s| (s.balance_minor as f64, reserve_color(t, &s.color)))
+        .collect()
 }
 
 /// `lifebuoy` e chave interna (a emergencia); o resto e chave do app.
@@ -99,99 +96,6 @@ fn reserve_glyph(key: &str) -> &'static str {
     } else {
         icons::glyph(key)
     }
-}
-
-/// Partes de uma barra proporcional: `FillPortion` e `u16`, entao os valores viram milesimos
-/// do total, minimo 1 (mesma ideia do `split_portions` do Dashboard).
-fn portions(values: &[i64]) -> Vec<u16> {
-    let total: i128 = values.iter().map(|v| i128::from((*v).max(0))).sum();
-    values
-        .iter()
-        .map(|v| {
-            if total == 0 {
-                1
-            } else {
-                (i128::from((*v).max(0)) * 1000 / total).clamp(1, 1000) as u16
-            }
-        })
-        .collect()
-}
-
-/// Barra de 6 px dividida (gap 3, raio 3); sem partes, um trilho so em `neutral_800`.
-fn split_bar<'a>(t: &'static Tokens, parts: &[(i64, Color)]) -> Element<'a, Message> {
-    if parts.is_empty() {
-        return container(Space::new())
-            .width(Length::Fill)
-            .height(6)
-            .style(theme::fill(t.neutral_800, 3.0))
-            .into();
-    }
-    let values: Vec<i64> = parts.iter().map(|(v, _)| *v).collect();
-    let segments = portions(&values)
-        .into_iter()
-        .zip(parts)
-        .map(|(portion, (_, color))| {
-            container(Space::new())
-                .width(Length::FillPortion(portion))
-                .height(6)
-                .style(theme::fill(*color, 3.0))
-                .into()
-        });
-    iced::widget::Row::with_children(segments)
-        .spacing(3)
-        .width(Length::Fill)
-        .into()
-}
-
-/// Trilho com preenchimento parcial (0..=1) a esquerda.
-pub(super) fn fill_bar<'a>(
-    track: Color,
-    color: Color,
-    fraction: f32,
-    height: f32,
-    radius: f32,
-) -> Element<'a, Message> {
-    let fraction = fraction.clamp(0.0, 1.0);
-    let filled = (fraction * 1000.0).round() as u16;
-    let inner: Element<'a, Message> = if filled == 0 {
-        Space::new().width(Length::Fill).height(height).into()
-    } else {
-        let bar = container(Space::new())
-            .width(Length::FillPortion(filled))
-            .height(height)
-            .style(theme::fill(color, radius));
-        if filled >= 1000 {
-            bar.into()
-        } else {
-            row![
-                bar,
-                Space::new()
-                    .width(Length::FillPortion(1000 - filled))
-                    .height(height)
-            ]
-            .into()
-        }
-    };
-    container(inner)
-        .width(Length::Fill)
-        .height(height)
-        .style(theme::fill(track, radius))
-        .into()
-}
-
-/// Medidor de N segmentos (gap 4, raio 2, trilho `neutral_800`, preenchimento `accent`).
-fn meter<'a>(t: &'static Tokens, segments: &[f32], height: f32) -> Element<'a, Message> {
-    if segments.is_empty() {
-        return Space::new().height(height).into();
-    }
-    iced::widget::Row::with_children(
-        segments
-            .iter()
-            .map(|f| fill_bar(t.neutral_800, t.accent, *f, height, 2.0)),
-    )
-    .spacing(4)
-    .width(Length::Fill)
-    .into()
 }
 
 // ---- linha 1: KPIs ----
@@ -205,64 +109,69 @@ fn kpi_row(app: &App) -> Element<'_, Message> {
     )
 }
 
-fn kpi_card<'a>(
-    t: &'static Tokens,
-    content: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    card(t, pad(18.0, 20.0, 18.0), content)
+/// Card de numero: o padding de todo card (20) e espaco 8 entre rotulo, valor, nota e barra.
+fn kpi_card<'a>(t: &'static Tokens, content: Column<'a, Message>) -> Element<'a, Message> {
+    widgets::card(t, content.spacing(KPI_SPACING)).into()
+}
+
+/// Barra de 6 px com 8 de respiro acima, no pe dos cards Total e Emergencia.
+fn kpi_bar<'a>(spec: Bar<'_>) -> Element<'a, Message> {
+    container(widgets::bar(spec, 6.0))
+        .padding(Padding {
+            top: space::S,
+            ..Padding::ZERO
+        })
+        .into()
+}
+
+/// Nota 12 `text_muted` sob o valor de um card de numero.
+fn kpi_note<'a>(t: &'static Tokens, note: &str) -> Text<'a> {
+    text(note.to_string())
+        .size(type_scale::META)
+        .color(t.text_muted)
 }
 
 fn total_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.reserves;
-    let parts = money_parts(v.totals.total_minor);
-    let muted = t.text_muted;
     let note = row![
-        icons::icon(icons::ARROW_DOWN, 12.0, muted),
-        text(format!(
-            "{} guardados em {}",
-            format_brl(v.totals.saved_this_month_minor),
-            month_long(&v.current_month)
-        ))
-        .size(12)
-        .color(muted),
+        icons::icon(icons::ARROW_DOWN, type_scale::META, t.text_muted),
+        kpi_note(t, &v.saved_note),
     ]
-    .spacing(5)
+    .spacing(space::XS)
     .align_y(Alignment::Center);
-    let shares: Vec<(i64, Color)> = v
-        .shares
-        .iter()
-        .map(|s| (s.balance_minor, reserve_color(t, &s.color)))
-        .collect();
+    let shares = share_parts(t, &v.shares);
     kpi_card(
         t,
         column![
-            widgets::kicker(t, "Total separado"),
-            widgets::money_big(
-                &format!("{}R$", parts.sign),
-                &parts.whole,
-                &parts.cents,
-                t.text,
-                t.text_muted
-            ),
+            widgets::stat_label(t, "Total separado"),
+            widgets::money(t, &v.total, StatSize::L, t.text),
             note,
-            container(split_bar(t, &shares)).padding(Padding {
-                top: 8.0,
-                ..Padding::ZERO
+            kpi_bar(Bar::Parts {
+                parts: &shares,
+                track: t.neutral_800
             }),
-        ]
-        .spacing(6),
+        ],
     )
 }
 
 /// O que o KPI "Emergência coberta" mostra no lugar do numero.
 #[derive(Debug, PartialEq, Eq)]
 enum CoverageFigure<'a> {
-    /// "3,5" de "6 meses".
-    Months { value: &'a str, multiple: u8 },
+    /// "3,5" e "de 6 meses" (o complemento, em 16 ao lado do numero de 36).
+    Months { value: &'a str, suffix: String },
     /// Sem numero honesto para mostrar: um "—" grande parecia dado faltando, e "0 de 6 meses"
     /// seria mentira com saldo guardado. A linha de baixo explica o motivo.
     Missing(&'static str),
+}
+
+/// "de 6 meses"; "de 1 mês" quando o app grava meta de um mes so ("de 1 meses" saia antes).
+fn months_suffix(multiple: u8) -> String {
+    if multiple == 1 {
+        "de 1 mês".to_string()
+    } else {
+        format!("de {multiple} meses")
+    }
 }
 
 fn coverage_figure(emergency: Option<&EmergencyView>) -> CoverageFigure<'_> {
@@ -272,7 +181,7 @@ fn coverage_figure(emergency: Option<&EmergencyView>) -> CoverageFigure<'_> {
         Some(e) if e.coverage.is_none() => CoverageFigure::Missing("Sem meta"),
         Some(e) => CoverageFigure::Months {
             value: e.coverage_label.as_str(),
-            multiple: e.multiple,
+            suffix: months_suffix(e.multiple),
         },
     }
 }
@@ -288,54 +197,61 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
             empty_segments.as_slice(),
         ),
     };
+    let big = StatSize::L.size();
     let value: Element<'_, Message> = match coverage_figure(v.emergency.as_ref()) {
-        CoverageFigure::Months { value, multiple } => row![
-            text(value)
-                .size(32)
-                .font(fonts::INTER_MEDIUM)
-                .line_height(1.0)
-                .color(t.text),
-            container(
-                text(format!("de {multiple} meses"))
-                    .size(16)
-                    .line_height(1.0)
-                    .color(t.text_muted)
-            )
-            .padding(Padding {
-                bottom: 2.0,
-                ..Padding::ZERO
-            }),
-        ]
-        .spacing(6)
-        .align_y(Alignment::End)
-        .into(),
-        // Um degrau abaixo do valor e na cor secundaria, na mesma altura de 32 para o card nao
-        // encolher: e um estado, nao um numero.
+        CoverageFigure::Months { value, suffix } => widgets::value_line(
+            vec![
+                (value.to_string(), big, fonts::INTER_LIGHT, t.text),
+                (suffix, type_scale::SECTION, fonts::INTER, t.text_muted),
+            ],
+            big,
+            6.0,
+        ),
+        // Um degrau abaixo do valor e na cor secundaria, na mesma altura do valor para o card
+        // nao encolher: e um estado, nao um numero.
         CoverageFigure::Missing(label) => container(
             text(label)
-                .size(24)
-                .font(fonts::INTER_MEDIUM)
+                .size(type_scale::VALUE_M)
                 .line_height(1.0)
                 .color(t.text_muted),
         )
-        .height(32)
+        .height(big)
         .align_y(Alignment::End)
         .into(),
     };
+    // "hoje" em dourado: a cobertura e o estado de agora, e o dourado marca o agora (principio 2).
+    let label = row![
+        container(widgets::stat_label(t, "Emergência coberta")).width(Length::Fill),
+        widgets::tag(t, TagTone::Accent, "hoje"),
+    ]
+    .spacing(space::S)
+    .align_y(Alignment::Center);
     kpi_card(
         t,
         column![
-            kicker_with_icon(t, icons::LIFEBUOY, t.accent_300, "Emergência coberta"),
+            label,
             value,
-            text(remaining.to_string()).size(12).color(t.text_muted),
-            container(meter(t, segments, 6.0)).padding(Padding {
-                top: 8.0,
-                ..Padding::ZERO
+            kpi_note(t, remaining),
+            kpi_bar(Bar::Segments {
+                values: segments,
+                color: t.accent,
+                track: t.neutral_800
             }),
-        ]
-        .spacing(6),
+        ],
     )
 }
+
+/// Cor do valor e do icone de uma linha do card "Últimos 12 meses". Zero na cor secundaria:
+/// "−R$ 0,00" no vermelho de despesa apontava uma retirada que nao houve (o texto do zero, sem
+/// sinal, vem do modelo).
+fn flow_color(minor: i64, color: Color, muted: Color) -> Color {
+    if minor == 0 { muted } else { color }
+}
+
+/// Altura de cada linha de valor do card "Últimos 12 meses". Com 25, rotulo + duas linhas + nota
+/// somam a altura dos vizinhos (rotulo + numero de 36 + nota + barra): a linha de KPIs do iced
+/// nao iguala alturas.
+const YEAR_LINE_HEIGHT: f32 = 25.0;
 
 fn year_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
@@ -345,177 +261,182 @@ fn year_card(app: &App) -> Element<'_, Message> {
                 icon_color: Color,
                 color: Color,
                 label: &'static str,
-                sign: &str,
+                value: &str,
                 minor: i64| {
-        let (value, value_color) = flow_value(sign, minor, color, muted);
-        let icon_color = if minor == 0 { muted } else { icon_color };
+        let value_color = flow_color(minor, color, muted);
+        let icon_color = flow_color(minor, icon_color, muted);
         row![
             row![
-                icons::icon(glyph, 13.0, icon_color),
-                text(label).size(13).color(t.text_soft()),
+                icons::icon(glyph, type_scale::LABEL, icon_color),
+                text(label).size(type_scale::LABEL).color(t.text_soft()),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
             .width(Length::Fill),
-            text(value)
-                .size(20)
-                .font(fonts::INTER_MEDIUM)
+            // Valor secundario: 17 Regular (7.4), a direita como todo dinheiro.
+            text(value.to_string())
+                .size(type_scale::VALUE_S)
                 .line_height(1.0)
                 .wrapping(Wrapping::None)
                 .color(value_color),
         ]
-        .spacing(12)
+        .spacing(space::M)
+        .height(YEAR_LINE_HEIGHT)
         .align_y(Alignment::Center)
     };
     let mut col = column![
-        widgets::kicker(t, "Últimos 12 meses"),
-        container(line(
+        widgets::stat_label(t, "Últimos 12 meses"),
+        line(
             icons::ARROW_DOWN,
             t.accent_300,
             t.text,
             "Guardado",
-            "+",
+            &v.deposits,
             v.totals.deposits_minor,
-        ))
-        .padding(Padding {
-            top: 4.0,
-            ..Padding::ZERO
-        }),
+        ),
         line(
             icons::ARROW_UP,
             t.expense_fg,
             t.expense_fg,
             "Retirado",
-            "\u{2212}",
+            &v.withdrawals,
             v.totals.withdrawals_minor,
         ),
-    ]
-    .spacing(6);
+    ];
     // "Nenhuma retirada" repetiria a linha de cima, que ja mostra R$ 0,00 em cinza. O vao fica
-    // na altura da nota (12 x 1,3) para o card nao ficar mais baixo que os vizinhos: a linha de
-    // KPIs do iced nao iguala alturas.
+    // na altura da nota (12 x 1,3) para o card nao ficar mais baixo que os vizinhos.
     col = if v.totals.withdrawal_count > 0 {
-        col.push(
-            text(v.withdrawals_note.clone())
-                .size(12)
-                .color(t.text_muted),
-        )
+        col.push(kpi_note(t, &v.withdrawals_note))
     } else {
         col.push(Space::new().height(16))
     };
     kpi_card(t, col)
 }
 
-/// Valor e cor de uma linha do card "Últimos 12 meses". Zero sai sem sinal e na cor
-/// secundaria: "−R$ 0,00" no vermelho de despesa apontava uma retirada que nao houve.
-fn flow_value(sign: &str, minor: i64, color: Color, muted: Color) -> (String, Color) {
-    if minor == 0 {
-        (format_brl(0), muted)
+// ---- linha 2: emergencia e caixinhas ----
+
+/// Titulo da secao da reserva de emergencia, fora do card.
+const EMERGENCY_TITLE: &str = "Reserva de emergência";
+/// Entre o titulo de secao e o card dele: menor que o espaco entre cards, para o titulo ficar
+/// colado ao bloco que nomeia e nao boiar no meio do vao.
+const HEADING_GAP: f32 = space::M;
+
+/// Titulo de secao 16 (fora do card) e o card embaixo.
+fn titled<'a>(heading: Element<'a, Message>, card: Element<'a, Message>) -> Element<'a, Message> {
+    column![heading, card].spacing(HEADING_GAP).into()
+}
+
+/// Lado a lado (alinhados ao topo, como o `align-items: start` do prototipo) quando os dois
+/// cabem com 440 cada; senao empilhados. Cada um com o titulo de secao em cima, fora do card:
+/// "Reserva de emergência" e "Caixinhas" com quantas tem meta ao lado.
+fn cards_row(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let v = &app.reserves;
+    let width = shell::content_width(app);
+    let emergency_heading = widgets::section_heading(t, EMERGENCY_TITLE, "", None, 0.0);
+    let pots_heading = widgets::section_heading(t, "Caixinhas", pots_question(v), None, 0.0);
+    if width >= 2.0 * CARD_MIN + GAP {
+        let card_inner = (width - GAP) / 2.0 - CARD_PADDING_X;
+        row![
+            titled(emergency_heading, emergency_card(app, card_inner)),
+            titled(pots_heading, pots_card(app)),
+        ]
+        .spacing(GAP)
+        .align_y(Alignment::Start)
+        .into()
     } else {
-        (format!("{sign}{}", format_brl(minor)), color)
+        column![
+            titled(
+                emergency_heading,
+                emergency_card(app, width - CARD_PADDING_X)
+            ),
+            titled(pots_heading, pots_card(app)),
+        ]
+        .spacing(GAP)
+        .into()
     }
 }
 
-// ---- linha 2: emergencia e caixinhas ----
-
-/// Lado a lado (alinhados ao topo, como o `align-items: start` do prototipo) quando os dois
-/// cabem com 440 cada; senao empilhados.
-fn cards_row(app: &App) -> Element<'_, Message> {
-    let width = shell::content_width(app);
-    if width >= 2.0 * CARD_MIN + GAP {
-        let card_inner = (width - GAP) / 2.0 - CARD_PADDING_X;
-        row![emergency_card(app, card_inner), pots_card(app)]
-            .spacing(GAP)
-            .align_y(Alignment::Start)
-            .into()
+/// O aparte do titulo "Caixinhas" ("3 com objetivo · 1 sem meta", do modelo); sem caixinha,
+/// nada: o card ja diz "Nenhuma caixinha ainda".
+fn pots_question(v: &ReservesView) -> &str {
+    if v.pots.is_empty() {
+        ""
     } else {
-        column![emergency_card(app, width - CARD_PADDING_X), pots_card(app)]
-            .spacing(GAP)
-            .into()
+        v.pots_note.as_str()
     }
+}
+
+/// O nome que a pessoa deu a reserva de emergencia, se nao for o padrao: com o titulo de secao
+/// "Reserva de emergência" fora do card, repetir o mesmo nome no cabecalho do card seria eco.
+fn custom_emergency_name(name: &str) -> Option<&str> {
+    let name = name.trim();
+    (!name.is_empty() && name.to_lowercase() != EMERGENCY_TITLE.to_lowercase()).then_some(name)
 }
 
 /// Caixa de 36 com borda no acento e a boia: o simbolo da emergencia.
 fn lifebuoy_box<'a>(t: &'static Tokens) -> Element<'a, Message> {
     container(icons::icon(icons::LIFEBUOY, 18.0, t.accent_300))
         .center(36)
-        .style(theme::outlined(t.accent, 8.0))
+        .style(theme::outlined(t.accent, theme::radius::CONTROL))
         .into()
-}
-
-fn pill<'a>(t: &'static Tokens, label: String) -> Element<'a, Message> {
-    container(
-        text(label)
-            .size(11)
-            .font(fonts::INTER_MEDIUM)
-            .line_height(1.0)
-            .color(t.accent_300),
-    )
-    .height(24)
-    .padding([0, 9])
-    .align_y(Alignment::Center)
-    .style(theme::fill(t.accent_900, 999.0))
-    .into()
 }
 
 fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
     let t = app.tokens;
-    let padding = pad(18.0, 20.0, 20.0);
     let Some(e) = &app.reserves.emergency else {
-        let header = row![
-            lifebuoy_box(t),
-            text("Reserva de emergência")
-                .size(15)
-                .font(fonts::INTER_MEDIUM)
-                .color(t.text),
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center);
-        return card(
+        // O titulo da secao, fora do card, ja diz o que falta; aqui so a boia e o motivo.
+        return widgets::card(
             t,
-            padding,
-            column![
-                header,
-                Space::new().height(16),
+            row![
+                lifebuoy_box(t),
                 text("Nenhuma reserva de emergência sincronizada")
-                    .size(13)
+                    .size(type_scale::LABEL)
                     .color(t.text_muted),
-            ],
-        );
+            ]
+            .spacing(space::M)
+            .align_y(Alignment::Center),
+        )
+        .into();
     };
+    let goal = text(format!("Meta: {} × custo essencial", e.multiple));
+    let mut about = column![].width(Length::Fill);
+    if let Some(name) = custom_emergency_name(&e.name) {
+        about = about
+            .push(
+                container(
+                    text(name.to_string())
+                        .size(type_scale::SUPPORT)
+                        .font(fonts::INTER_MEDIUM)
+                        .wrapping(Wrapping::None)
+                        .color(t.text),
+                )
+                .clip(true),
+            )
+            .push(goal.size(type_scale::META).color(t.text_muted));
+    } else {
+        // Sem nome proprio, a meta vira a linha principal ao lado da boia.
+        about = about.push(goal.size(type_scale::LABEL).color(t.text_soft()));
+    }
     let header = row![
         lifebuoy_box(t),
-        column![
-            container(
-                text(e.name.clone())
-                    .size(15)
-                    .font(fonts::INTER_MEDIUM)
-                    .wrapping(Wrapping::None)
-                    .color(t.text)
-            )
-            .clip(true),
-            text(format!("Meta: {} × custo essencial", e.multiple))
-                .size(12)
-                .color(t.text_muted),
-        ]
-        .width(Length::Fill),
-        pill(t, e.pct_label.clone()),
+        about,
+        widgets::tag(t, TagTone::Accent, &e.pct_label),
     ]
     .spacing(12)
     .align_y(Alignment::Center);
-    let parts = money_parts(e.balance_minor);
-    let mut balance = row![widgets::money_big(
-        &format!("{}R$", parts.sign),
-        &parts.whole,
-        &parts.cents,
-        t.text,
-        t.text_muted
-    )]
-    .spacing(10)
-    .align_y(Alignment::End);
-    if let Some(goal) = goal_note(e.goal_minor) {
+    let mut balance = row![widgets::money(t, &e.balance, StatSize::L, t.text)]
+        .spacing(space::M)
+        .align_y(Alignment::End);
+    if let Some(goal) = &e.goal_note {
         balance = balance.push(
-            container(text(goal).size(13).line_height(1.0).color(t.text_muted)).padding(Padding {
+            container(
+                text(goal.clone())
+                    .size(13)
+                    .line_height(1.0)
+                    .color(t.text_muted),
+            )
+            .padding(Padding {
                 bottom: 2.0,
                 ..Padding::ZERO
             }),
@@ -526,7 +447,14 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
         Space::new().height(16),
         balance,
         Space::new().height(14),
-        meter(t, &e.segments, 10.0),
+        widgets::bar(
+            Bar::Segments {
+                values: &e.segments,
+                color: t.accent,
+                track: t.neutral_800
+            },
+            10.0,
+        ),
     ];
     if !e.segments.is_empty() {
         col = col.push(Space::new().height(6)).push(meter_labels(t, e));
@@ -539,31 +467,30 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
     .align_y(Alignment::Center);
     col = col
         .push(Space::new().height(20))
-        .push(widgets::hdivider(t))
+        .push(widgets::divider(t))
         .push(Space::new().height(16))
         .push(essential_section(app, e.cost.as_ref(), inner_width))
         .push(Space::new().height(14))
         .push(eta);
-    card(t, padding, col)
-}
-
-/// "de R$ 2.400,00" ao lado do saldo. Sem meta, nada: a pilula do cabecalho ja diz "Sem meta"
-/// e repetir ao lado do valor era a terceira vez no mesmo card.
-fn goal_note(goal_minor: i64) -> Option<String> {
-    (goal_minor > 0).then(|| format!("de {}", format_brl(goal_minor)))
+    widgets::card(t, col).into()
 }
 
 /// "1", "2", …, "6 meses": um rotulo sob cada segmento, com a mesma largura.
+/// Rotulo do segmento `i` de `n`: so o numero, e no ultimo a unidade ("6 meses"; "1 mês" na meta
+/// de um mes so, que saia "1 meses").
+fn meter_label(i: usize, n: usize) -> String {
+    match (i == n, i) {
+        (true, 1) => "1 mês".to_string(),
+        (true, _) => format!("{i} meses"),
+        (false, _) => i.to_string(),
+    }
+}
+
 fn meter_labels<'a>(t: &'static Tokens, e: &EmergencyView) -> Element<'a, Message> {
     let n = e.segments.len();
     iced::widget::Row::with_children((1..=n).map(|i| {
-        let label = if i == n {
-            format!("{i} meses")
-        } else {
-            i.to_string()
-        };
         container(
-            text(label)
+            text(meter_label(i, n))
                 .size(11)
                 .wrapping(Wrapping::None)
                 .color(t.text_muted),
@@ -600,7 +527,7 @@ fn essential_section<'a>(
     };
     let header = row![
         title,
-        text(format!("{}/mês", whole_brl(cost.total_minor)))
+        text(cost.total_label.clone())
             .size(13)
             .font(fonts::INTER_MEDIUM)
             .wrapping(Wrapping::None)
@@ -635,11 +562,11 @@ fn essential_section<'a>(
     } else {
         format!("Média dos últimos {} meses nestas categorias", cost.months)
     };
-    let bar_parts: Vec<(i64, Color)> = cost
+    let bar_parts: Vec<(f64, Color)> = cost
         .parts
         .iter()
         .filter(|p| p.average_minor > 0)
-        .map(|p| (p.average_minor, t.token(&p.color)))
+        .map(|p| (p.average_minor as f64, t.token(&p.color)))
         .collect();
     let columns = if inner_width >= 2.0 * LEGEND_COL_MIN + LEGEND_COL_GAP {
         2
@@ -657,12 +584,12 @@ fn essential_section<'a>(
             )
             .width(Length::Fill)
             .clip(true),
-            text(whole_brl(p.average_minor))
+            text(p.average_label.clone())
                 .size(13)
                 .wrapping(Wrapping::None)
                 .color(t.text_soft()),
         ]
-        .spacing(10)
+        .spacing(space::M)
         .height(28)
         .align_y(Alignment::Center)
         .width(Length::Fill)
@@ -684,7 +611,13 @@ fn essential_section<'a>(
         Space::new().height(2),
         text(note).size(12).color(muted),
         Space::new().height(12),
-        split_bar(t, &bar_parts),
+        widgets::bar(
+            Bar::Parts {
+                parts: &bar_parts,
+                track: t.neutral_800
+            },
+            6.0,
+        ),
         Space::new().height(10),
         legend,
     ]
@@ -694,27 +627,33 @@ fn essential_section<'a>(
 fn pots_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.reserves;
-    let aside = (!v.pots.is_empty()).then(|| v.pots_note.clone());
-    let mut col = column![
-        widgets::card_title(t, "Caixinhas", aside),
-        Space::new().height(8)
-    ];
+    // O titulo saiu para fora do card: as linhas comecam no topo, com divisor so entre elas. O
+    // respiro de 6 em cima e embaixo soma aos 14 de cada linha os 20 de todo card.
+    let mut col = column![];
     if v.pots.is_empty() {
-        col = col.push(widgets::hdivider(t)).push(
-            container(text("Nenhuma caixinha ainda").size(13).color(t.text_muted)).padding([14, 0]),
+        col = col.push(
+            container(
+                text("Nenhuma caixinha ainda")
+                    .size(type_scale::LABEL)
+                    .color(t.text_muted),
+            )
+            .padding([14, 0]),
         );
     }
-    for p in &v.pots {
-        col = col.push(widgets::hdivider(t)).push(pot_row(app, p));
+    for (i, p) in v.pots.iter().enumerate() {
+        if i > 0 {
+            col = col.push(widgets::divider(t));
+        }
+        col = col.push(pot_row(app, p));
     }
-    card(t, pad(18.0, 20.0, 8.0), col)
+    widgets::card(t, col).padding(pad(6.0, 20.0, 6.0)).into()
 }
 
 /// Icone e cor da linha de ritmo (tabela de `Pace` da spec).
 fn pace_style(t: &'static Tokens, pace: &Pace) -> (&'static str, Color) {
     match pace {
         Pace::OnTrack { .. } | Pace::Reached => (icons::CHECK_CIRCLE, t.income_fg),
-        Pace::Overdue { .. } | Pace::Behind { .. } => (icons::WARNING_CIRCLE, t.token("orange")),
+        Pace::Overdue { .. } | Pace::Behind { .. } => (icons::WARNING_CIRCLE, t.warning),
         Pace::NoRecurring { .. } | Pace::NoDeadline { .. } | Pace::NoGoal => {
             (icons::REPEAT, t.text_muted)
         }
@@ -724,9 +663,7 @@ fn pace_style(t: &'static Tokens, pace: &Pace) -> (&'static str, Color) {
 fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
     let t = app.tokens;
     let color = reserve_color(t, &p.color);
-    let tile = container(icons::icon(reserve_glyph(&p.icon), 18.0, color))
-        .center(36)
-        .style(theme::fill(reserve_tint(t, &p.color), 8.0));
+    let tile = widgets::tile(t, reserve_glyph(&p.icon), color, color, 36.0);
     let muted = t.text_muted;
     let mut meta = row![
         text(p.meta_left.clone())
@@ -754,7 +691,7 @@ fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
             )
             .width(Length::Fill)
             .clip(true),
-            text(format_brl(p.balance_minor))
+            text(p.balance.clone())
                 .size(14)
                 .font(fonts::INTER_MEDIUM)
                 .wrapping(Wrapping::None)
@@ -767,15 +704,17 @@ fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
     ]
     .width(Length::Fill);
     if let Some(progress) = p.progress {
-        body = body.push(Space::new().height(10)).push(fill_bar(
-            t.neutral_900,
-            color,
-            progress,
+        body = body.push(Space::new().height(10)).push(widgets::bar(
+            Bar::Fraction {
+                value: progress,
+                color,
+                track: Some(t.neutral_900),
+                outlined: false,
+            },
             6.0,
-            3.0,
         ));
     }
-    if let Some(label) = pace_label(&p.pace) {
+    if let Some(label) = p.pace_label.clone() {
         let (glyph, pace_color) = pace_style(t, &p.pace);
         body = body.push(Space::new().height(8)).push(
             row![
@@ -786,7 +725,7 @@ fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
             .align_y(Alignment::Center),
         );
     }
-    container(row![tile, body].spacing(14).align_y(Alignment::Start))
+    container(row![tile, body].spacing(space::L).align_y(Alignment::Start))
         .padding([14, 0])
         .width(Length::Fill)
         .into()
@@ -806,14 +745,14 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
         .size(15)
         .font(fonts::INTER_MEDIUM)
         .color(t.text);
-    let mut keys = row![].spacing(14).align_y(Alignment::Center);
+    let mut keys = row![].spacing(space::L).align_y(Alignment::Center);
     for s in &v.series {
         keys = keys.push(
             row![
                 container(Space::new())
                     .width(8)
                     .height(8)
-                    .style(theme::fill(reserve_color(t, &s.color), 2.0)),
+                    .style(theme::fill(series_color(t, &s.color), 2.0)),
                 text(s.name.clone()).size(12).color(muted),
             ]
             .spacing(6)
@@ -841,6 +780,8 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
             series: &v.series,
             months: &v.months,
             axis_top: v.axis_top,
+            y_labels: &v.y_labels,
+            month_totals: &v.month_totals,
             current: v.months.len().saturating_sub(1),
             tokens: t,
             cache: &app.reserves_cache,
@@ -849,11 +790,7 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
         .height(EVOLUTION_HEIGHT)
         .into()
     };
-    card(
-        t,
-        pad(18.0, 20.0, 20.0),
-        column![header, Space::new().height(18), body],
-    )
+    widgets::card(t, column![header, Space::new().height(18), body]).into()
 }
 
 // ---- linha 4: movimentacoes ----
@@ -876,7 +813,7 @@ fn movements_card(app: &App) -> Element<'_, Message> {
     .padding([0, 8]);
     let mut col = column![title, Space::new().height(8)];
     if v.movements.is_empty() {
-        col = col.push(widgets::hdivider(t)).push(
+        col = col.push(widgets::divider(t)).push(
             container(
                 text("Nenhuma movimentação nos últimos 12 meses")
                     .size(13)
@@ -888,50 +825,18 @@ fn movements_card(app: &App) -> Element<'_, Message> {
         );
     }
     for m in &v.movements {
-        col = col.push(widgets::hdivider(t)).push(movement_row(app, m));
+        col = col.push(widgets::divider(t)).push(movement_row(app, m));
     }
-    card(t, pad(18.0, 12.0, 8.0), col)
+    widgets::card(t, col).padding(pad(18.0, 12.0, 8.0)).into()
 }
 
 /// Tile de 32: guardar e seta para baixo no acento; retirar e seta para cima na cor de despesa.
 fn movement_tile<'a>(t: &'static Tokens, kind: MovementKind) -> Element<'a, Message> {
     let (glyph, color, tint) = match kind {
-        MovementKind::Deposit => (
-            icons::ARROW_DOWN,
-            t.accent_300,
-            mix(t.surface, t.accent, 0.16),
-        ),
-        MovementKind::Withdrawal => (
-            icons::ARROW_UP,
-            t.expense_fg,
-            mix(t.surface, t.expense, 0.16),
-        ),
+        MovementKind::Deposit => (icons::ARROW_DOWN, t.accent_300, t.accent),
+        MovementKind::Withdrawal => (icons::ARROW_UP, t.expense_fg, t.expense),
     };
-    container(icons::icon(glyph, 16.0, color))
-        .center(32)
-        .style(theme::fill(tint, 8.0))
-        .into()
-}
-
-/// Tag "Mensal" de 18 px do deposito recorrente.
-fn recurring_tag<'a>(t: &'static Tokens) -> Element<'a, Message> {
-    container(
-        row![
-            icons::icon(icons::REPEAT, 10.0, t.accent_300),
-            text("Mensal")
-                .size(10)
-                .font(fonts::INTER_MEDIUM)
-                .line_height(1.0)
-                .color(t.accent_300),
-        ]
-        .spacing(3)
-        .align_y(Alignment::Center),
-    )
-    .height(18)
-    .padding([0, 6])
-    .align_y(Alignment::Center)
-    .style(theme::fill(t.accent_900, 999.0))
-    .into()
+    widgets::tile(t, glyph, color, tint, 32.0)
 }
 
 fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
@@ -946,7 +851,13 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
     .spacing(6)
     .align_y(Alignment::Center);
     if m.recurring {
-        meta = meta.push(recurring_tag(t));
+        // Neutra, como nos Lancamentos: recorrencia nao e o foco da tela.
+        meta = meta.push(widgets::tag_icon(
+            t,
+            TagTone::Neutral,
+            icons::REPEAT,
+            "Mensal",
+        ));
     }
     let description = row![
         movement_tile(t, m.kind),
@@ -971,12 +882,9 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
     ]
     .spacing(8)
     .align_y(Alignment::Center);
-    let (value, value_color) = match m.kind {
-        MovementKind::Deposit => (format!("+{}", format_brl(m.amount_minor)), t.text),
-        MovementKind::Withdrawal => (
-            format!("\u{2212}{}", format_brl(m.amount_minor)),
-            t.expense_fg,
-        ),
+    let value_color = match m.kind {
+        MovementKind::Deposit => t.text,
+        MovementKind::Withdrawal => t.expense_fg,
     };
     let content = row![
         container(description)
@@ -989,7 +897,7 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
             .width(Length::FillPortion(author_w))
             .clip(true),
         container(
-            text(value)
+            text(m.amount.clone())
                 .size(14)
                 .font(fonts::INTER_MEDIUM)
                 .wrapping(Wrapping::None)
@@ -998,15 +906,21 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
         .width(MOVEMENT_VALUE_WIDTH)
         .align_x(Alignment::End),
     ]
-    .spacing(14)
+    .spacing(space::L)
     .align_y(Alignment::Center);
-    hover_row(app, &m.id, content, [0, 8], 8.0, MOVEMENT_ROW_HEIGHT)
+    hover_row(
+        app,
+        &m.id,
+        content,
+        [0, 8],
+        RowEdge::Inset,
+        Some(MOVEMENT_ROW_HEIGHT),
+    )
 }
 
 // ---- estado vazio ----
 
-/// Um card so: o medidor tracejado e o texto. O `flex-wrap` do prototipo vira uma quebra manual
-/// (o iced nao tem): lado a lado quando os dois cabem, senao empilhados.
+/// O card com esboco do Resumo (`widgets::empty_sketch_card`), com o medidor tracejado.
 fn empty_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let sketch = canvas(EmptyReservesProgram {
@@ -1015,36 +929,20 @@ fn empty_card(app: &App) -> Element<'_, Message> {
     })
     .width(EMPTY_RESERVES_WIDTH)
     .height(EMPTY_RESERVES_HEIGHT);
-    let copy = column![
-        text("Nenhuma reserva sincronizada")
-            .size(20)
-            .font(fonts::INTER_MEDIUM)
-            .color(t.text),
-        Space::new().height(8),
-        text(
-            "A reserva de emergência e as caixinhas são criadas no app. Assim que um celular \
-             pareado sincronizar, saldos, metas e movimentações aparecem aqui."
-        )
-        .size(14)
-        .line_height(1.55)
-        .color(t.text_soft()),
-    ]
-    .max_width(460);
-    let inner = shell::content_width(app) - 2.0 * EMPTY_PADDING_X;
-    let body: Element<'_, Message> = if inner >= EMPTY_RESERVES_WIDTH + EMPTY_GAP_X + EMPTY_TEXT_MIN
-    {
-        row![sketch, copy]
-            .spacing(EMPTY_GAP_X)
-            .align_y(Alignment::Center)
-            .into()
-    } else {
-        column![sketch, copy].spacing(32).into()
-    };
-    container(body)
-        .padding([56.0, EMPTY_PADDING_X])
-        .width(Length::Fill)
-        .style(theme::card(t))
-        .into()
+    let copy = widgets::empty_copy(
+        t,
+        "Nenhuma reserva sincronizada",
+        "A reserva de emergência e as caixinhas são criadas no app. Assim que um celular pareado          sincronizar, saldos, metas e movimentações aparecem aqui.",
+        false,
+    );
+    widgets::empty_sketch_card(
+        t,
+        sketch.into(),
+        EMPTY_RESERVES_WIDTH,
+        copy,
+        shell::connect_phone_button(app),
+        shell::content_width(app),
+    )
 }
 
 #[cfg(test)]
@@ -1053,11 +951,21 @@ mod tests {
     use super::*;
     use crate::hub::snapshot::Snapshot;
 
+    #[test]
+    fn zero_dos_ultimos_12_meses_na_cor_secundaria() {
+        let t = &theme::DARK;
+        assert_eq!(flow_color(0, t.expense_fg, t.text_muted), t.text_muted);
+        assert_eq!(flow_color(12_345, t.expense_fg, t.text_muted), t.expense_fg);
+        assert_eq!(flow_color(920_000, t.text, t.text_muted), t.text);
+    }
+
     fn emergency(coverage: Option<f64>, label: &str) -> EmergencyView {
         EmergencyView {
             id: "E".into(),
             name: "Emergência".into(),
             balance_minor: 1_880_000,
+            balance: Default::default(),
+            goal_note: None,
             multiple: 6,
             cost: None,
             goal_minor: 0,
@@ -1087,34 +995,24 @@ mod tests {
             coverage_figure(Some(&covered)),
             CoverageFigure::Months {
                 value: "3,5",
-                multiple: 6
+                suffix: "de 6 meses".to_string()
             }
         );
-    }
-
-    #[test]
-    fn zero_sem_sinal_e_na_cor_secundaria() {
-        let t = &theme::DARK;
-        let muted = t.text_muted;
+        // Meta de um mes so: o complemento e o rotulo do medidor concordam com o numero.
+        assert_eq!(meter_label(1, 1), "1 mês");
+        assert_eq!(meter_label(6, 6), "6 meses");
+        assert_eq!(meter_label(2, 6), "2");
+        let one = EmergencyView {
+            multiple: 1,
+            ..emergency(Some(0.5), "0,5")
+        };
         assert_eq!(
-            flow_value("\u{2212}", 0, t.expense_fg, muted),
-            ("R$ 0,00".to_string(), muted)
+            coverage_figure(Some(&one)),
+            CoverageFigure::Months {
+                value: "0,5",
+                suffix: "de 1 mês".to_string()
+            }
         );
-        assert_eq!(
-            flow_value("\u{2212}", 12_345, t.expense_fg, muted),
-            ("\u{2212}R$ 123,45".to_string(), t.expense_fg)
-        );
-        assert_eq!(
-            flow_value("+", 920_000, t.text, muted),
-            ("+R$ 9.200,00".to_string(), t.text)
-        );
-    }
-
-    #[test]
-    fn meta_ao_lado_do_saldo_so_quando_existe() {
-        assert_eq!(goal_note(240_000).as_deref(), Some("de R$ 2.400,00"));
-        assert_eq!(goal_note(0), None);
-        assert_eq!(goal_note(-1), None);
     }
 
     #[test]
@@ -1141,6 +1039,7 @@ mod tests {
         if let Some(e) = app.reserves.emergency.as_mut() {
             e.cost = Some(EssentialCost {
                 total_minor: 250_000,
+                total_label: "R$ 2.500/mês".into(),
                 months: 0,
                 parts: Vec::new(),
                 informed: true,
@@ -1163,12 +1062,49 @@ mod tests {
     }
 
     #[test]
-    fn partes_proporcionais_em_milesimos() {
-        assert_eq!(portions(&[]), Vec::<u16>::new());
-        assert_eq!(portions(&[0, 0]), vec![1, 1]);
-        assert_eq!(portions(&[300, 100]), vec![750, 250]);
-        assert_eq!(portions(&[1, 1_000_000]), vec![1, 999]);
-        assert_eq!(portions(&[-5, 10]), vec![1, 1000]);
+    fn nome_da_emergencia_so_no_card_quando_e_proprio() {
+        assert_eq!(custom_emergency_name("Reserva de emergência"), None);
+        assert_eq!(custom_emergency_name("  reserva de EMERGÊNCIA "), None);
+        assert_eq!(custom_emergency_name(""), None);
+        assert_eq!(
+            custom_emergency_name("Colchão da casa"),
+            Some("Colchão da casa")
+        );
+    }
+
+    #[test]
+    fn aparte_das_caixinhas_vem_do_modelo_e_some_sem_caixinha() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_reserves(dir.path());
+        assert!(!app.reserves.pots.is_empty());
+        assert_eq!(pots_question(&app.reserves), app.reserves.pots_note);
+        app.reserves.pots.clear();
+        assert_eq!(pots_question(&app.reserves), "");
+        let _ = view(&app);
+    }
+
+    #[test]
+    fn emergencia_com_a_mesma_cor_na_barra_do_total_no_ponto_e_no_grafico() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, _rx, _tx) = app_with_reserves(dir.path());
+        for t in [&theme::DARK, &theme::LIGHT] {
+            let v = &app.reserves;
+            let parts = share_parts(t, &v.shares);
+            let emergency: Vec<_> = v
+                .shares
+                .iter()
+                .zip(&parts)
+                .filter(|(s, _)| s.color == ReserveColor::Accent)
+                .map(|(_, (_, c))| *c)
+                .collect();
+            assert!(!emergency.is_empty(), "a fixture tem emergencia com saldo");
+            assert!(emergency.iter().all(|c| *c == t.neutral_300));
+            assert_eq!(reserve_color(t, &ReserveColor::Accent), t.neutral_300);
+            assert_eq!(
+                reserve_color(t, &ReserveColor::Token("sky".into())),
+                t.token("sky")
+            );
+        }
     }
 
     #[test]

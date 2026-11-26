@@ -2,36 +2,24 @@
 //! (tile da categoria, autor, valor, hover). Sairam do Dashboard quando ele virou o Grafite.
 
 use iced::widget::text::Wrapping;
-use iced::widget::{container, mouse_area, row, text};
-use iced::{Alignment, Border, Color, Element, Length, Theme};
+use iced::widget::{container, row, text};
+use iced::{Alignment, Element, Length};
 
 use super::app::{App, Message};
 use super::theme::Tokens;
+use super::widgets::{RowEdge, RowHover};
 use super::{fonts, icons, widgets};
 use crate::dashboard::contract::Kind;
 use crate::dashboard::list::{ListRow, RowAuthor};
-use crate::dashboard::money::{format_brl, signed_brl_plus};
 
 /// Coluna do valor nas linhas de lancamento.
 const VALUE_WIDTH: f32 = 128.0;
 
-pub(super) fn kicker_with_icon<'a>(
-    t: &'static Tokens,
-    glyph: &'static str,
-    color: Color,
-    label: &str,
-) -> Element<'a, Message> {
-    row![icons::icon(glyph, 13.0, color), widgets::kicker(t, label)]
-        .spacing(6)
-        .align_y(Alignment::Center)
-        .into()
-}
-
 /// Tile da categoria; sem categoria viva, o tile neutro com `circle-dashed`.
 pub(super) fn category_tile<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Message> {
     match (&r.category_icon, &r.category_color) {
-        (Some(icon), Some(color)) => widgets::tile(t, icons::glyph(icon), color),
-        _ => widgets::tile(t, icons::CIRCLE_DASHED, "slate"),
+        (Some(icon), Some(color)) => widgets::token_tile(t, icons::glyph(icon), color, 32.0),
+        _ => widgets::token_tile(t, icons::CIRCLE_DASHED, "slate", 32.0),
     }
 }
 
@@ -76,15 +64,15 @@ pub(super) fn author_cell_of<'a>(
     .into()
 }
 
-/// Valor da linha: receita com `+` na cor de receita; despesa com `−` na cor do texto (so a
-/// receita ganha cor, como pede o README).
+/// Valor da linha (o texto vem pronto do modelo, mascarado com "Ocultar valores"): receita na
+/// cor de receita, despesa na cor do texto (so a receita ganha cor, como pede o README).
 pub(super) fn value_cell<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Message> {
-    let (label, color) = match r.kind {
-        Kind::Income => (signed_brl_plus(r.amount_minor.max(0)), t.income_fg),
-        Kind::Expense => (format!("\u{2212}{}", format_brl(r.amount_minor)), t.text),
+    let color = match r.kind {
+        Kind::Income => t.income_fg,
+        Kind::Expense => t.text,
     };
     container(
-        text(label)
+        text(r.amount.clone())
             .size(14)
             .font(fonts::INTER_MEDIUM)
             .wrapping(Wrapping::None)
@@ -95,33 +83,27 @@ pub(super) fn value_cell<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Mes
     .into()
 }
 
-/// Linha com hover de 4 % (o mesmo `hover_row` da tela Conexao: so uma tela por vez). Altura
-/// por parametro: 52 nos lancamentos, 56 nas movimentacoes de reserva.
+/// Linha de lista com o hover da tela (`app.hover_row`), sobre `widgets::list_row`. Altura por
+/// parametro: 52 nos lancamentos e nas conversas, 56 nas movimentacoes de reserva, livre
+/// (`None`) na pessoa conectada, que cresce com as linhas de meta.
 pub(super) fn hover_row<'a>(
     app: &'a App,
     id: &str,
     content: impl Into<Element<'a, Message>>,
     padding: [u16; 2],
-    radius: f32,
-    height: f32,
+    edge: RowEdge,
+    height: Option<f32>,
 ) -> Element<'a, Message> {
-    let t = app.tokens;
-    let hovered = app.hover_row.as_deref() == Some(id);
-    let body = container(content)
-        .height(height)
-        .padding(padding)
-        .width(Length::Fill)
-        .align_y(Alignment::Center)
-        .style(move |_: &Theme| container::Style {
-            background: hovered.then(|| t.text_alpha(0.04).into()),
-            border: Border {
-                radius: radius.into(),
-                ..Border::default()
-            },
-            ..container::Style::default()
-        });
-    mouse_area(body)
-        .on_enter(Message::HoverRow(id.to_string()))
-        .on_exit(Message::UnhoverRow(id.to_string()))
-        .into()
+    widgets::list_row(
+        app.tokens,
+        content,
+        RowHover {
+            hovered: app.hover_row.as_deref() == Some(id),
+            enter: Message::HoverRow(id.to_string()),
+            exit: Message::UnhoverRow(id.to_string()),
+        },
+        height,
+        padding,
+        edge,
+    )
 }

@@ -85,10 +85,12 @@ pub const ARROW_SQUARE_OUT: &str = "\u{E5DE}";
 /// Olho do cabecalho: `eye` com valores visiveis, `eye-slash` com valores ocultos.
 pub const EYE: &str = "\u{E220}";
 pub const EYE_SLASH: &str = "\u{E224}";
+/// Ajustes na navegacao (`gear`).
+pub const GEAR: &str = "\u{E270}";
 
 /// Todas as constantes, para o teste garantir que nenhuma ficou vazia.
 #[cfg(test)]
-pub const ALL: [&str; 68] = [
+pub const ALL: [&str; 69] = [
     HOUSE_LINE,
     CHART_PIE_SLICE,
     LIST_BULLETS,
@@ -157,6 +159,7 @@ pub const ALL: [&str; 68] = [
     ARROW_SQUARE_OUT,
     EYE,
     EYE_SLASH,
+    GEAR,
 ];
 
 /// As 36 chaves de `HomeFinance_Mobile/src/features/icons/icon-set.ts`.

@@ -96,7 +96,7 @@ const fn rgb(c: Rgb) -> Color {
 
 /// Espacamento. Os valores 3, 5, 7, 10, 14 e 28 que as telas ainda usam arredondam para o
 /// vizinho daqui.
-#[allow(dead_code, reason = "as telas migram para a escala na Fase 7")]
+#[cfg_attr(not(test), expect(dead_code, reason = "as telas migram na Fase 7"))]
 pub mod space {
     pub const XS: f32 = 4.0;
     pub const S: f32 = 8.0;
@@ -118,7 +118,7 @@ pub mod space {
 }
 
 /// Raio. Saem 5, 10 e 14.
-#[allow(dead_code, reason = "as telas migram para a escala na Fase 7")]
+#[cfg_attr(not(test), expect(dead_code, reason = "as telas migram na Fase 7"))]
 pub mod radius {
     /// Barra de progresso.
     pub const BAR: f32 = 4.0;
@@ -133,7 +133,7 @@ pub mod radius {
 }
 
 /// Alturas de controle e linha, e espessuras de borda.
-#[allow(dead_code, reason = "as telas migram para a escala na Fase 7")]
+#[cfg_attr(not(test), expect(dead_code, reason = "as telas migram na Fase 7"))]
 pub mod size {
     /// Controle compacto, dentro de linha.
     pub const CTRL_S: f32 = 28.0;
@@ -154,7 +154,7 @@ pub mod size {
 /// Escala de tipo, derivada do Dashboard do dono sem mudar nada nele: as outras telas e que se
 /// conformam. Light so em numero de 24 ou mais; SemiBold so em inicial de avatar e numero de
 /// passo. Saem 10, 20 e 32.
-#[allow(dead_code, reason = "as telas migram para a escala na Fase 7")]
+#[cfg_attr(not(test), expect(dead_code, reason = "as telas migram na Fase 7"))]
 pub mod type_scale {
     /// Tag, eixo, escala (Regular ou Medium).
     pub const MICRO: f32 = 11.0;
@@ -367,7 +367,7 @@ impl Tokens {
     }
 
     /// Tinta de 10 % de um tom, opaca sobre o pai (banner, tile de severidade).
-    #[allow(dead_code, reason = "banner e tile da Fase 7")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "banner e tile da Fase 7"))]
     pub fn tint(&self, tone: Tone, parent: Color) -> Color {
         let color = match tone {
             Tone::Accent => self.accent,
@@ -504,7 +504,7 @@ impl Tokens {
 /// Tom de uma tinta (`Tokens::tint`). Nao e o `dashboard::grafite::Tone`: aquele e o tom
 /// semantico de um texto do modelo, sem acento; este so escolhe a cor da tinta.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code, reason = "banner e tile da Fase 7 usam os outros tons")]
+#[cfg_attr(not(test), expect(dead_code, reason = "banner e tile da Fase 7"))]
 pub enum Tone {
     Accent,
     Income,
@@ -796,14 +796,11 @@ pub enum ButtonKind {
 pub enum ButtonSize {
     Compact,
     Regular,
-    #[allow(dead_code, reason = "o cabecalho fixo da Fase 7 usa o de 44")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "cabecalho fixo da Fase 7"))]
     Large,
 }
 
-#[allow(
-    dead_code,
-    reason = "as primitivas da Fase 7 montam o botao com estes valores"
-)]
+#[cfg_attr(not(test), expect(dead_code, reason = "primitivas da Fase 7"))]
 impl ButtonSize {
     pub const fn height(self) -> f32 {
         match self {

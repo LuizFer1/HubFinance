@@ -39,31 +39,40 @@ pub fn root(app: &App) -> Element<'_, Message> {
     if let Some(dialog) = remove_view::dialog(app) {
         layers = layers.push(dialog);
     }
+    if let Some(dialog) = connection_view::connect_dialog(app) {
+        layers = layers.push(dialog);
+    }
     if let Some(preview) = analysis_view::envelope_dialog(app) {
         layers = layers.push(preview);
     }
+    // O "Desfazer" ganha do aviso: tem acao e prazo que manda algo ao nucleo.
     if let Some(pending) = &app.pending_removal {
-        layers = layers.push(toast(app.tokens, &pending.toast));
+        layers = layers.push(toast(app.tokens, &pending.toast, true));
+    } else if let Some((notice, _)) = &app.notice {
+        layers = layers.push(toast(app.tokens, notice, false));
     }
     layers.into()
 }
 
-/// Toast de 40 px centralizado embaixo, com "Desfazer".
-fn toast<'a>(t: &'static Tokens, message: &'a str) -> Element<'a, Message> {
-    let undo = widgets::action_button(t, ButtonKind::Ghost, ButtonSize::Compact, "Desfazer")
-        .on_press(Message::UndoRemove);
-    let content = row![
+/// Toast de 40 px centralizado embaixo, com "Desfazer" quando `undo`.
+fn toast<'a>(t: &'static Tokens, message: &'a str, undo: bool) -> Element<'a, Message> {
+    let mut content = row![
         icons::icon(icons::CHECK_CIRCLE, 14.0, t.income_fg),
         text(message).size(13).color(t.text),
-        undo,
     ]
     .spacing(12)
     .align_y(Alignment::Center);
+    if undo {
+        content = content.push(
+            widgets::action_button(t, ButtonKind::Ghost, ButtonSize::Compact, "Desfazer")
+                .on_press(Message::UndoRemove),
+        );
+    }
     let toast_box = container(content)
         .height(40)
         .padding(Padding {
             top: 0.0,
-            right: 8.0,
+            right: if undo { 8.0 } else { 14.0 },
             bottom: 0.0,
             left: 14.0,
         })
@@ -481,7 +490,8 @@ pub(super) fn opening(app: &App) -> Element<'_, Message> {
 }
 
 /// "Conectar um celular" dos estados vazios, so quando nenhum aparelho esta pareado: sem isso o
-/// primeiro uso caia no Dashboard sem caminho para a Conexao. So navega; o hub nunca cria dado.
+/// primeiro uso caia no Dashboard sem caminho para a Conexao. So navega (a Aparelhos, com o
+/// fluxo de pareamento aberto); o hub nunca cria dado.
 /// Com aparelho pareado o vazio e "aguardando sync" (ou filtro), e o botao nao ajudaria.
 pub(super) fn connect_phone_button(app: &App) -> Option<Element<'_, Message>> {
     // So com o nucleo no ar: no `Starting` a lista de aparelhos ainda vem vazia do snapshot
@@ -494,7 +504,7 @@ pub(super) fn connect_phone_button(app: &App) -> Option<Element<'_, Message>> {
             ButtonSize::Regular,
             "Conectar um celular",
         )
-        .on_press(Message::SelectScreen(Screen::Connection))
+        .on_press(Message::ConnectPhone)
         .into()
     })
 }
@@ -854,6 +864,11 @@ fn header(app: &App) -> Element<'_, Message> {
     if shown.eye {
         controls = controls.push(hide_values_button(app));
     }
+    if app.screen == Screen::Connection
+        && let Some(connect) = connection_view::header_action(app)
+    {
+        controls = controls.push(connect);
+    }
     let title = widgets::page_title(t, title, &line);
     let head: Element<'_, Message> = if header_inline(content_width(app)) {
         row![container(title).width(Length::Fill), controls]
@@ -976,10 +991,7 @@ pub(super) fn titles(app: &App) -> (&str, String) {
             "Análise",
             "Onde dá para melhorar · calculado no seu PC".into(),
         ),
-        Screen::Connection => (
-            "Aparelhos",
-            "Abra este endereço no celular para conectar ao hub".into(),
-        ),
+        Screen::Connection => ("Aparelhos", "Quem sincroniza com esta casa?".into()),
         Screen::Settings => ("Ajustes", "Preferências deste computador".into()),
     }
 }
@@ -1661,10 +1673,7 @@ mod tests {
         app.screen = Screen::Connection;
         assert_eq!(
             titles(&app),
-            (
-                "Aparelhos",
-                "Abra este endereço no celular para conectar ao hub".to_string()
-            )
+            ("Aparelhos", "Quem sincroniza com esta casa?".to_string())
         );
     }
 }

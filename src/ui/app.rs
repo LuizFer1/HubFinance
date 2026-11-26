@@ -13,7 +13,7 @@ use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
 use tokio::sync::watch;
 
-use super::connection_view;
+use super::connection_view::{self, ConnectFlow, ConnectStep, PhoneOs};
 use super::remove_view;
 use super::theme::Tokens;
 use crate::assistant::secret::Secret;
@@ -37,6 +37,9 @@ pub const COPIED_FOR: Duration = Duration::from_millis(1600);
 
 /// Quanto tempo o toast de "Desfazer" fica na tela antes de a revogacao ser enviada.
 pub const UNDO_FOR: Duration = Duration::from_secs(5);
+
+/// Quanto tempo um aviso sem acao ("Pixel da Ana conectado") fica na tela.
+pub const NOTICE_FOR: Duration = Duration::from_secs(4);
 
 /// Remocao confirmada mas ainda nao enviada ao nucleo.
 ///
@@ -112,7 +115,8 @@ pub const INITIAL_SIZE: Size = Size::new(1440.0, 900.0);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CopyTarget {
     Address,
-    CaLink,
+    /// Pagina do guia do certificado (`http://<ip>:7778`), no passo 2 do "Conectar um celular".
+    Guide,
     /// Pastas de Ajustes > Sobre: copiaveis mesmo sem rede, ao contrario dos enderecos.
     DataDir,
     LogsDir,
@@ -290,6 +294,12 @@ pub struct App {
     /// prazo do "Desfazer") ou ate um erro novo do assistente, quando o apagar falhou e a
     /// conversa volta junto com o aviso.
     pub(super) deleting: HashSet<String>,
+    /// Fluxo "Conectar um celular" (spec 8.4): passo, sistema escolhido e se e o dialogo ou o
+    /// fluxo em tela. `None` = fechado (o fluxo em tela, sem aparelho, nasce no passo 1).
+    pub(super) connect: Option<ConnectFlow>,
+    /// Aviso curto sem "Desfazer" e o prazo dele. Separado do `pending_removal` de proposito:
+    /// aquele vira comando para o nucleo ao vencer, trocar de tela ou fechar.
+    pub(super) notice: Option<(String, Instant)>,
 }
 
 #[derive(Debug, Clone)]
@@ -405,6 +415,16 @@ pub enum Message {
     /// "Enviar" da previa: a pessoa viu o que sai e libera o primeiro envio desta conversa.
     ApproveCloudSend,
     RefreshModels,
+    /// "Conectar um celular" (cabecalho de Aparelhos, Resumo e vazios): vai a Aparelhos com o
+    /// dialogo aberto, ou com o fluxo em tela quando nao ha aparelho.
+    ConnectPhone,
+    /// "Continuar" / "Já instalei": entrar no passo 3 ja pede o codigo.
+    ConnectNext,
+    ConnectBack,
+    /// Segmentado Android | iPhone do passo 2.
+    ConnectOs(PhoneOs),
+    /// "x", Esc ou clique no scrim: fecha o dialogo e cancela o codigo pendente.
+    ConnectClose,
     /// Tecla que nenhum widget consumiu; `keys::shortcut` decide o que ela faz.
     KeyPressed(super::keys::KeyPress),
     /// Tab e Shift+Tab entre os campos de texto.
@@ -490,6 +510,8 @@ impl App {
             envelope_now: String::new(),
             confirm_delete_all: None,
             deleting: HashSet::new(),
+            connect: None,
+            notice: None,
             desktop,
             tooltip: String::new(),
         };
@@ -815,6 +837,19 @@ impl App {
             || self.deleting.contains(id)
     }
 
+    /// Fecha o fluxo e cancela o codigo no nucleo. Sempre manda o cancelamento, mesmo sem
+    /// codigo no snapshot: um `IssuePairingToken` recem-enviado pode nao ter voltado ainda, e o
+    /// canal e ordenado, entao o cancelamento chega depois dele.
+    fn close_connect(&mut self) {
+        self.connect = None;
+        let _ = self.handle.commands.send(Command::CancelPairingToken);
+    }
+
+    /// O fluxo esta na tela agora (dialogo ou em tela)? So entao um aparelho novo o encerra.
+    fn connect_showing(&self) -> bool {
+        connection_view::dialog_open(self) || connection_view::shows_in_screen_flow(self)
+    }
+
     /// "Copiado" ainda vale para este campo?
     pub(super) fn is_copied(&self, target: CopyTarget) -> bool {
         self.copied
@@ -943,6 +978,29 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     .as_ref()
                     .and_then(|p| qr_code::Data::new(&p.qr_url).ok());
             }
+            // Aparelho novo enquanto o fluxo esta na tela: o pareamento terminou. Pelos ids ativos
+            // (um aparelho removido pode parear de novo) e so com o nucleo ja no ar antes: no
+            // primeiro `Running` depois do boot todo aparelho seria "novo".
+            let paired = (is_up(&app.snapshot) && app.connect_showing())
+                .then(|| {
+                    s.devices
+                        .iter()
+                        .find(|d| {
+                            !d.revoked
+                                && !app
+                                    .snapshot
+                                    .devices
+                                    .iter()
+                                    .any(|o| !o.revoked && o.device_id == d.device_id)
+                        })
+                        .map(|d| d.name.clone())
+                })
+                .flatten();
+            if let Some(name) = paired {
+                // O codigo ja foi consumido pelo pareamento: nada a cancelar no nucleo.
+                app.connect = None;
+                app.notice = Some((format!("{name} conectado"), Instant::now() + NOTICE_FOR));
+            }
             let stopped = s.status == Status::Stopped;
             let was_failed = matches!(app.snapshot.status, Status::Failed(_));
             let people_changed = !std::sync::Arc::ptr_eq(&s.dashboard, &app.snapshot.dashboard)
@@ -983,6 +1041,13 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::Tick => {
+            if app
+                .notice
+                .as_ref()
+                .is_some_and(|(_, until)| Instant::now() >= *until)
+            {
+                app.notice = None;
+            }
             if app
                 .pending_removal
                 .as_ref()
@@ -1112,6 +1177,11 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 return top;
             }
             app.commit_pending();
+            // Sair de Aparelhos com o fluxo aberto e fecha-lo: o codigo nao fica valendo sem
+            // ninguem olhando para ele.
+            if app.connect.is_some() {
+                app.close_connect();
+            }
             // A chave digitada nao fica na memoria de uma tela que a pessoa deixou.
             if screen != Screen::Analysis {
                 app.key_input.clear();
@@ -1119,6 +1189,47 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.screen = screen;
             app.cat_menu_open = false;
             top
+        }
+        Message::ConnectPhone => {
+            let task = update(app, Message::SelectScreen(Screen::Connection));
+            let modal = !connection_view::in_screen_case(app);
+            if app.connect.is_none_or(|f| f.modal != modal) {
+                app.connect = Some(ConnectFlow::new(modal));
+            }
+            task
+        }
+        Message::ConnectNext => {
+            let modal = !connection_view::in_screen_case(app);
+            let up = is_up(&app.snapshot);
+            let flow = app.connect.get_or_insert_with(|| ConnectFlow::new(modal));
+            if let Some(step) = flow.step.next() {
+                flow.step = step;
+                // O codigo nasce ao entrar no passo, sem clique extra. Com o nucleo fora do ar o
+                // passo mostra "Gerar codigo" desabilitado ate ele subir.
+                if step == ConnectStep::Pair && up {
+                    let _ = app.handle.commands.send(Command::IssuePairingToken);
+                }
+            }
+            Task::none()
+        }
+        Message::ConnectBack => {
+            if let Some(flow) = app.connect.as_mut()
+                && let Some(step) = flow.step.back()
+            {
+                flow.step = step;
+            }
+            Task::none()
+        }
+        Message::ConnectOs(os) => {
+            let modal = !connection_view::in_screen_case(app);
+            app.connect
+                .get_or_insert_with(|| ConnectFlow::new(modal))
+                .os = os;
+            Task::none()
+        }
+        Message::ConnectClose => {
+            app.close_connect();
+            Task::none()
         }
         Message::ConfigureAssistant => {
             // O mesmo caminho da navegacao (remocao pendente, chave, rolagem ao topo) e o
@@ -1234,7 +1345,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::Copy(target) => {
             let text = match target {
                 CopyTarget::Address => connection_view::hub_url(&app.snapshot),
-                CopyTarget::CaLink => connection_view::ca_url(&app.snapshot),
+                CopyTarget::Guide => connection_view::guide_url(&app.snapshot),
                 CopyTarget::DataDir => Some(app.snapshot.data_dir.display().to_string()),
                 CopyTarget::LogsDir => Some(
                     config::logs_dir(&app.snapshot.data_dir)
@@ -1777,6 +1888,11 @@ fn ticks() -> futures::channel::mpsc::Receiver<()> {
     rx
 }
 
+/// Nucleo no ar (com ou sem rede local): o unico estado em que da para gerar codigo.
+fn is_up(snap: &Snapshot) -> bool {
+    matches!(snap.status, Status::Running | Status::NoNetwork)
+}
+
 pub fn subscription(_app: &App) -> Subscription<Message> {
     Subscription::batch([
         window::close_requests().map(|_| Message::CloseRequested),
@@ -2153,7 +2269,7 @@ pub(super) mod tests {
         let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
         let _ = update(&mut app, Message::Copy(CopyTarget::Address));
         assert!(app.is_copied(CopyTarget::Address));
-        assert!(!app.is_copied(CopyTarget::CaLink));
+        assert!(!app.is_copied(CopyTarget::Guide));
         // Timer chegou antes do prazo (outro clique adiou): continua.
         let _ = update(&mut app, Message::CopyExpired);
         assert!(app.copied.is_some());
@@ -2296,6 +2412,193 @@ pub(super) mod tests {
             }
         }
         out
+    }
+
+    // --- Conectar um celular ---
+
+    fn phone(id: &str, name: &str) -> DeviceView {
+        DeviceView {
+            device_id: id.into(),
+            name: name.into(),
+            paired_at: "2026-10-03T10:00:00Z".into(),
+            ..DeviceView::default()
+        }
+    }
+
+    fn running_with(devices: Vec<DeviceView>) -> Snapshot {
+        Snapshot {
+            status: Status::Running,
+            addresses: vec![std::net::Ipv4Addr::new(192, 168, 0, 12)],
+            https_port: 7777,
+            http_port: 7778,
+            devices,
+            ..Snapshot::default()
+        }
+    }
+
+    #[test]
+    fn conectar_com_aparelho_abre_o_dialogo_em_aparelhos_no_passo_1() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(
+            running_with(vec![phone("D1", "Pixel 7")]),
+            dir.path().to_path_buf(),
+        );
+        let _ = update(&mut app, Message::ConnectPhone);
+        assert_eq!(app.screen, Screen::Connection);
+        assert_eq!(app.connect, Some(ConnectFlow::new(true)));
+        assert!(connection_view::dialog_open(&app));
+        assert!(!connection_view::shows_in_screen_flow(&app));
+    }
+
+    #[test]
+    fn conectar_sem_aparelho_abre_o_fluxo_em_tela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(running_with(vec![]), dir.path().to_path_buf());
+        let _ = update(&mut app, Message::ConnectPhone);
+        assert_eq!(app.screen, Screen::Connection);
+        assert_eq!(app.connect, Some(ConnectFlow::new(false)));
+        assert!(connection_view::shows_in_screen_flow(&app));
+        assert!(!connection_view::dialog_open(&app));
+        // O botao dos vazios leva ao mesmo lugar.
+        app.screen = Screen::Dashboard;
+        app.connect = None;
+        let _ = update(&mut app, Message::ConnectPhone);
+        assert!(connection_view::shows_in_screen_flow(&app));
+    }
+
+    #[test]
+    fn continuar_e_voltar_andam_e_o_codigo_e_pedido_ao_entrar_no_passo_3() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with(
+            running_with(vec![phone("D1", "Pixel 7")]),
+            dir.path().to_path_buf(),
+        );
+        let _ = update(&mut app, Message::ConnectPhone);
+        let _ = update(&mut app, Message::ConnectBack);
+        assert_eq!(app.connect.map(|f| f.step), Some(ConnectStep::WiFi));
+        let _ = update(&mut app, Message::ConnectNext);
+        assert_eq!(app.connect.map(|f| f.step), Some(ConnectStep::Certificate));
+        assert!(drain(&mut rx).is_empty(), "nada sai antes do passo 3");
+        let _ = update(&mut app, Message::ConnectNext);
+        assert_eq!(app.connect.map(|f| f.step), Some(ConnectStep::Pair));
+        assert_eq!(drain(&mut rx), vec![Command::IssuePairingToken]);
+        // Continuar no ultimo passo nao faz nada.
+        let _ = update(&mut app, Message::ConnectNext);
+        assert!(drain(&mut rx).is_empty());
+        let _ = update(&mut app, Message::ConnectBack);
+        assert_eq!(app.connect.map(|f| f.step), Some(ConnectStep::Certificate));
+    }
+
+    #[test]
+    fn hub_fora_do_ar_nao_pede_codigo_ao_entrar_no_passo_3() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        app.screen = Screen::Connection;
+        app.connect = Some(ConnectFlow::new(true));
+        let _ = update(&mut app, Message::ConnectNext);
+        let _ = update(&mut app, Message::ConnectNext);
+        assert_eq!(app.connect.map(|f| f.step), Some(ConnectStep::Pair));
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn segmentado_troca_o_sistema_do_passo_2() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(
+            running_with(vec![phone("D1", "Pixel 7")]),
+            dir.path().to_path_buf(),
+        );
+        let _ = update(&mut app, Message::ConnectPhone);
+        let _ = update(&mut app, Message::ConnectNext);
+        let _ = update(&mut app, Message::ConnectOs(PhoneOs::Iphone));
+        assert_eq!(app.connect.map(|f| f.os), Some(PhoneOs::Iphone));
+        assert_eq!(app.connect.map(|f| f.step), Some(ConnectStep::Certificate));
+        let _ = update(&mut app, Message::ConnectOs(PhoneOs::Android));
+        assert_eq!(app.connect.map(|f| f.os), Some(PhoneOs::Android));
+    }
+
+    #[test]
+    fn fechar_ou_sair_da_tela_cancela_o_codigo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with(
+            running_with(vec![phone("D1", "Pixel 7")]),
+            dir.path().to_path_buf(),
+        );
+        let _ = update(&mut app, Message::ConnectPhone);
+        let _ = update(&mut app, Message::ConnectClose);
+        assert_eq!(app.connect, None);
+        assert_eq!(drain(&mut rx), vec![Command::CancelPairingToken]);
+
+        let _ = update(&mut app, Message::ConnectPhone);
+        let _ = update(&mut app, Message::SelectScreen(Screen::Dashboard));
+        assert_eq!(app.connect, None);
+        assert_eq!(drain(&mut rx), vec![Command::CancelPairingToken]);
+        // Sem fluxo aberto, trocar de tela nao manda nada.
+        let _ = update(&mut app, Message::SelectScreen(Screen::Connection));
+        let _ = update(&mut app, Message::SelectScreen(Screen::Dashboard));
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn aparelho_novo_fecha_o_dialogo_e_mostra_o_aviso() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with(
+            running_with(vec![phone("D1", "Pixel 7")]),
+            dir.path().to_path_buf(),
+        );
+        let _ = update(&mut app, Message::ConnectPhone);
+        let _ = update(&mut app, Message::ConnectNext);
+        let _ = update(&mut app, Message::ConnectNext);
+        let _ = drain(&mut rx);
+        let snap = running_with(vec![phone("D1", "Pixel 7"), phone("D2", "Pixel da Ana")]);
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert_eq!(app.connect, None);
+        assert_eq!(
+            app.notice.as_ref().map(|(text, _)| text.as_str()),
+            Some("Pixel da Ana conectado")
+        );
+        // O codigo foi consumido no pareamento: nada a cancelar.
+        assert!(drain(&mut rx).is_empty());
+        // O aviso some no tique depois do prazo.
+        let _ = update(&mut app, Message::Tick);
+        assert!(app.notice.is_some());
+        if let Some((_, until)) = app.notice.as_mut() {
+            *until = Instant::now();
+        }
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(app.notice, None);
+    }
+
+    #[test]
+    fn primeiro_aparelho_encerra_o_fluxo_em_tela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(running_with(vec![]), dir.path().to_path_buf());
+        app.screen = Screen::Connection;
+        // Fluxo em tela sem nenhum clique ainda (`connect` vazio): mesmo assim fecha e avisa.
+        let snap = running_with(vec![phone("D1", "Pixel 8")]);
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert_eq!(
+            app.notice.as_ref().map(|(text, _)| text.as_str()),
+            Some("Pixel 8 conectado")
+        );
+        assert!(!connection_view::shows_in_screen_flow(&app));
+    }
+
+    #[test]
+    fn aparelhos_do_boot_ou_sem_fluxo_aberto_nao_viram_aviso() {
+        let dir = tempfile::tempdir().unwrap();
+        // Boot: o snapshot inicial (`Starting`) vem sem aparelhos e o primeiro `Running` os
+        // traz todos.
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        app.screen = Screen::Connection;
+        let snap = running_with(vec![phone("D1", "Pixel 7")]);
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert_eq!(app.notice, None);
+        // Fora de Aparelhos, sem fluxo: um aparelho novo nao gera aviso.
+        app.screen = Screen::Dashboard;
+        let snap = running_with(vec![phone("D1", "Pixel 7"), phone("D2", "iPhone")]);
+        let _ = update(&mut app, Message::Snapshot(Box::new(snap)));
+        assert_eq!(app.notice, None);
     }
 
     #[test]

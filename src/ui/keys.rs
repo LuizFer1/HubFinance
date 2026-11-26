@@ -11,7 +11,7 @@ use iced::keyboard::{self, Key, Modifiers};
 use iced::{Subscription, Task};
 
 use super::app::{App, Message, Screen};
-use super::shell;
+use super::{connection_view, shell};
 
 /// Tecla pressionada que sobrou para a janela, com o que o atalho precisa saber.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,7 +42,7 @@ pub fn subscription() -> Subscription<Message> {
 
 /// O que a tecla faz agora, ou `None`.
 ///
-/// - Esc fecha o que estiver por cima: dialogo de remocao, previa do assistente, menu de
+/// - Esc fecha o que estiver por cima: dialogo de remocao, "Conectar um celular", previa do assistente, menu de
 ///   categoria, painel do assistente (nessa ordem). Menu e painel so na tela deles: o painel
 ///   continua "aberto" ao trocar de tela, e Esc em outra tela o fecharia sem ninguem ver.
 /// - Com dialogo aberto, so o Esc: atalho por baixo do scrim mexeria numa tela escondida.
@@ -58,7 +58,10 @@ pub fn shortcut(app: &App, press: &KeyPress) -> Option<Message> {
     if press.key == Key::Named(Named::Escape) {
         return escape(app);
     }
-    if app.confirm_remove.is_some() || app.envelope_preview.is_some() {
+    if app.confirm_remove.is_some()
+        || app.envelope_preview.is_some()
+        || connection_view::dialog_open(app)
+    {
         return None;
     }
     if press.key == Key::Named(Named::Tab) && !mods.control() && !mods.alt() {
@@ -93,6 +96,9 @@ pub fn shortcut(app: &App, press: &KeyPress) -> Option<Message> {
 fn escape(app: &App) -> Option<Message> {
     if app.confirm_remove.is_some() {
         Some(Message::CancelRemove)
+    } else if connection_view::dialog_open(app) {
+        // Pelo mesmo caminho do "x": cancela o codigo pendente.
+        Some(Message::ConnectClose)
     } else if app.envelope_preview.is_some() {
         Some(Message::CloseEnvelope)
     } else if app.screen == Screen::Transactions && app.cat_menu_open {
@@ -378,5 +384,23 @@ mod tests {
             Message::KeyPressed(alt(Named::ArrowLeft, Code::ArrowLeft)),
         );
         assert_eq!(app.month_idx, before - 1);
+    }
+
+    #[test]
+    fn esc_fecha_o_conectar_um_celular_e_os_atalhos_param_por_baixo() {
+        use super::super::connection_view::ConnectFlow;
+        let (mut app, _dir) = app();
+        app.screen = Screen::Connection;
+        app.connect = Some(ConnectFlow::new(true));
+        assert!(matches!(
+            shortcut(&app, &esc()),
+            Some(Message::ConnectClose)
+        ));
+        assert!(shortcut(&app, &ctrl_digit('1', Code::Digit1)).is_none());
+        assert!(shortcut(&app, &tab(false)).is_none());
+        // O fluxo em tela (sem modal) nao e dialogo: Esc nao faz nada e os atalhos valem.
+        app.connect = Some(ConnectFlow::new(false));
+        assert!(shortcut(&app, &esc()).is_none());
+        assert!(shortcut(&app, &ctrl_digit('1', Code::Digit1)).is_some());
     }
 }

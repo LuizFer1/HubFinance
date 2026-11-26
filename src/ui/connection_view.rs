@@ -1,5 +1,6 @@
-//! Tela Conexao: endereco com QR e codigo de pareamento, usuarios conectados, guia do
-//! certificado e atividade do hub.
+//! Tela Aparelhos (spec 8.4): quem sincroniza com a casa, o endereco do hub e a atividade; e o
+//! fluxo "Conectar um celular" em tres passos (Wi-Fi, certificado, parear), em dialogo quando
+//! ja ha aparelho e ocupando a tela quando nao ha nenhum.
 //!
 //! O QR e o da fatia 1 (`http://<ip>:7778/p/<token>`, so com token ativo), nao o endereco
 //! puro do prototipo: um QR so com o endereco levaria o celular a uma conexao que ele nao pode
@@ -8,29 +9,35 @@
 use std::net::Ipv4Addr;
 use std::time::{Duration, SystemTime};
 
-use iced::widget::{Space, column, container, qr_code, rich_text, row, span, text};
+use iced::widget::{Space, column, container, qr_code, row, text};
 use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
-use super::app::{App, CopyTarget, Message};
-use super::theme::{self, ButtonKind, ButtonSize, Tokens};
-use super::widgets::RowEdge;
+use super::app::{App, CopyTarget, Message, Screen};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, type_scale};
+use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
 use super::{fonts, icons, measure, rows, shell, time, widgets};
 use crate::dashboard::people::{Person, presence};
 use crate::dashboard::periods::paired_label;
 use crate::hub::snapshot::{ActivityKind, Snapshot, Status};
 
-/// Largura minima de cada card da grade antes de empilhar (`minmax(420px, 1fr)`).
+/// Largura minima de cada card da grade antes de empilhar (`minmax(420px, 1fr)`). Na janela
+/// minima (1024) o conteudo tem 728 e fica numa coluna so, com o endereco primeiro.
 const GRID_MIN: f32 = 420.0;
 const GAP: f32 = 14.0;
-/// QR 168 + zona de silencio 14 de cada lado + contorno de 1 px.
-const QR_FRAME: f32 = 198.0;
-/// Coluna dos passos: minimo de 280 antes de ir para baixo do QR.
-const INFO_MIN: f32 = 280.0;
+/// Padding dos cards de endereco e do fluxo.
+const CARD_PAD: f32 = 24.0;
+/// O QR do passo 3: 220 px de quadro (spec 8.4), com a zona de silencio dentro.
+const QR_FRAME: f32 = 220.0;
 /// Moldura do campo em volta do valor: padding 14 + icone 15 + dois espacos de 10 + o botao
 /// na largura de "Copiado" (10 + 12 + 6 + 48 + 10) + padding 6.
 const FIELD_CHROME: f32 = 141.0;
 /// Tamanhos do valor do campo, do design (15) para baixo.
 const FIELD_SIZES: [f32; 3] = [15.0, 14.0, 13.0];
+/// Largura do fluxo: a mesma no dialogo e na tela, para o passo 3 caber QR e passos lado a lado.
+const FLOW_WIDTH: f32 = 600.0;
+/// Altura fixa do dialogo: o rodape nao pula ao trocar de passo. Cabe o passo mais alto (o
+/// certificado do iPhone) e cabe na janela minima (720 de altura).
+const DIALOG_HEIGHT: f32 = 580.0;
 
 /// `https://<ip>:<porta>`: o que se digita no app. Sem rede, nada.
 pub fn hub_url(snap: &Snapshot) -> Option<String> {
@@ -39,12 +46,9 @@ pub fn hub_url(snap: &Snapshot) -> Option<String> {
         .map(|ip| format!("https://{ip}:{}", snap.https_port))
 }
 
-/// Link direto da CA na porta HTTP.
-pub fn ca_url(snap: &Snapshot) -> Option<String> {
-    guide_url(snap).map(|g| format!("{g}/ca.crt"))
-}
-
-fn guide_url(snap: &Snapshot) -> Option<String> {
+/// A pagina do guia na porta HTTP, com o botao "Baixar certificado": e o que o passo 2 manda
+/// abrir no celular (o link direto do `.crt` pularia as instrucoes da propria pagina).
+pub fn guide_url(snap: &Snapshot) -> Option<String> {
     snap.addresses
         .first()
         .map(|ip| format!("http://{ip}:{}", snap.http_port))
@@ -54,38 +58,174 @@ fn is_up(snap: &Snapshot) -> bool {
     matches!(snap.status, Status::Running | Status::NoNetwork)
 }
 
+// ---- estado do fluxo ----
+
+/// Os tres passos do "Conectar um celular", na ordem em que a pessoa os faz.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ConnectStep {
+    #[default]
+    WiFi,
+    Certificate,
+    Pair,
+}
+
+impl ConnectStep {
+    pub const TOTAL: usize = 3;
+
+    /// Posicao a partir de 0 (o `progress_steps` e o "passo N de 3").
+    pub fn index(self) -> usize {
+        match self {
+            ConnectStep::WiFi => 0,
+            ConnectStep::Certificate => 1,
+            ConnectStep::Pair => 2,
+        }
+    }
+
+    pub fn next(self) -> Option<ConnectStep> {
+        match self {
+            ConnectStep::WiFi => Some(ConnectStep::Certificate),
+            ConnectStep::Certificate => Some(ConnectStep::Pair),
+            ConnectStep::Pair => None,
+        }
+    }
+
+    pub fn back(self) -> Option<ConnectStep> {
+        match self {
+            ConnectStep::WiFi => None,
+            ConnectStep::Certificate => Some(ConnectStep::WiFi),
+            ConnectStep::Pair => Some(ConnectStep::Certificate),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            ConnectStep::WiFi => "Wi-Fi",
+            ConnectStep::Certificate => "Certificado",
+            ConnectStep::Pair => "Parear",
+        }
+    }
+}
+
+/// O sistema do celular, para os passos do certificado.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PhoneOs {
+    #[default]
+    Android,
+    Iphone,
+}
+
+/// Estado do fluxo. `modal` e explicito, e nao deduzido da contagem de aparelhos: senao o fluxo
+/// em tela no passo 3 viraria dialogo no instante em que um aparelho volta pelo "Desfazer".
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ConnectFlow {
+    pub step: ConnectStep,
+    pub os: PhoneOs,
+    pub modal: bool,
+}
+
+impl ConnectFlow {
+    pub fn new(modal: bool) -> ConnectFlow {
+        ConnectFlow {
+            modal,
+            ..ConnectFlow::default()
+        }
+    }
+}
+
+/// Sem aparelho ativo e com o nucleo no ar: o fluxo ocupa a tela, sem modal. No `Starting` a
+/// lista ainda vem vazia do snapshot inicial, e o fluxo piscaria no boot de quem ja tem celular.
+pub(super) fn in_screen_case(app: &App) -> bool {
+    is_up(&app.snapshot) && shell::active_devices(app) == 0
+}
+
+/// O fluxo esta na tela, no lugar da lista?
+pub(super) fn shows_in_screen_flow(app: &App) -> bool {
+    app.screen == Screen::Connection
+        && in_screen_case(app)
+        && !app.connect.as_ref().is_some_and(|f| f.modal)
+}
+
+/// O dialogo "Conectar um celular" esta aberto? E o que o Esc fecha e o que bloqueia os
+/// atalhos por baixo do scrim.
+pub(super) fn dialog_open(app: &App) -> bool {
+    app.screen == Screen::Connection && app.connect.as_ref().is_some_and(|f| f.modal)
+}
+
+/// Passos do certificado de cada sistema, do guia que o hub ja servia (`ca_http::guide_html`).
+/// O "abra o app e leia o QR" que fechava cada guia saiu: agora e o passo 3 do fluxo.
+pub(super) fn certificate_steps(os: PhoneOs) -> &'static [&'static str] {
+    match os {
+        PhoneOs::Android => &[
+            "No celular, abra o endereço abaixo e toque em Baixar certificado.",
+            "Configurações → Segurança → Criptografia e credenciais → Instalar um certificado → \
+             Certificado de CA → Instalar mesmo assim → escolha HubFinance-CA.crt.",
+        ],
+        PhoneOs::Iphone => &[
+            "No Safari, abra o endereço abaixo e toque em Baixar certificado → Permitir.",
+            "Ajustes → Geral → VPN e Gerenciamento de Dispositivo → HubFinance CA → Instalar.",
+            "Ajustes → Geral → Sobre → Ajustes de Confiança de Certificado → ative HubFinance CA.",
+        ],
+    }
+}
+
+/// Passos do pareamento, na ordem certa: primeiro abrir a tela do app, depois ler o QR (antes o
+/// "Ajustes → Sincronizar" vinha depois do passo que ja mandava digitar o codigo).
+pub(super) const PAIR_STEPS: [&str; 2] = [
+    "No app, toque em Ajustes → Sincronizar com o hub.",
+    "Aponte a câmera para o QR code ou digite o endereço e o código no app.",
+];
+
+// ---- tela ----
+
 pub fn view(app: &App) -> Element<'_, Message> {
+    if shows_in_screen_flow(app) {
+        let flow = app.connect.unwrap_or_default();
+        let card = widgets::card(app.tokens, flow_body(app, flow, false))
+            .padding(CARD_PAD)
+            .max_width(FLOW_WIDTH);
+        return column![card, activity_card(app)]
+            .spacing(GAP)
+            .width(Length::Fill)
+            .into();
+    }
     let width = shell::content_width(app);
-    let two_columns = width >= 2.0 * GRID_MIN + GAP;
-    let card_width = grid_card_width(width);
-    // "Sobre o hub" foi para Ajustes; ficam o endereco e os usuarios lado a lado (o card de
-    // usuarios cresce com a lista).
-    let grid: Element<'_, Message> = if two_columns {
+    let inner = address_inner(width);
+    if two_columns(width) {
         row![
-            container(address_card(app, card_width)).width(Length::FillPortion(1)),
             container(users_card(app)).width(Length::FillPortion(1)),
+            column![address_card(app, inner), activity_card(app)]
+                .spacing(GAP)
+                .width(Length::FillPortion(1)),
         ]
         .spacing(GAP)
         .align_y(Alignment::Start)
         .into()
     } else {
-        column![address_card(app, card_width), users_card(app)]
-            .spacing(GAP)
-            .into()
-    };
-    column![grid, certificate_card(app, width), activity_card(app)]
+        // Uma coluna: o endereco primeiro, que e o que se procura ao conectar.
+        column![
+            address_card(app, inner),
+            users_card(app),
+            activity_card(app)
+        ]
         .spacing(GAP)
         .width(Length::Fill)
         .into()
+    }
 }
 
-/// Largura de cada card da grade: metade (menos o vao) em duas colunas, inteira em uma.
-fn grid_card_width(width: f32) -> f32 {
-    if width >= 2.0 * GRID_MIN + GAP {
+fn two_columns(width: f32) -> bool {
+    width >= 2.0 * GRID_MIN + GAP
+}
+
+/// Largura interna do card do endereco numa area de conteudo `width`: metade (menos o vao) em
+/// duas colunas, inteira em uma, menos o padding.
+fn address_inner(width: f32) -> f32 {
+    let card = if two_columns(width) {
         (width - GAP) / 2.0
     } else {
         width
-    }
+    };
+    card - 2.0 * CARD_PAD
 }
 
 /// Tamanho do valor de um campo de `field_width` px: o maior que mostra o valor inteiro. O
@@ -94,154 +234,24 @@ fn field_value_size(value: &str, field_width: f32) -> f32 {
     measure::fitting_size(value, field_width - FIELD_CHROME, &FIELD_SIZES)
 }
 
+/// "Conectar um celular" do cabecalho de Aparelhos. Some quando o fluxo ja esta na tela (sem
+/// aparelho) e com o nucleo fora do ar (nao ha codigo a gerar).
+pub(super) fn header_action(app: &App) -> Option<Element<'_, Message>> {
+    (is_up(&app.snapshot) && !in_screen_case(app)).then(|| {
+        widgets::action_button(
+            app.tokens,
+            ButtonKind::Primary,
+            ButtonSize::Large,
+            "Conectar um celular",
+        )
+        .on_press(Message::ConnectPhone)
+        .into()
+    })
+}
+
 // ---- card do endereco ----
 
-/// O campo do endereco fica em cima, na largura toda do card, e nao na coluna ao lado do QR
-/// como no handoff: ali sobravam ~150 px para o valor a 1440 px de janela, e
-/// "https://192.168.100.200:7777" pede 223 a 15 px. QR e passos continuam lado a lado embaixo.
-fn address_card(app: &App, card_width: f32) -> Element<'_, Message> {
-    let t = app.tokens;
-    let inner = card_width - 48.0;
-    let side_by_side = inner >= QR_FRAME + 24.0 + INFO_MIN;
-    let body: Element<'_, Message> = if side_by_side {
-        row![pairing_block(app), address_steps(app)]
-            .spacing(24)
-            .align_y(Alignment::Start)
-            .into()
-    } else {
-        column![pairing_block(app), address_steps(app)]
-            .spacing(24)
-            .into()
-    };
-    let body = column![address_head(app, inner), Space::new().height(20), body];
-    widgets::card(t, body).padding(24).into()
-}
-
-/// Quadro do QR (fundo `neutral_100` do escuro nos dois temas, raio 12, contorno `accent_700`)
-/// e o que fica embaixo: codigo e contagem com token ativo, "Gerar codigo" sem ele.
-///
-/// O quadro e sempre claro porque o leitor de QR do celular espera modulos escuros sobre fundo
-/// claro. Na paleta Nocturne o `neutral_100` era igual nos dois temas; na Grafite a rampa do
-/// claro e invertida (`neutral_100` claro e quase preto), entao o quadro fixa o do escuro.
-fn pairing_block(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
-    let snap = &app.snapshot;
-    let now = SystemTime::now();
-    let frame = |content: Element<'static, Message>, padding: f32| {
-        container(content)
-            .width(QR_FRAME)
-            .height(QR_FRAME)
-            .padding(padding)
-            .center_x(QR_FRAME)
-            .center_y(QR_FRAME)
-            .style(move |_: &Theme| container::Style {
-                background: Some(theme::DARK.neutral_100.into()),
-                border: Border {
-                    color: t.accent_700,
-                    width: 1.0,
-                    radius: 12.0.into(),
-                },
-                ..container::Style::default()
-            })
-    };
-    let placeholder = || -> Element<'static, Message> {
-        icons::icon(icons::QR_CODE, 64.0, theme::DARK.neutral_700)
-    };
-
-    let mut col = column![]
-        .spacing(8)
-        .width(QR_FRAME)
-        .align_x(Alignment::Center);
-    if is_up(snap) && snap.addresses.is_empty() {
-        let warning: Element<'static, Message> = column![
-            // `warning` do claro: o quadro e sempre claro, e o laranja do escuro some nele.
-            icons::icon(icons::WARNING_CIRCLE, 28.0, theme::LIGHT.warning),
-            text("Sem rede local")
-                .size(13)
-                .font(fonts::INTER_MEDIUM)
-                .color(theme::DARK.bg),
-        ]
-        .spacing(8)
-        .align_x(Alignment::Center)
-        .into();
-        return col.push(frame(warning, 15.0)).into();
-    }
-
-    match (&snap.pairing, &app.qr) {
-        (Some(pairing), Some(qr)) if pairing.expires_at > now && is_up(snap) => {
-            let left = pairing
-                .expires_at
-                .duration_since(now)
-                .unwrap_or(Duration::ZERO)
-                .as_secs();
-            // O widget do iced desenha a propria zona de silencio (2 modulos); o quadro poe so
-            // o que falta para os modulos ocuparem ~168 px, como a imagem do prototipo.
-            let code = container(
-                qr_code(qr)
-                    .total_size(188)
-                    .style(|_: &Theme| qr_code::Style {
-                        cell: theme::DARK.bg,
-                        background: theme::DARK.neutral_100,
-                    }),
-            )
-            .width(QR_FRAME)
-            .height(QR_FRAME)
-            .padding(5)
-            .center_x(QR_FRAME)
-            .center_y(QR_FRAME)
-            .style(move |_: &Theme| container::Style {
-                background: Some(theme::DARK.neutral_100.into()),
-                border: Border {
-                    color: t.accent_700,
-                    width: 1.0,
-                    radius: 12.0.into(),
-                },
-                ..container::Style::default()
-            });
-            col = col
-                .push(code)
-                .push(Space::new().height(4))
-                .push(
-                    text(pairing.display.clone())
-                        .size(20)
-                        .font(fonts::INTER_MEDIUM)
-                        .color(t.text),
-                )
-                .push(
-                    text(format!("expira em {}:{:02}", left / 60, left % 60))
-                        .size(12)
-                        .color(t.text_muted),
-                )
-                .push(
-                    widgets::action_button(
-                        t,
-                        ButtonKind::Ghost,
-                        ButtonSize::Compact,
-                        "Gerar outro código",
-                    )
-                    .on_press(Message::IssueToken),
-                );
-        }
-        (pairing, _) => {
-            col = col
-                .push(frame(placeholder(), 15.0))
-                .push(Space::new().height(4));
-            if pairing.is_some() {
-                col = col.push(text("Código expirado").size(12).color(t.warning));
-            }
-            let mut generate =
-                widgets::action_button(t, ButtonKind::Primary, ButtonSize::Regular, "Gerar código");
-            if is_up(snap) {
-                generate = generate.on_press(Message::IssueToken);
-            }
-            col = col.push(generate);
-        }
-    }
-    col.into()
-}
-
-/// Rotulo, campo do endereco e os outros enderecos, na largura `inner` do card.
-fn address_head(app: &App, inner: f32) -> Element<'_, Message> {
+fn address_card(app: &App, inner: f32) -> Element<'_, Message> {
     let t = app.tokens;
     let snap = &app.snapshot;
     let url = hub_url(snap);
@@ -277,53 +287,22 @@ fn address_head(app: &App, inner: f32) -> Element<'_, Message> {
             }),
         );
     }
-    col.width(Length::Fill).into()
+    col = col.push(Space::new().height(12)).push(lan_note(t));
+    widgets::card(t, col.width(Length::Fill))
+        .padding(CARD_PAD)
+        .into()
 }
 
-/// Passos do pareamento e o rodape, ao lado do QR (ou embaixo, sem espaco).
-fn address_steps(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
-    let cert_step = rich_text::<(), _, _, _>([
-        span("Instale o certificado do hub no celular (uma vez). "),
-        span("Ver como ↓").color(t.accent_300),
-    ])
-    .size(13)
-    .line_height(1.45)
-    .color(t.text_soft());
-    let steps = column![
-        widgets::step(
-            t,
-            1,
-            widgets::step_text(t, "Conecte o celular no mesmo Wi-Fi deste computador.").into()
-        ),
-        widgets::step(t, 2, cert_step.into()),
-        widgets::step(
-            t,
-            3,
-            widgets::step_text(
-                t,
-                "Aponte a câmera para o QR code ou digite o endereço e o código no app."
-            )
-            .into()
-        ),
-        widgets::step(
-            t,
-            4,
-            widgets::step_text(t, "No app, toque em Ajustes → Sincronizar com o hub.").into()
-        ),
-    ]
-    .spacing(10);
-    let footer = row![
+fn lan_note<'a>(t: &'static Tokens) -> Element<'a, Message> {
+    row![
         icons::icon(icons::HOUSE_SIMPLE, 12.0, t.text_muted),
-        text("Funciona só na rede de casa. Nada passa pela internet.")
+        text("Funciona só na rede de casa.")
             .size(12)
             .color(t.text_muted),
     ]
     .spacing(8)
-    .align_y(Alignment::Center);
-    column![steps, Space::new().height(16), footer]
-        .width(Length::Fill)
-        .into()
+    .align_y(Alignment::Center)
+    .into()
 }
 
 /// Campo de 44 px com icone, valor em `size` (cortado se ainda assim nao couber) e "Copiar".
@@ -346,20 +325,37 @@ fn field<'a>(
     )
 }
 
-// ---- usuarios conectados ----
+// ---- aparelhos conectados ----
 
 fn users_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let count = app.visible_people().count();
     let title = container(widgets::card_title(
         t,
-        "Usuários conectados",
-        Some(shell::plural(count, "pessoa", "pessoas")),
+        "Conectados",
+        Some(count.to_string()),
     ))
     .padding([0, 8]);
     let mut col = column![title, Space::new().height(8)];
     if count == 0 {
-        col = col.push(empty_users(t));
+        // So com o nucleo fora do ar (com ele no ar e sem aparelho, o fluxo ocupa a tela).
+        let body = widgets::empty_state(
+            t,
+            widgets::empty_icon(t, icons::DEVICE_MOBILE),
+            "Nenhum aparelho conectado",
+            "Quando um celular parear, ele aparece aqui com o nome e a cor que a pessoa escolheu              no app.",
+            None,
+        );
+        col = col.push(widgets::divider(t)).push(
+            container(body)
+                .padding(Padding {
+                    top: 32.0,
+                    right: 8.0,
+                    bottom: 28.0,
+                    left: 8.0,
+                })
+                .center_x(Length::Fill),
+        );
     } else {
         let now = SystemTime::now();
         for person in app.visible_people() {
@@ -414,7 +410,7 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
         .spacing(5)
         .align_y(Alignment::Center),
         text(format!(
-            "Conectado em {}",
+            "desde {}",
             paired_label(&person.paired_at, app.offset)
         ))
         .size(12)
@@ -460,125 +456,10 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
     )
 }
 
-fn empty_users<'a>(t: &'static Tokens) -> Element<'a, Message> {
-    // O handoff desenha dois circulos tracejados sobrepostos (dois aparelhos); com borda solida,
-    // que e o que o iced faz, eles viravam um interruptor. O celular num circulo diz o mesmo.
-    let body = widgets::empty_state(
-        t,
-        widgets::empty_icon(t, icons::DEVICE_MOBILE),
-        "Nenhum usuário conectado",
-        "Quando um celular abrir o endereço ao lado, a pessoa aparece aqui com o nome e a cor \
-         que escolheu no app",
-        None,
-    );
-    column![
-        widgets::divider(t),
-        container(body)
-            .padding(Padding {
-                top: 36.0,
-                right: 8.0,
-                bottom: 32.0,
-                left: 8.0,
-            })
-            .center_x(Length::Fill),
-    ]
-    .into()
-}
-
-// ---- certificado ----
-
-fn certificate_card(app: &App, width: f32) -> Element<'_, Message> {
-    let t = app.tokens;
-    let snap = &app.snapshot;
-    let guide = guide_url(snap).unwrap_or_else(|| "http://<ip-do-computador>:7778".into());
-    let step = |n: u8, s: String| widgets::step(t, n, widgets::step_text(t, s).into());
-    let android = column![
-        text("Android")
-            .size(14)
-            .font(fonts::INTER_MEDIUM)
-            .color(t.text),
-        step(
-            1,
-            format!("No celular, abra {guide} e toque em Baixar certificado.")
-        ),
-        step(
-            2,
-            "Configurações → Segurança → Criptografia e credenciais → Instalar um certificado → \
-             Certificado de CA → Instalar mesmo assim → escolha HubFinance-CA.crt."
-                .into()
-        ),
-        step(
-            3,
-            "Abra o HomeFinance e leia o QR (ou digite o endereço e o código).".into()
-        ),
-    ]
-    .spacing(10)
-    .width(Length::Fill);
-    let iphone = column![
-        text("iPhone")
-            .size(14)
-            .font(fonts::INTER_MEDIUM)
-            .color(t.text),
-        step(
-            1,
-            format!("No Safari, abra {guide} e toque em Baixar certificado → Permitir.")
-        ),
-        step(
-            2,
-            "Ajustes → Geral → VPN e Gerenciamento de Dispositivo → HubFinance CA → Instalar."
-                .into()
-        ),
-        step(
-            3,
-            "Ajustes → Geral → Sobre → Ajustes de Confiança de Certificado → ative HubFinance CA."
-                .into()
-        ),
-        step(4, "Abra o HomeFinance e leia o QR.".into()),
-    ]
-    .spacing(10)
-    .width(Length::Fill);
-    // Duas colunas so com espaco para as duas (>= 280 cada); senao, uma embaixo da outra.
-    let guides: Element<'_, Message> = if width - 48.0 >= 2.0 * 280.0 + 32.0 {
-        row![android, iphone]
-            .spacing(32)
-            .align_y(Alignment::Start)
-            .into()
-    } else {
-        column![android, iphone].spacing(20).into()
-    };
-    widgets::card(
-        t,
-        column![
-            widgets::kicker_accent(t, "Certificado do hub"),
-            Space::new().height(10),
-            text(
-                "Uma vez por celular: o app só confia na conexão depois que o certificado do hub \
-                 está instalado."
-            )
-            .size(13)
-            .line_height(1.45)
-            .color(t.text_soft()),
-            Space::new().height(14),
-            field(
-                app,
-                icons::CERTIFICATE,
-                t.accent_300,
-                ca_url(snap),
-                CopyTarget::CaLink,
-                FIELD_SIZES[0]
-            ),
-            Space::new().height(20),
-            guides,
-        ]
-        .width(Length::Fill),
-    )
-    .padding(24)
-    .into()
-}
-
 // ---- atividade ----
 
-/// O "status detalhado" que o design nao desenhou, reduzido ao essencial.
+/// O "status detalhado" que o design nao desenhou, reduzido ao essencial. Sem o "epoch": e
+/// jargao, e quem precisa dele acha em Ajustes > Sobre (a pasta dos dados e os logs).
 fn activity_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let snap = &app.snapshot;
@@ -606,32 +487,361 @@ fn activity_card(app: &App) -> Element<'_, Message> {
             .align_y(Alignment::Center),
         );
     }
-    let epoch: String = snap.epoch.chars().take(8).collect();
-    col = col.push(
-        container(
-            // O caminho dos dados mora em Ajustes > Sobre.
-            text(format!("epoch {epoch}")).size(11).color(t.text_muted),
-        )
-        .padding(Padding {
-            top: 10.0,
-            right: 0.0,
-            bottom: 10.0,
-            left: 0.0,
-        }),
-    );
     widgets::card(t, col)
         .padding(Padding {
             top: 18.0,
             right: 20.0,
-            bottom: 8.0,
+            bottom: 12.0,
             left: 20.0,
+        })
+        .into()
+}
+
+// ---- fluxo "Conectar um celular" ----
+
+/// O dialogo, quando aberto (`dialog_open`). O scrim e o "x" fecham pelo mesmo caminho do Esc,
+/// que cancela o codigo pendente.
+pub(super) fn connect_dialog(app: &App) -> Option<Element<'_, Message>> {
+    if !dialog_open(app) {
+        return None;
+    }
+    let flow = app.connect?;
+    Some(widgets::dialog(
+        app.tokens,
+        flow_body(app, flow, true),
+        app.window_size.width,
+        FLOW_WIDTH,
+        Some(DIALOG_HEIGHT),
+        Message::ConnectClose,
+    ))
+}
+
+/// "Certificado, passo 2 de 3".
+pub(super) fn step_caption(step: ConnectStep) -> String {
+    format!(
+        "{}, passo {} de {}",
+        step.label(),
+        step.index() + 1,
+        ConnectStep::TOTAL
+    )
+}
+
+/// Titulo, progresso, o passo e o rodape. No dialogo o rodape fica embaixo (altura fixa) e o
+/// titulo ganha o "x"; na tela nao ha o que fechar.
+fn flow_body(app: &App, flow: ConnectFlow, modal: bool) -> Element<'_, Message> {
+    let t = app.tokens;
+    let mut head = row![
+        text("Conectar um celular")
+            .size(type_scale::LEAD)
+            .font(fonts::INTER_MEDIUM)
+            .color(t.text)
+            .width(Length::Fill)
+    ]
+    .align_y(Alignment::Center);
+    if modal {
+        head = head.push(widgets::icon_button(
+            t,
+            icons::X,
+            ButtonSize::Compact,
+            "Fechar",
+            Some(Message::ConnectClose),
+        ));
+    }
+    let progress = column![
+        widgets::progress_steps(t, flow.step.index(), ConnectStep::TOTAL),
+        text(step_caption(flow.step))
+            .size(type_scale::META)
+            .color(t.text_muted),
+    ]
+    .spacing(8);
+    let body = match flow.step {
+        ConnectStep::WiFi => wifi_step(app),
+        ConnectStep::Certificate => certificate_step(app, flow.os),
+        ConnectStep::Pair => pair_step(app),
+    };
+    let mut col = column![
+        head,
+        Space::new().height(14),
+        progress,
+        Space::new().height(20),
+        body
+    ]
+    .width(Length::Fill);
+    col = if modal {
+        col.push(Space::new().height(Length::Fill))
+    } else {
+        col.push(Space::new().height(24))
+    };
+    col.push(footer(t, flow.step)).into()
+}
+
+/// Rodape a direita, o secundario antes do primario.
+fn footer<'a>(t: &'static Tokens, step: ConnectStep) -> Element<'a, Message> {
+    let size = ButtonSize::Regular;
+    let back = || {
+        widgets::action_button(t, ButtonKind::Secondary, size, "Voltar")
+            .on_press(Message::ConnectBack)
+    };
+    let mut line = row![Space::new().width(Length::Fill)]
+        .spacing(10)
+        .align_y(Alignment::Center);
+    match step {
+        ConnectStep::WiFi => {
+            line = line.push(
+                widgets::action_button(t, ButtonKind::Primary, size, "Continuar")
+                    .on_press(Message::ConnectNext),
+            );
+        }
+        ConnectStep::Certificate => {
+            line = line.push(back()).push(
+                widgets::action_button(t, ButtonKind::Primary, size, "Já instalei")
+                    .on_press(Message::ConnectNext),
+            );
+        }
+        // O passo 3 termina sozinho: o dialogo fecha quando o aparelho aparece.
+        ConnectStep::Pair => line = line.push(back()),
+    }
+    line.into()
+}
+
+fn body_text<'a>(t: &'static Tokens, content: impl text::IntoFragment<'a>) -> text::Text<'a> {
+    text(content)
+        .size(type_scale::BODY)
+        .line_height(1.5)
+        .color(t.text_soft())
+}
+
+/// Passo 1. O hub nao sabe o nome da rede (nao le o SSID), entao nao o mostra: diz o endereco
+/// do computador na rede, que ele sabe, e avisa quando nao ha rede local.
+fn wifi_step(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let snap = &app.snapshot;
+    let mut col = column![
+        row![
+            icons::icon(icons::WIFI_HIGH, 20.0, t.text_accent()),
+            body_text(t, "Conecte o celular no mesmo Wi-Fi deste computador.").width(Length::Fill),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center)
+    ]
+    .spacing(12);
+    if snap.status == Status::NoNetwork || snap.addresses.is_empty() {
+        col = col.push(
+            text("Este computador está sem rede local. Conecte-o ao Wi-Fi de casa.")
+                .size(type_scale::LABEL)
+                .color(t.warning),
+        );
+    } else if let Some(ip) = snap.addresses.first() {
+        col = col.push(
+            text(format!("Este computador está na rede em {ip}."))
+                .size(type_scale::LABEL)
+                .color(t.text_muted),
+        );
+    }
+    col.push(lan_note(t)).into()
+}
+
+/// Passo 2: segmentado Android | iPhone e os passos do sistema; o endereco do guia vai com
+/// "Copiar" dentro do passo que manda abri-lo.
+fn certificate_step(app: &App, os: PhoneOs) -> Element<'_, Message> {
+    let t = app.tokens;
+    let option =
+        |label: &'static str, value: PhoneOs| (label, os == value, Message::ConnectOs(value));
+    let switch = widgets::segmented(
+        t,
+        SegmentedVariant::PillInset,
+        SegmentedSize::Regular,
+        false,
+        [
+            option("Android", PhoneOs::Android),
+            option("iPhone", PhoneOs::Iphone),
+        ],
+    );
+    let mut steps = column![].spacing(12);
+    for (i, line) in certificate_steps(os).iter().enumerate() {
+        let n = u8::try_from(i + 1).unwrap_or(u8::MAX);
+        let content: Element<'_, Message> = if i == 0 {
+            column![
+                widgets::step_text(t, *line),
+                field(
+                    app,
+                    icons::CERTIFICATE,
+                    t.accent_300,
+                    guide_url(&app.snapshot),
+                    CopyTarget::Guide,
+                    FIELD_SIZES[0],
+                ),
+            ]
+            .spacing(8)
+            .into()
+        } else {
+            widgets::step_text(t, *line).into()
+        };
+        steps = steps.push(widgets::step(t, n, content));
+    }
+    column![
+        body_text(
+            t,
+            "Uma vez por celular: o app só confia na conexão depois que o certificado do hub está \
+             instalado."
+        ),
+        switch,
+        steps,
+    ]
+    .spacing(14)
+    .width(Length::Fill)
+    .into()
+}
+
+/// Passo 3: QR e codigo a esquerda, os passos e o endereco a direita.
+fn pair_step(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let mut info = column![].spacing(10).width(Length::Fill);
+    for (i, line) in PAIR_STEPS.iter().enumerate() {
+        let n = u8::try_from(i + 1).unwrap_or(u8::MAX);
+        info = info.push(widgets::step(t, n, widgets::step_text(t, *line).into()));
+    }
+    if let Some(url) = hub_url(&app.snapshot) {
+        info = info.push(Space::new().height(4)).push(
+            column![
+                text("Endereço").size(type_scale::META).color(t.text_muted),
+                text(url)
+                    .size(type_scale::LABEL)
+                    .font(fonts::INTER_MEDIUM)
+                    .color(t.text),
+            ]
+            .spacing(2),
+        );
+    }
+    row![pairing_block(app), info]
+        .spacing(24)
+        .align_y(Alignment::Start)
+        .into()
+}
+
+/// Quadro do QR (fundo `neutral_100` do escuro nos dois temas, raio 12, contorno `accent_700`)
+/// e o que fica embaixo: codigo em 24 Regular, contagem e "Gerar outro codigo" com token
+/// ativo; "Gerar codigo" sem ele (expirou, tentativas demais, ou o nucleo nao estava no ar ao
+/// entrar no passo).
+///
+/// O quadro e sempre claro porque o leitor de QR do celular espera modulos escuros sobre fundo
+/// claro. Na paleta Nocturne o `neutral_100` era igual nos dois temas; na Grafite a rampa do
+/// claro e invertida (`neutral_100` claro e quase preto), entao o quadro fixa o do escuro.
+fn pairing_block(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let snap = &app.snapshot;
+    let now = SystemTime::now();
+    let frame = |content, padding| qr_frame(t, content, padding);
+
+    let mut col = column![]
+        .spacing(8)
+        .width(QR_FRAME)
+        .align_x(Alignment::Center);
+    if is_up(snap) && snap.addresses.is_empty() {
+        let warning: Element<'static, Message> = column![
+            // `warning` do claro: o quadro e sempre claro, e o laranja do escuro some nele.
+            icons::icon(icons::WARNING_CIRCLE, 28.0, theme::LIGHT.warning),
+            text("Sem rede local")
+                .size(13)
+                .font(fonts::INTER_MEDIUM)
+                .color(theme::DARK.bg),
+        ]
+        .spacing(8)
+        .align_x(Alignment::Center)
+        .into();
+        return col.push(frame(warning, 15.0)).into();
+    }
+
+    match (&snap.pairing, &app.qr) {
+        (Some(pairing), Some(qr)) if pairing.expires_at > now && is_up(snap) => {
+            let left = pairing
+                .expires_at
+                .duration_since(now)
+                .unwrap_or(Duration::ZERO)
+                .as_secs();
+            // O widget do iced desenha a propria zona de silencio (2 modulos); o quadro poe so
+            // a borda de 5 px em volta.
+            let code: Element<'_, Message> = qr_code(qr)
+                .total_size(QR_FRAME - 10.0)
+                .style(|_: &Theme| qr_code::Style {
+                    cell: theme::DARK.bg,
+                    background: theme::DARK.neutral_100,
+                })
+                .into();
+            col = col
+                .push(frame(code, 5.0))
+                .push(Space::new().height(4))
+                .push(
+                    text(pairing.display.clone())
+                        .size(type_scale::VALUE_M)
+                        .font(fonts::INTER)
+                        .color(t.text),
+                )
+                .push(
+                    text(format!("expira em {}:{:02}", left / 60, left % 60))
+                        .size(12)
+                        .color(t.text_muted),
+                )
+                .push(
+                    widgets::action_button(
+                        t,
+                        ButtonKind::Ghost,
+                        ButtonSize::Compact,
+                        "Gerar outro código",
+                    )
+                    .on_press(Message::IssueToken),
+                );
+        }
+        (pairing, _) => {
+            col = col
+                .push(frame(
+                    icons::icon(icons::QR_CODE, 64.0, theme::DARK.neutral_700),
+                    15.0,
+                ))
+                .push(Space::new().height(4));
+            if pairing.is_some() {
+                col = col.push(text("Código expirado").size(12).color(t.warning));
+            }
+            let mut generate =
+                widgets::action_button(t, ButtonKind::Primary, ButtonSize::Regular, "Gerar código");
+            if is_up(snap) {
+                generate = generate.on_press(Message::IssueToken);
+            }
+            col = col.push(generate);
+        }
+    }
+    col.into()
+}
+
+/// O quadro de 220 px do QR (ou do aviso no lugar dele).
+fn qr_frame<'a>(
+    t: &'static Tokens,
+    content: Element<'a, Message>,
+    padding: f32,
+) -> Element<'a, Message> {
+    container(content)
+        .width(QR_FRAME)
+        .height(QR_FRAME)
+        .padding(padding)
+        .center_x(QR_FRAME)
+        .center_y(QR_FRAME)
+        .style(move |_: &Theme| container::Style {
+            background: Some(theme::DARK.neutral_100.into()),
+            border: Border {
+                color: t.accent_700,
+                width: 1.0,
+                radius: 12.0.into(),
+            },
+            ..container::Style::default()
         })
         .into()
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::app::tests::app_with;
     use super::*;
+    use crate::hub::snapshot::DeviceView;
 
     #[test]
     fn enderecos_so_com_rede() {
@@ -641,12 +851,12 @@ mod tests {
             ..Snapshot::default()
         };
         assert_eq!(hub_url(&snap), None);
-        assert_eq!(ca_url(&snap), None);
+        assert_eq!(guide_url(&snap), None);
         snap.addresses = vec![Ipv4Addr::new(192, 168, 0, 12)];
         assert_eq!(hub_url(&snap).as_deref(), Some("https://192.168.0.12:7777"));
         assert_eq!(
-            ca_url(&snap).as_deref(),
-            Some("http://192.168.0.12:7778/ca.crt")
+            guide_url(&snap).as_deref(),
+            Some("http://192.168.0.12:7778")
         );
     }
 
@@ -654,16 +864,139 @@ mod tests {
     fn endereco_mais_longo_cabe_inteiro_de_1024_a_2560() {
         let url = "https://192.168.100.200:7777";
         for window in 1024..=2560 {
-            // Mesma conta de `shell::content_width` e do padding do card.
+            // Mesma conta de `shell::content_width`; `address_inner` e a que a tela usa, nas
+            // duas disposicoes (uma coluna ate 853 de conteudo, duas dai em diante).
             let content = window as f32 - 232.0 - 64.0;
-            let inner = grid_card_width(content) - 48.0;
+            let inner = address_inner(content);
             let size = field_value_size(url, inner);
             assert!(
                 measure::medium_width(url, size) <= inner - FIELD_CHROME,
                 "janela {window}: {size} px nao cabe em {inner}"
             );
         }
+        // Na janela minima (728 de conteudo) e uma coluna so, com o card na largura toda.
+        assert!(!two_columns(728.0));
+        assert_eq!(address_inner(728.0), 728.0 - 48.0);
+        assert!(two_columns(854.0));
         // Com espaco, fica no tamanho do design.
         assert_eq!(field_value_size(url, 600.0), 15.0);
+    }
+
+    #[test]
+    fn passos_andam_de_um_em_um_e_param_nas_pontas() {
+        let flow = ConnectFlow::new(true);
+        assert_eq!(flow.step, ConnectStep::WiFi);
+        assert_eq!(flow.os, PhoneOs::Android);
+        assert_eq!(ConnectStep::WiFi.back(), None);
+        assert_eq!(ConnectStep::WiFi.next(), Some(ConnectStep::Certificate));
+        assert_eq!(ConnectStep::Certificate.next(), Some(ConnectStep::Pair));
+        assert_eq!(ConnectStep::Pair.next(), None);
+        assert_eq!(ConnectStep::Pair.back(), Some(ConnectStep::Certificate));
+        assert_eq!(step_caption(ConnectStep::WiFi), "Wi-Fi, passo 1 de 3");
+        assert_eq!(
+            step_caption(ConnectStep::Certificate),
+            "Certificado, passo 2 de 3"
+        );
+        assert_eq!(step_caption(ConnectStep::Pair), "Parear, passo 3 de 3");
+    }
+
+    #[test]
+    fn passos_do_certificado_por_sistema_sem_o_passo_do_qr() {
+        let android = certificate_steps(PhoneOs::Android);
+        let iphone = certificate_steps(PhoneOs::Iphone);
+        assert_eq!(android.len(), 2);
+        assert_eq!(iphone.len(), 3);
+        assert!(android[1].contains("HubFinance-CA.crt"));
+        assert!(iphone[0].starts_with("No Safari"));
+        assert!(iphone[2].contains("Confiança"));
+        // Ler o QR e o passo 3 do fluxo; os guias nao o repetem mais.
+        for line in android.iter().chain(iphone) {
+            assert!(!line.contains("QR"), "{line}");
+        }
+        // Abrir a tela de sincronizar vem antes de ler o QR ou digitar o codigo.
+        assert!(PAIR_STEPS[0].contains("Sincronizar com o hub"));
+        assert!(PAIR_STEPS[1].contains("QR"));
+    }
+
+    fn running(devices: Vec<DeviceView>) -> Snapshot {
+        Snapshot {
+            status: Status::Running,
+            addresses: vec![Ipv4Addr::new(192, 168, 0, 12)],
+            https_port: 7777,
+            http_port: 7778,
+            devices,
+            ..Snapshot::default()
+        }
+    }
+
+    fn device(id: &str) -> DeviceView {
+        DeviceView {
+            device_id: id.into(),
+            name: "Pixel 8".into(),
+            paired_at: "2026-10-03T10:00:00Z".into(),
+            ..DeviceView::default()
+        }
+    }
+
+    #[test]
+    fn sem_aparelho_o_fluxo_ocupa_a_tela_e_com_aparelho_vira_dialogo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(running(vec![]), dir.path().to_path_buf());
+        app.refresh_people();
+        app.screen = Screen::Connection;
+        assert!(shows_in_screen_flow(&app));
+        assert!(!dialog_open(&app));
+        assert!(header_action(&app).is_none());
+
+        // No boot (`Starting`) a lista vazia ainda nao quer dizer nada.
+        app.snapshot.status = Status::Starting;
+        assert!(!shows_in_screen_flow(&app));
+
+        app.snapshot = running(vec![device("D1")]);
+        app.refresh_people();
+        assert!(!shows_in_screen_flow(&app));
+        assert!(header_action(&app).is_some());
+        app.connect = Some(ConnectFlow::new(true));
+        assert!(dialog_open(&app));
+        // Em outra tela o dialogo nao aparece.
+        app.screen = Screen::Dashboard;
+        assert!(!dialog_open(&app));
+    }
+
+    #[test]
+    fn tela_e_dialogo_montam_em_todo_passo_sistema_e_largura() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(running(vec![]), dir.path().to_path_buf());
+        app.screen = Screen::Connection;
+        for devices in [vec![], vec![device("D1")]] {
+            app.snapshot.devices = devices;
+            app.refresh_people();
+            for width in [1024.0, 1440.0, 2560.0] {
+                app.window_size.width = width;
+                let _ = view(&app);
+                for step in [
+                    ConnectStep::WiFi,
+                    ConnectStep::Certificate,
+                    ConnectStep::Pair,
+                ] {
+                    for os in [PhoneOs::Android, PhoneOs::Iphone] {
+                        for modal in [false, true] {
+                            app.connect = Some(ConnectFlow { step, os, modal });
+                            let _ = view(&app);
+                            assert_eq!(connect_dialog(&app).is_some(), modal);
+                        }
+                    }
+                }
+                app.connect = None;
+            }
+        }
+        // Sem rede local: o passo 3 mostra o aviso no quadro.
+        app.snapshot.addresses.clear();
+        app.snapshot.status = Status::NoNetwork;
+        app.connect = Some(ConnectFlow {
+            step: ConnectStep::Pair,
+            ..ConnectFlow::new(true)
+        });
+        assert!(connect_dialog(&app).is_some());
     }
 }

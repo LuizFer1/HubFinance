@@ -19,13 +19,6 @@ pub enum Command {
     IssuePairingToken,
     /// O "Conectar um celular" fechou: o codigo pendente deixa de valer no `TokenBook` (que e
     /// o que o servidor confere), nao so some da tela. Sem codigo, nada.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "a janela passa a mandar no fluxo Conectar um celular"
-        )
-    )]
     CancelPairingToken,
     /// Remove (revoga) o aparelho e apaga as `erase` areas na mesma transacao. `erase` vazio e
     /// "Manter tudo": remove e grava a decisao de manter os dados.

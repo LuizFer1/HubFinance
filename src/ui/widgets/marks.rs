@@ -166,13 +166,6 @@ fn step_color(t: &Tokens, index: usize, current: usize) -> Color {
 
 /// Progresso de um fluxo em passos (dialogo com mais de uma etapa): `total` segmentos de 3 px,
 /// 4 px entre eles, raio de meia altura. `current` comeca em 0.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "sem fluxo em passos ainda: configuracao do assistente, issue 12"
-    )
-)]
 pub fn progress_steps<'a, M: 'a>(
     t: &'static Tokens,
     current: usize,

@@ -1,5 +1,6 @@
 //! Numeros grandes: o valor partido em linha de base (`value_line`), o dinheiro com "R$" e
-//! centavos menores (`money`) e o bloco rotulo + valor + nota (`stat`).
+//! centavos menores (`money`), o bloco rotulo + valor + nota (`stat`) e o valor secundario com
+//! rotulo na mesma linha (`figure`).
 
 use iced::widget::text::Wrapping;
 use iced::widget::{Column, column, container, row, text};
@@ -141,6 +142,44 @@ pub fn stat<'a, M: 'a>(
     col
 }
 
+/// Respiro entre o rotulo e o valor de `figure`.
+const FIGURE_GAP: f32 = 6.0;
+
+/// Valor secundario com rotulo na mesma linha, alinhados pela linha de base: rotulo 12
+/// `text_muted` e valor 17 Regular na `color` ("Receitas +R$ 6.500,00" do resumo do mes). O
+/// valor ja vem formatado (e mascarado) pelo modelo: formatar aqui vazaria o numero por cima do
+/// "Ocultar valores".
+pub fn figure<'a, M: 'a>(
+    t: &'static Tokens,
+    label: &str,
+    value: &str,
+    color: Color,
+) -> Element<'a, M> {
+    value_line(
+        figure_pieces(t, label, value, color),
+        type_scale::VALUE_S,
+        FIGURE_GAP,
+    )
+}
+
+/// Pedacos de `figure`, separados para o teste ler tamanho e cor sem montar a arvore.
+fn figure_pieces(
+    t: &'static Tokens,
+    label: &str,
+    value: &str,
+    color: Color,
+) -> Vec<(String, f32, Font, Color)> {
+    vec![
+        (
+            label.to_string(),
+            type_scale::META,
+            fonts::INTER,
+            t.text_muted,
+        ),
+        (value.to_string(), type_scale::VALUE_S, fonts::INTER, color),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +203,7 @@ mod tests {
                     money(t, &Money::new(true).big(-1), size, t.expense_fg);
                 let _: Element<'_, ()> = stat(t, "Saldo", value, None).into();
             }
+            let _: Element<'_, ()> = figure(t, "Receitas", "+R$ 6.500,00", t.income_fg);
             let _: Element<'_, ()> = value_line(
                 vec![
                     ("3,5".into(), 36.0, fonts::INTER_LIGHT, t.text),
@@ -173,5 +213,18 @@ mod tests {
                 8.0,
             );
         }
+    }
+
+    #[test]
+    fn valor_secundario_com_rotulo_12_muted_e_valor_17_regular() {
+        let t = &DARK;
+        let pieces = figure_pieces(t, "Saldo", "•••", t.text);
+        assert_eq!(
+            pieces,
+            vec![
+                ("Saldo".to_string(), 12.0, fonts::INTER, t.text_muted),
+                ("•••".to_string(), 17.0, fonts::INTER, t.text),
+            ]
+        );
     }
 }

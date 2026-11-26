@@ -28,7 +28,7 @@ pub use surface::{
     banner, card, dialog, divider, empty_copy, empty_icon, empty_state, inset, section_heading,
     settings_row, vdivider,
 };
-pub use values::{StatSize, baseline_pad, money, stat, value_line};
+pub use values::{StatSize, baseline_pad, figure, money, stat, value_line};
 
 /// Rotulo em frase normal ("Saldo do mês"), 12 Medium em `text_muted`. Desvio do handoff, que pede
 /// caixa alta com `letter-spacing`: sem o espacamento (o iced nao tem) a caixa alta ficava

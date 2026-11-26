@@ -5,14 +5,13 @@
 
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Space, button, column, container, mouse_area, opaque, rich_text, row, scrollable, span, stack,
-    text,
+    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text,
 };
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{App, Message};
 use super::rows::{author_cell, category_tile, hover_row, value_cell};
-use super::theme::{self, ButtonKind, ButtonSize, Tokens, alpha, mix, size};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, alpha, mix, size, space, type_scale};
 use super::widgets::{ChipShape, RowEdge, SegmentedSize, SegmentedVariant, TagTone};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::list::{
@@ -34,7 +33,7 @@ const COLUMNS: [u16; 4] = [22, 13, 10, 10];
 const VALUE_WIDTH: f32 = 128.0;
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let mut base = column![filter_bar(app), totals_line(app), table(app)]
+    let mut base = column![filter_bar(app), summary_line(app), table(app)]
         .spacing(GAP)
         .width(Length::Fill);
     if !app.cat_menu_open {
@@ -125,7 +124,7 @@ fn category_button(app: &App) -> Element<'_, Message> {
     .into()
 }
 
-/// Altura aproximada da tela sem o menu: barra de filtros (36), totais (~25), cabecalho da
+/// Altura aproximada da tela sem o menu: barra de filtros (36), resumo (~25), cabecalho da
 /// tabela (41), grupos (35) e linhas (53), ou o vazio (~250). So decide se falta espaco para o
 /// menu; errar para cima so deixa um pouco de rolagem a mais.
 fn estimated_height(v: &TransactionsView) -> f32 {
@@ -282,43 +281,53 @@ fn type_segment(app: &App) -> Element<'_, Message> {
     )
 }
 
-// ---- totais ----
+// ---- resumo do mes ----
 
-/// "**N** lançamentos · Receitas +R$ … · Despesas −R$ … · Saldo R$ …" (13, rotulos no texto de apoio).
-fn totals_line(app: &App) -> Element<'_, Message> {
+/// "128 lançamentos   Receitas +R$ …   Despesas −R$ …   Saldo R$ …": a contagem e os totais do
+/// que a tabela mostra (com filtro, so o filtrado), em 17 Regular com o rotulo em 12
+/// `text_muted` (8.3). Os valores vem prontos do modelo, ja mascarados com "Ocultar valores".
+/// Quebra em duas linhas quando nao cabe (728 de largura util).
+fn summary_line(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let list = &app.transactions.list;
-    let muted = t.text_soft();
-    let count = list.count;
-    let pair = |label: &'static str, value: String, color: Color| {
-        rich_text::<(), _, _, _>([
-            span(label).color(muted),
-            span(" "),
-            span(value).color(color),
-        ])
-        .size(13)
-    };
-    let line = row![
-        rich_text::<(), _, _, _>([
-            span(group_thousands(count as u64))
-                .font(fonts::INTER_MEDIUM)
-                .color(t.text),
-            span(if count == 1 {
-                " lançamento"
-            } else {
-                " lançamentos"
-            })
-            .color(muted),
-        ])
-        .size(13),
-        pair("Receitas", list.income_label.clone(), t.income_fg),
-        pair("Despesas", list.expense_label.clone(), t.expense_fg),
-        pair("Saldo", list.balance_label.clone(), t.text),
+    let count = widgets::value_line(
+        vec![
+            (
+                group_thousands(list.count as u64),
+                type_scale::VALUE_S,
+                fonts::INTER,
+                t.text,
+            ),
+            (
+                count_word(list.count).to_string(),
+                type_scale::META,
+                fonts::INTER,
+                t.text_muted,
+            ),
+        ],
+        type_scale::VALUE_S,
+        6.0,
+    );
+    row![
+        count,
+        widgets::figure(t, "Receitas", &list.income_label, t.income_fg),
+        widgets::figure(t, "Despesas", &list.expense_label, t.expense_fg),
+        widgets::figure(t, "Saldo", &list.balance_label, t.text),
     ]
-    .spacing(24)
+    .spacing(space::XXL)
+    .align_y(Alignment::End)
     .wrap()
-    .vertical_spacing(6);
-    container(line).padding([4, 2]).into()
+    .vertical_spacing(space::S)
+    .into()
+}
+
+/// "lançamento" / "lançamentos", depois do numero da contagem.
+fn count_word(count: usize) -> &'static str {
+    if count == 1 {
+        "lançamento"
+    } else {
+        "lançamentos"
+    }
 }
 
 // ---- tabela ----

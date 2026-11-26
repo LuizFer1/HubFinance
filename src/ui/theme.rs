@@ -174,10 +174,6 @@ pub mod type_scale {
     /// Titulo de secao, fora do card (Medium).
     pub const SECTION: f32 = 16.0;
     /// Valor secundario ("Receitas", "Guardado").
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "valor secundario, issue de cada tela")
-    )]
     pub const VALUE_S: f32 = 17.0;
     /// Frase de previsao; titulo de dialogo e de estado vazio.
     pub const LEAD: f32 = 18.0;

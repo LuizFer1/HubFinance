@@ -826,6 +826,9 @@ impl ButtonSize {
     }
 
     /// O compacto usa o raio das pecas pequenas (6); os outros, o de controle (8).
+    ///
+    /// Desvio intencional da secao 7.4, que pede raio 8 para todo botao: o fantasma ("Copiar",
+    /// "Desfazer") ja tinha raio 6, e `ghost()` delega ao compacto para nao mudar de cara.
     pub const fn radius(self) -> f32 {
         match self {
             ButtonSize::Compact => radius::INSET,

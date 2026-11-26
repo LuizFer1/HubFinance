@@ -1111,6 +1111,11 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             // Com bandeja, fechar e so fechar: o hub segue sincronizando. A remocao pendente
             // sai agora para nao depender de a janela voltar.
             app.commit_pending();
+            // O "Conectar um celular" fecha junto: o codigo nao fica valendo sem janela, e o
+            // dialogo nao reaparece sozinho quando ela voltar.
+            if app.connect.is_some() {
+                app.close_connect();
+            }
             app.with_window(window::close)
         }
         Message::Desktop(DesktopEvent::Quit) => begin_shutdown(app),
@@ -3424,6 +3429,18 @@ pub(super) mod tests {
         ));
         assert!(rx.try_recv().is_err());
         assert_eq!(app.pending_removal, None);
+        assert!(!app.closing);
+    }
+
+    #[test]
+    fn com_bandeja_fechar_a_janela_fecha_o_conectar_um_celular() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, mut rx) = with_tray(dir.path());
+        app.screen = Screen::Connection;
+        app.connect = Some(ConnectFlow::new(true));
+        let _ = update(&mut app, Message::CloseRequested);
+        assert_eq!(app.connect, None);
+        assert_eq!(drain(&mut rx), vec![Command::CancelPairingToken]);
         assert!(!app.closing);
     }
 

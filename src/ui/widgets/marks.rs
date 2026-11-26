@@ -1,4 +1,4 @@
-//! Marcas pequenas que acompanham um texto: tags. Tudo pilula sobre a superficie do card.
+//! Marcas pequenas que acompanham um texto: tags e tiles de icone, sobre a superficie do card.
 
 use iced::widget::{container, row, text};
 use iced::{Alignment, Color, Element};
@@ -6,6 +6,55 @@ use iced::{Alignment, Color, Element};
 use super::dot;
 use crate::ui::theme::{self, Tokens, Tone, radius, space, type_scale};
 use crate::ui::{fonts, icons};
+
+/// Tinta do tile: a cor a 16 % sobre a superficie (antes 15, 16 ou 18 % conforme a tela).
+const TILE_TINT: f32 = 0.16;
+
+/// Tile de icone: quadrado de `size` (28, 32 ou 36 na regua; o Resumo usa 30), raio 6, fundo
+/// `tint` a 16 % sobre a superficie e o icone na cor `icon` (16 px, 18 no de 36). Icone e tinta
+/// sao separados porque o deposito pinta o icone em `accent_300` sobre a tinta do `accent`.
+pub fn tile<'a, M: 'a>(
+    t: &'static Tokens,
+    glyph: &'static str,
+    icon: Color,
+    tint: Color,
+    size: f32,
+) -> Element<'a, M> {
+    tile_box(glyph, icon, theme::mix(t.surface, tint, TILE_TINT), size)
+}
+
+/// Tile no token da categoria ou da caixinha: icone e tinta na mesma cor.
+pub fn token_tile<'a, M: 'a>(
+    t: &'static Tokens,
+    glyph: &'static str,
+    token: &str,
+    size: f32,
+) -> Element<'a, M> {
+    let color = t.token(token);
+    tile(t, glyph, color, color, size)
+}
+
+/// Tile sem cor (lancamento futuro sem categoria): icone no apoio sobre o divisor.
+pub fn neutral_tile<'a, M: 'a>(
+    t: &'static Tokens,
+    glyph: &'static str,
+    size: f32,
+) -> Element<'a, M> {
+    tile_box(glyph, t.text_soft(), t.divider(), size)
+}
+
+fn tile_box<'a, M: 'a>(
+    glyph: &'static str,
+    icon: Color,
+    background: Color,
+    size: f32,
+) -> Element<'a, M> {
+    let glyph_size = if size >= 36.0 { 18.0 } else { 16.0 };
+    container(icons::icon(glyph, glyph_size, icon))
+        .center(size)
+        .style(theme::fill(background, radius::INSET))
+        .into()
+}
 
 /// Altura da tag (relatorio 9).
 const TAG_HEIGHT: f32 = 20.0;
@@ -165,6 +214,11 @@ mod tests {
             }
             let _: Element<'_, ()> = color_tag(t, "magenta");
             let _: Element<'_, ()> = partial_tag(t, "Parcial · até 19 nov");
+            for size in [28.0, 30.0, 32.0, 36.0] {
+                let _: Element<'_, ()> = tile(t, icons::ARROW_DOWN, t.accent_300, t.accent, size);
+                let _: Element<'_, ()> = token_tile(t, icons::REPEAT, "slate", size);
+                let _: Element<'_, ()> = neutral_tile(t, icons::REPEAT, size);
+            }
         }
     }
 

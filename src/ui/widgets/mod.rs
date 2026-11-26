@@ -18,7 +18,7 @@ pub use controls::{
     ChipShape, SegmentedVariant, action_button, action_button_icon, action_button_with, chip,
     icon_button, segmented,
 };
-pub use marks::{TagTone, color_tag, partial_tag, tag, tag_icon};
+pub use marks::{TagTone, color_tag, neutral_tile, partial_tag, tag, tag_icon, tile, token_tile};
 pub use surface::{card, divider, inset, section_heading, vdivider};
 
 /// Rotulo em frase normal ("Saldo do mês"), 12 Medium em `text_muted`. Desvio do handoff, que pede
@@ -83,17 +83,6 @@ pub fn dot<'a, M: 'a>(color: Color, size: f32) -> Element<'a, M> {
         .width(size)
         .height(size)
         .style(theme::fill(color, size / 2.0))
-        .into()
-}
-
-/// Tile de categoria: 32 x 32, raio 8, fundo a cor a 18 % sobre a superficie, icone 16 na cor
-/// cheia.
-pub fn tile<'a, M: 'a>(t: &'static Tokens, glyph: &'static str, token: &str) -> Element<'a, M> {
-    container(icons::icon(glyph, 16.0, t.token(token)))
-        .width(32)
-        .height(32)
-        .center(32)
-        .style(theme::fill(t.token_tint(token, 0.18), 8.0))
         .into()
 }
 

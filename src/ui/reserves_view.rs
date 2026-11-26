@@ -13,7 +13,7 @@ use super::charts::{
     EMPTY_RESERVES_HEIGHT, EMPTY_RESERVES_WIDTH, EmptyReservesProgram, StackedBarsProgram,
 };
 use super::rows::{author_cell_of, hover_row, kicker_with_icon};
-use super::theme::{self, Tokens, mix};
+use super::theme::{self, Tokens};
 use super::widgets::TagTone;
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::contract::MovementKind;
@@ -69,14 +69,6 @@ fn reserve_color(t: &'static Tokens, c: &ReserveColor) -> Color {
     match c {
         ReserveColor::Accent => t.accent,
         ReserveColor::Token(k) => t.token(k),
-    }
-}
-
-/// Fundo do tile: a cor a 18 % sobre a superficie (o tile das categorias).
-fn reserve_tint(t: &'static Tokens, c: &ReserveColor) -> Color {
-    match c {
-        ReserveColor::Accent => mix(t.surface, t.accent, 0.18),
-        ReserveColor::Token(k) => t.token_tint(k, 0.18),
     }
 }
 
@@ -700,9 +692,7 @@ fn pace_style(t: &'static Tokens, pace: &Pace) -> (&'static str, Color) {
 fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
     let t = app.tokens;
     let color = reserve_color(t, &p.color);
-    let tile = container(icons::icon(reserve_glyph(&p.icon), 18.0, color))
-        .center(36)
-        .style(theme::fill(reserve_tint(t, &p.color), 8.0));
+    let tile = widgets::tile(t, reserve_glyph(&p.icon), color, color, 36.0);
     let muted = t.text_muted;
     let mut meta = row![
         text(p.meta_left.clone())
@@ -870,21 +860,10 @@ fn movements_card(app: &App) -> Element<'_, Message> {
 /// Tile de 32: guardar e seta para baixo no acento; retirar e seta para cima na cor de despesa.
 fn movement_tile<'a>(t: &'static Tokens, kind: MovementKind) -> Element<'a, Message> {
     let (glyph, color, tint) = match kind {
-        MovementKind::Deposit => (
-            icons::ARROW_DOWN,
-            t.accent_300,
-            mix(t.surface, t.accent, 0.16),
-        ),
-        MovementKind::Withdrawal => (
-            icons::ARROW_UP,
-            t.expense_fg,
-            mix(t.surface, t.expense, 0.16),
-        ),
+        MovementKind::Deposit => (icons::ARROW_DOWN, t.accent_300, t.accent),
+        MovementKind::Withdrawal => (icons::ARROW_UP, t.expense_fg, t.expense),
     };
-    container(icons::icon(glyph, 16.0, color))
-        .center(32)
-        .style(theme::fill(tint, 8.0))
-        .into()
+    widgets::tile(t, glyph, color, tint, 32.0)
 }
 
 fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {

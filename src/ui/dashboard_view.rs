@@ -381,24 +381,6 @@ fn meter<'a>(program: MeterProgram) -> Element<'a, Message> {
     canvas(program).width(Length::Fill).height(h).into()
 }
 
-/// Tile de categoria: `size` px, raio 6, icone 16 na cor e fundo a cor a 15 % sobre a
-/// superficie (#3d3229 para `tag-orange` no design). Sem token: tile neutro com `repeat`.
-fn cat_tile<'a>(
-    t: &'static Tokens,
-    glyph: &'static str,
-    token: Option<&str>,
-    size: f32,
-) -> Element<'a, Message> {
-    let (icon_color, bg) = match token {
-        Some(tk) => (t.token(tk), t.token_tint(tk, 0.15)),
-        None => (t.text_soft(), t.divider()),
-    };
-    container(icons::icon(glyph, 16.0, icon_color))
-        .center(size)
-        .style(theme::fill(bg, 6.0))
-        .into()
-}
-
 /// Valor partido em linha de base: pedacos menores (`R$`, centavos, sufixo) com respiro embaixo
 /// para casar com o numero grande.
 fn big_value<'a>(
@@ -1248,7 +1230,10 @@ fn category_row<'a>(t: &'static Tokens, r: CategoryRow<'a, '_>) -> Element<'a, M
     let token = (!r.color.is_empty()).then_some(r.color);
     container(
         row![
-            cat_tile(t, icons::glyph(r.icon), token, 30.0),
+            match token {
+                Some(tk) => widgets::token_tile(t, icons::glyph(r.icon), tk, 30.0),
+                None => widgets::neutral_tile(t, icons::glyph(r.icon), 30.0),
+            },
             column![
                 row![container(name).width(Length::Fill), r.amount]
                     .spacing(12)
@@ -1397,7 +1382,10 @@ fn upcoming_row<'a>(t: &'static Tokens, u: &UpcomingLine) -> Element<'a, Message
     let amount_color = if u.income { t.income_fg } else { t.text };
     column![
         row![
-            cat_tile(t, glyph, u.color.as_deref(), 32.0),
+            match u.color.as_deref() {
+                Some(tk) => widgets::token_tile(t, glyph, tk, 32.0),
+                None => widgets::neutral_tile(t, glyph, 32.0),
+            },
             column![
                 txt(u.description.clone(), 14.0, t.text),
                 txt(u.when.clone(), 12.0, t.text_muted),

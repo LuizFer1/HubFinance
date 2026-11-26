@@ -30,8 +30,8 @@ pub(super) fn kicker_with_icon<'a>(
 /// Tile da categoria; sem categoria viva, o tile neutro com `circle-dashed`.
 pub(super) fn category_tile<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Message> {
     match (&r.category_icon, &r.category_color) {
-        (Some(icon), Some(color)) => widgets::tile(t, icons::glyph(icon), color),
-        _ => widgets::tile(t, icons::CIRCLE_DASHED, "slate"),
+        (Some(icon), Some(color)) => widgets::token_tile(t, icons::glyph(icon), color, 32.0),
+        _ => widgets::token_tile(t, icons::CIRCLE_DASHED, "slate", 32.0),
     }
 }
 

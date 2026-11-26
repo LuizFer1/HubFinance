@@ -576,8 +576,8 @@ impl App {
             &self.filters,
             self.hide_values,
         );
-        // "N lançamentos sincronizados de K aparelhos": so aparelhos ativos que ja enviaram. Vem
-        // do snapshot, nao do dataset; refazer o modelo sem isto zeraria o "· N aparelhos".
+        // O "· N aparelhos" da linha Parcial dos Lancamentos: so aparelhos ativos que ja
+        // enviaram. Vem do snapshot, nao do dataset; refazer o modelo sem isto o zeraria.
         self.transactions.synced_devices = self
             .snapshot
             .devices

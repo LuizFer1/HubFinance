@@ -18,6 +18,7 @@ use super::{
 use crate::advisor::Severity;
 use crate::dashboard::contract::Book;
 use crate::dashboard::money::group_thousands;
+use crate::dashboard::periods::month_long;
 use crate::hub::snapshot::Status;
 
 /// Id da rolagem do conteudo: sem ele o iced guarda a posicao pela arvore e a tela nova abria
@@ -737,12 +738,15 @@ fn header(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-/// Titulo e a linha de baixo do cabecalho. Onde ha "Parcial" (mes corrente com dados, nas
-/// telas com seletor de mes), a linha e o "Parcial · até 24 set" do modelo, no lugar do
-/// subtitulo: o chip ao lado dos controles virou essa linha (8.1). Em Lancamentos ela leva
-/// tambem quantos aparelhos enviaram ("· 2 aparelhos"), o que sobra do subtitulo trocado; a
-/// contagem de lancamentos volta com o resumo do mes da issue 07. Nas outras telas, ou em mes
-/// fechado, o subtitulo de `titles`.
+/// Titulo e a linha de baixo do cabecalho. A regra, igual nas telas de dados:
+/// - mes corrente com dados, nas telas com seletor de mes: o "Parcial · até 24 set" do modelo
+///   ganha da pergunta, porque e o que muda a leitura dos numeros (o mes ainda nao fechou) e o
+///   Resumo ja faz assim. Em Lancamentos ele leva tambem quantos aparelhos enviaram ("· 2
+///   aparelhos"): sao eles que ainda podem mandar o resto do mes;
+/// - fora disso, o subtitulo de `titles`, que nas telas de dados e a pergunta que a tela
+///   responde ("O que entrou e saiu em agosto?", "Quanto está guardado, e para quê?");
+/// - sem nada sincronizado, "Nada sincronizado ainda": uma pergunta sobre dado que nao existe
+///   nao faz sentido.
 pub(super) fn header_line(app: &App) -> (&str, String) {
     let (title, subtitle) = titles(app);
     let Some(partial) = partial_chip(app) else {
@@ -814,7 +818,7 @@ pub(super) fn titles(app: &App) -> (&str, String) {
             if empty {
                 "Nada sincronizado ainda".into()
             } else {
-                synced_line(transactions_count(app), app.transactions.synced_devices)
+                transactions_question(&app.transactions.month)
             },
         ),
         Screen::Reserves => (
@@ -822,7 +826,7 @@ pub(super) fn titles(app: &App) -> (&str, String) {
             if app.reserves.is_empty {
                 "Nada sincronizado ainda".into()
             } else {
-                "Dinheiro separado do saldo do mês · somente leitura".into()
+                RESERVES_QUESTION.into()
             },
         ),
         Screen::Analysis => (
@@ -837,27 +841,18 @@ pub(super) fn titles(app: &App) -> (&str, String) {
     }
 }
 
-/// "1 lançamento" / "1.234 lançamentos" (milhar com ponto, como o pt-BR do app).
-/// "4.688 lançamentos sincronizados de 2 aparelhos". Sem aparelho conhecido (todos removidos,
-/// ou linhas sem origem), sem o "de 0 aparelhos", que dizia que nada tinha vindo de lugar
-/// nenhum. O particípio concorda com o numero: "1 lançamento sincronizado".
-fn synced_line(rows: usize, devices: usize) -> String {
-    let rows = format!(
-        "{} {}",
-        plural(rows, "lançamento", "lançamentos"),
-        if rows == 1 {
-            "sincronizado"
-        } else {
-            "sincronizados"
-        }
-    );
-    if devices == 0 {
-        rows
-    } else {
-        format!("{rows} de {}", plural(devices, "aparelho", "aparelhos"))
-    }
+/// A pergunta que Lancamentos responde (principio 1 da direcao Grafite · Mesa), no mes
+/// escolhido. A contagem que esta linha trazia ("4.688 lançamentos sincronizados") desceu para
+/// o resumo do mes, logo acima da tabela, onde conta o que a tabela mostra.
+fn transactions_question(month: &str) -> String {
+    format!("O que entrou e saiu em {}?", month_long(month))
 }
 
+/// A pergunta que Reservas responde. A tela nao tem seletor de mes, entao nunca da lugar ao
+/// "Parcial".
+const RESERVES_QUESTION: &str = "Quanto está guardado, e para quê?";
+
+/// "1 lançamento" / "1.234 lançamentos" (milhar com ponto, como o pt-BR do app).
 pub(super) fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{} {}", thousands(n), if n == 1 { one } else { many })
 }
@@ -998,28 +993,16 @@ mod tests {
     }
 
     #[test]
-    fn subtitulo_dos_lancamentos_conta_aparelhos_que_enviaram() {
+    fn subtitulo_dos_lancamentos_e_a_pergunta_do_mes() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
         app.screen = Screen::Transactions;
-        assert_eq!(titles(&app).1, "13 lançamentos sincronizados de 1 aparelho");
+        assert_eq!(titles(&app).1, "O que entrou e saiu em setembro?");
+        // A pergunta acompanha o mes escolhido.
+        let _ = super::super::app::update(&mut app, Message::PrevMonth);
+        assert_eq!(titles(&app).1, "O que entrou e saiu em agosto?");
         app.screen = Screen::Dashboard;
         assert_eq!(titles(&app).1, "Somente leitura · dados do último sync");
-    }
-
-    #[test]
-    fn linha_de_sincronizados_concorda_e_omite_zero_aparelho() {
-        assert_eq!(synced_line(4688, 0), "4.688 lançamentos sincronizados");
-        assert_eq!(
-            synced_line(4688, 1),
-            "4.688 lançamentos sincronizados de 1 aparelho"
-        );
-        assert_eq!(
-            synced_line(4688, 3),
-            "4.688 lançamentos sincronizados de 3 aparelhos"
-        );
-        assert_eq!(synced_line(1, 1), "1 lançamento sincronizado de 1 aparelho");
-        assert_eq!(synced_line(1, 0), "1 lançamento sincronizado");
     }
 
     #[test]
@@ -1035,10 +1018,7 @@ mod tests {
         app.screen = Screen::Reserves;
         assert_eq!(
             titles(&app),
-            (
-                "Reservas",
-                "Dinheiro separado do saldo do mês · somente leitura".to_string()
-            )
+            ("Reservas", "Quanto está guardado, e para quê?".to_string())
         );
         assert_eq!(app.dashboard.sidebar.reserves, 6);
     }
@@ -1066,10 +1046,7 @@ mod tests {
         app.screen = Screen::Dashboard;
         assert_eq!(titles(&app).1, "Nada sincronizado ainda");
         app.screen = Screen::Reserves;
-        assert_eq!(
-            titles(&app).1,
-            "Dinheiro separado do saldo do mês · somente leitura"
-        );
+        assert_eq!(titles(&app).1, "Quanto está guardado, e para quê?");
     }
 
     #[test]

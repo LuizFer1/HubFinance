@@ -14,7 +14,7 @@ use super::app::{AnalysisTab, App, CopyTarget, Message, awaiting_cloud_consent};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, radius, size};
 use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
 use super::{fonts, icons, rows, shell, time, widgets};
-use crate::advisor::{Finding, Severity};
+use crate::advisor::{FigureValue, Finding, FindingKind, Severity};
 use crate::assistant::prompt::{OPENING_REQUEST, Role};
 use crate::assistant::settings::{ProviderChoice, Settings};
 use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
@@ -280,8 +280,94 @@ fn finding_row<'a>(app: &'a App, f: &'a Finding) -> Element<'a, Message> {
                 .color(t.text),
         );
     }
+    if let Some(c) = comparison(f) {
+        body = body.push(comparison_view(app, f.severity, &c));
+    }
     row![tile, body].spacing(12).into()
 }
+
+/// Gasto contra a referencia de um achado (spec 10: "barra de real contra normal"), lido das
+/// cifras que ja vao ao envelope, sem mudar `Finding`. So os achados que comparam um gasto com
+/// outro valor do mesmo tipo; os de taxa, meses ou previsao nao tem um par assim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Comparison {
+    pub real: i64,
+    pub reference: i64,
+    pub reference_label: &'static str,
+}
+
+/// A ordem das cifras nao e a mesma em toda regra (`advisor/rules.rs`): ritmo e categoria vem
+/// `[gasto, normal]`, meta vem `[meta, gasto]`. Por isso o tipo decide, num lugar so.
+pub(super) fn comparison(f: &Finding) -> Option<Comparison> {
+    let money = |i: usize| match f.figures.get(i)?.value {
+        FigureValue::Money(v) => Some(v),
+        _ => None,
+    };
+    let (real, reference, reference_label) = match f.kind {
+        FindingKind::Pace | FindingKind::CategoryAboveNormal => (money(0)?, money(1)?, "Normal"),
+        FindingKind::Budget => (money(1)?, money(0)?, "Meta"),
+        _ => return None,
+    };
+    // Sem escala (os dois zero ou negativos) a barra nao diz nada.
+    (real.max(reference) > 0).then_some(Comparison {
+        real,
+        reference,
+        reference_label,
+    })
+}
+
+/// Duas barras de 6 px na mesma escala: o gasto na cor da gravidade e a referencia em neutro,
+/// cada uma com o valor a direita (mascarado com "Ocultar valores", como as barras do Resumo:
+/// o tamanho fica, o numero some).
+fn comparison_view<'a>(app: &App, severity: Severity, c: &Comparison) -> Element<'a, Message> {
+    use crate::dashboard::money::format_brl;
+    let t = app.tokens;
+    let scale = c.real.max(c.reference) as f32;
+    let line = |label: &'static str, value: i64, color: Color| -> Element<'a, Message> {
+        let shown = if app.hide_values {
+            MASK.to_string()
+        } else {
+            format_brl(value)
+        };
+        row![
+            text(label)
+                .size(theme::type_scale::META)
+                .color(t.text_muted)
+                .width(COMPARISON_LABEL),
+            widgets::bar(
+                widgets::Bar::Fraction {
+                    value: value.max(0) as f32 / scale,
+                    color,
+                    track: Some(t.neutral_800),
+                    outlined: false,
+                },
+                6.0,
+            ),
+            text(shown)
+                .size(theme::type_scale::META)
+                .color(t.text_soft())
+                .width(COMPARISON_VALUE)
+                .align_x(Alignment::End),
+        ]
+        .spacing(theme::space::S)
+        .align_y(Alignment::Center)
+        .into()
+    };
+    column![
+        line("No mês", c.real, severity_fg(t, severity)),
+        line(c.reference_label, c.reference, t.neutral_500),
+    ]
+    .spacing(theme::space::XS)
+    .padding(Padding {
+        top: theme::space::XS,
+        ..Padding::ZERO
+    })
+    .into()
+}
+
+/// Coluna do rotulo ("No mês", "Normal", "Meta") e do valor das barras do achado.
+const COMPARISON_LABEL: f32 = 56.0;
+const COMPARISON_VALUE: f32 = 96.0;
 
 // ---- assistente ----
 
@@ -1396,6 +1482,72 @@ mod tests {
             mask_str("Fundo R$ extra: R$ 5,00"),
             format!("Fundo R$ extra: {MASK}")
         );
+    }
+
+    #[test]
+    fn barras_dos_achados_leem_gasto_e_referencia_na_ordem_de_cada_regra() {
+        use crate::dashboard::{GRAFITE_TODAY, fixtures_grafite};
+        let analysis = crate::advisor::analyze(&fixtures_grafite(), GRAFITE_TODAY);
+        let label_of = |f: &Finding, v: i64| {
+            f.figures
+                .iter()
+                .find(|g| g.value == FigureValue::Money(v))
+                .map(|g| g.label.clone())
+                .unwrap()
+        };
+        let mut seen = 0;
+        for f in &analysis.findings {
+            let Some(c) = comparison(f) else {
+                assert!(
+                    !matches!(
+                        f.kind,
+                        FindingKind::Pace | FindingKind::CategoryAboveNormal | FindingKind::Budget
+                    ),
+                    "{:?}",
+                    f.kind
+                );
+                continue;
+            };
+            seen += 1;
+            // O gasto e a cifra cujo rotulo fala de gasto, pelo texto da propria regra.
+            let real = label_of(f, c.real);
+            let reference = label_of(f, c.reference);
+            match f.kind {
+                FindingKind::Pace => {
+                    assert_eq!(
+                        (real.as_str(), reference.as_str()),
+                        ("Gasto até hoje", "Normal até hoje")
+                    );
+                }
+                FindingKind::CategoryAboveNormal => {
+                    assert!(real.ends_with(" no mês") && reference.ends_with(" normal"));
+                }
+                FindingKind::Budget => {
+                    assert!(real.starts_with("Gasto ") && reference.starts_with("Meta "));
+                    assert_eq!(c.reference_label, "Meta");
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(seen >= 3, "a fixture tem ritmo, categoria e metas");
+    }
+
+    #[test]
+    fn barras_dos_achados_montam_com_e_sem_valores_ocultos() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = crate::ui::app::tests::app_with_fixtures(dir.path());
+        for hidden in [false, true] {
+            app.hide_values = hidden;
+            let f = app
+                .analysis
+                .findings
+                .iter()
+                .find(|f| f.kind == FindingKind::Pace)
+                .cloned()
+                .unwrap();
+            let c = comparison(&f).unwrap();
+            let _ = comparison_view(&app, f.severity, &c);
+        }
     }
 
     #[test]

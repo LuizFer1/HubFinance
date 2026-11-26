@@ -383,7 +383,7 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
                 .color(t.text_muted),
         ]
         .width(Length::Fill),
-        widgets::tag(t, TagTone::Accent, &e.pct_label.clone()),
+        widgets::tag(t, TagTone::Accent, &e.pct_label),
     ]
     .spacing(12)
     .align_y(Alignment::Center);

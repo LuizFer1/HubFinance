@@ -10,7 +10,7 @@ use iced::{Alignment, Element, Length, Padding, mouse, window};
 
 use super::app::{App, Message, Screen};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
-use super::widgets::SegmentedVariant;
+use super::widgets::{SegmentedSize, SegmentedVariant};
 use super::{
     analysis_view, connection_view, dashboard_view, fonts, icons, remove_view, reserves_view, time,
     transactions_view, widgets,
@@ -514,7 +514,7 @@ fn theme_switch(app: &App) -> Element<'_, Message> {
     widgets::segmented(
         app.tokens,
         SegmentedVariant::Pill,
-        ButtonSize::Regular,
+        SegmentedSize::Regular,
         true,
         [
             (
@@ -676,7 +676,7 @@ pub(super) fn book_switch(app: &App) -> Option<Element<'_, Message>> {
     Some(widgets::segmented(
         app.tokens,
         SegmentedVariant::Pill,
-        ButtonSize::Regular,
+        SegmentedSize::Regular,
         false,
         [option(Book::Personal), option(Book::Business)],
     ))

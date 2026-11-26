@@ -16,8 +16,9 @@ mod surface;
 mod values;
 
 pub use controls::{
-    ChipShape, RowEdge, RowHover, SegmentedVariant, action_button, action_button_icon,
-    action_button_with, chip, copy_button, field_copy, icon_button, list_row, segmented,
+    ChipShape, RowEdge, RowHover, SegmentedSize, SegmentedVariant, action_button,
+    action_button_icon, action_button_with, chip, copy_button, field_copy, icon_button, list_row,
+    segmented,
 };
 pub use marks::{
     Bar, CompactTone, TagTone, bar, color_tag, neutral_tile, partial_tag, tag, tag_compact,

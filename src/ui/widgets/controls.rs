@@ -105,20 +105,69 @@ pub enum SegmentedVariant {
     Bordered,
 }
 
-/// Segmentado de N opcoes `(rotulo, ativa, mensagem)`. `size` da a altura da opcao (compacto
-/// 28, padrao 36; o grande nao existe aqui e vale como padrao). `fill` divide a largura
-/// igualmente (lateral, Sim | Nao); sem ele cada opcao tem a largura do rotulo mais o respiro.
+/// Altura da opcao do segmentado: compacta (28) ou padrao (36). Nao ha a grande de 44 do botao:
+/// o segmentado nao mora no cabecalho alto, e um tipo proprio impede pedi-la.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SegmentedSize {
+    Compact,
+    Regular,
+}
+
+impl SegmentedSize {
+    const fn height(self) -> f32 {
+        match self {
+            SegmentedSize::Compact => size::CTRL_S,
+            SegmentedSize::Regular => size::CTRL_M,
+        }
+    }
+}
+
+/// Estilo de uma opcao: o papel (neutro na pilula, acento no contornado) e se esta ativa.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SegmentLook {
+    accent: bool,
+    active: bool,
+}
+
+impl SegmentLook {
+    fn style(
+        self,
+        t: &'static Tokens,
+        theme: &iced::Theme,
+        status: button::Status,
+    ) -> button::Style {
+        if self.accent {
+            theme::seg_option(t, self.active)(theme, status)
+        } else {
+            theme::segment(t, self.active)(theme, status)
+        }
+    }
+}
+
+/// O que cada opcao vai desenhar e emitir, separado da arvore para o teste conferir qual
+/// opcao fica ativa e qual mensagem cada uma manda.
+fn segment_plan<'a, M>(
+    variant: SegmentedVariant,
+    options: impl IntoIterator<Item = (&'a str, bool, M)>,
+) -> Vec<(&'a str, SegmentLook, M)> {
+    let accent = variant == SegmentedVariant::Bordered;
+    options
+        .into_iter()
+        .map(|(label, active, message)| (label, SegmentLook { accent, active }, message))
+        .collect()
+}
+
+/// Segmentado de N opcoes `(rotulo, ativa, mensagem)`. `size` da a altura da opcao. `fill`
+/// divide a largura igualmente (lateral, Sim | Nao); sem ele cada opcao tem a largura do
+/// rotulo mais o respiro.
 pub fn segmented<'a, M: Clone + 'a>(
     t: &'static Tokens,
     variant: SegmentedVariant,
-    size: ButtonSize,
+    size: SegmentedSize,
     fill: bool,
     options: impl IntoIterator<Item = (&'a str, bool, M)>,
 ) -> Element<'a, M> {
-    let height = match size {
-        ButtonSize::Compact => size::CTRL_S,
-        ButtonSize::Regular | ButtonSize::Large => size::CTRL_M,
-    };
+    let height = size.height();
     let bordered = variant == SegmentedVariant::Bordered;
     // O contornado e mais denso (rotulo 12 Medium, respiro 12, trilho de 3); a pilula usa 13
     // Regular, respiro 14 e trilho de 4 com 4 entre as opcoes.
@@ -127,7 +176,7 @@ pub fn segmented<'a, M: Clone + 'a>(
     } else {
         (14.0, space::XS, space::XS)
     };
-    let option = |(label, active, message): (&'a str, bool, M)| -> Element<'a, M> {
+    let option = |(label, look, message): (&'a str, SegmentLook, M)| -> Element<'a, M> {
         let label = if bordered {
             text(label)
                 .size(type_scale::META)
@@ -142,15 +191,14 @@ pub fn segmented<'a, M: Clone + 'a>(
         } else {
             content.padding([0.0, pad_x])
         };
-        let b = button(content).padding(0).on_press(message);
-        let b = if bordered {
-            b.style(theme::seg_option(t, active))
-        } else {
-            b.style(theme::segment(t, active))
-        };
+        let b = button(content)
+            .padding(0)
+            .on_press(message)
+            .style(move |theme, status| look.style(t, theme, status));
         if fill { b.width(Length::Fill) } else { b }.into()
     };
-    let line = Row::with_children(options.into_iter().map(option)).spacing(gap);
+    let line =
+        Row::with_children(segment_plan(variant, options).into_iter().map(option)).spacing(gap);
     let rail = container(if fill { line.width(Length::Fill) } else { line }).padding(rail_pad);
     let rail = match variant {
         SegmentedVariant::Pill => rail.style(theme::fill(t.surface, radius::CONTROL)),
@@ -344,7 +392,7 @@ mod tests {
         ];
         for t in [&DARK, &LIGHT] {
             for variant in variants {
-                for size in SIZES {
+                for size in [SegmentedSize::Compact, SegmentedSize::Regular] {
                     for fill in [true, false] {
                         let _ =
                             segmented(t, variant, size, fill, [("A", true, ()), ("B", false, ())]);
@@ -358,6 +406,57 @@ mod tests {
                     }
                 }
             }
+        }
+        assert_eq!(SegmentedSize::Compact.height(), 28.0);
+        assert_eq!(SegmentedSize::Regular.height(), 36.0);
+    }
+
+    /// So a opcao marcada fica ativa, cada uma manda a propria mensagem, e o papel segue a
+    /// variante: acento no contornado, neutro na pilula.
+    #[test]
+    fn segmentado_ativa_a_opcao_marcada_e_emite_a_mensagem_dela() {
+        let plan = segment_plan(
+            SegmentedVariant::Bordered,
+            [
+                ("Todos", false, 1),
+                ("Receitas", true, 2),
+                ("Despesas", false, 3),
+            ],
+        );
+        let actives: Vec<bool> = plan.iter().map(|(_, look, _)| look.active).collect();
+        let messages: Vec<i32> = plan.iter().map(|(_, _, m)| *m).collect();
+        let labels: Vec<&str> = plan.iter().map(|(l, _, _)| *l).collect();
+        assert_eq!(actives, vec![false, true, false]);
+        assert_eq!(messages, vec![1, 2, 3]);
+        assert_eq!(labels, vec!["Todos", "Receitas", "Despesas"]);
+        assert!(plan.iter().all(|(_, look, _)| look.accent));
+        let pill = segment_plan(
+            SegmentedVariant::Pill,
+            [("Escuro", true, ()), ("Claro", false, ())],
+        );
+        assert!(pill.iter().all(|(_, look, _)| !look.accent));
+
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            let rest = button::Status::Active;
+            let on = SegmentLook {
+                accent: true,
+                active: true,
+            }
+            .style(t, &theme, rest);
+            assert_eq!(on, theme::seg_option(t, true)(&theme, rest));
+            let on = SegmentLook {
+                accent: false,
+                active: true,
+            }
+            .style(t, &theme, rest);
+            assert_eq!(on, theme::segment(t, true)(&theme, rest));
+            let off = SegmentLook {
+                accent: true,
+                active: false,
+            }
+            .style(t, &theme, rest);
+            assert_eq!(off, theme::seg_option(t, false)(&theme, rest));
         }
     }
 

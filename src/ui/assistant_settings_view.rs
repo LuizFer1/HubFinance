@@ -7,7 +7,7 @@ use iced::{Alignment, Element, Length, Padding};
 
 use super::app::{App, Message};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
-use super::widgets::SegmentedVariant;
+use super::widgets::{SegmentedSize, SegmentedVariant};
 use super::{fonts, widgets};
 use crate::assistant::secret::Secret;
 use crate::assistant::settings::ProviderChoice;
@@ -68,7 +68,7 @@ fn provider_picker(t: &'static Tokens, current: ProviderChoice) -> Element<'stat
     let rail = widgets::segmented(
         t,
         SegmentedVariant::PillInset,
-        ButtonSize::Regular,
+        SegmentedSize::Regular,
         false,
         [
             option("Nenhum", ProviderChoice::None),
@@ -148,7 +148,7 @@ fn yes_no<'a>(
         container(widgets::segmented(
             t,
             SegmentedVariant::Bordered,
-            ButtonSize::Compact,
+            SegmentedSize::Compact,
             true,
             [("Sim", on, message(true)), ("Não", !on, message(false))],
         ))

@@ -13,7 +13,7 @@ use iced::{Alignment, Color, Element, Length, Padding};
 use super::app::{App, Message};
 use super::rows::{author_cell, category_tile, hover_row, value_cell};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, alpha, mix, size};
-use super::widgets::{ChipShape, RowEdge, SegmentedVariant, TagTone};
+use super::widgets::{ChipShape, RowEdge, SegmentedSize, SegmentedVariant, TagTone};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::list::{
     ALL_CATEGORIES_COLOR, CategoryOption, Filters, ListRow, NONE_KEY, TypeFilter,
@@ -272,7 +272,7 @@ fn type_segment(app: &App) -> Element<'_, Message> {
     widgets::segmented(
         app.tokens,
         SegmentedVariant::Bordered,
-        ButtonSize::Compact,
+        SegmentedSize::Compact,
         false,
         [
             option(TypeFilter::All, "Todos"),

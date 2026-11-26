@@ -14,7 +14,7 @@ use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
 use super::app::{App, CopyTarget, Message};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
-use super::widgets::{RowEdge, SegmentedVariant};
+use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
 use super::{fonts, icons, measure, rows, shell, time, widgets};
 use crate::config;
 use crate::dashboard::people::{Person, presence};
@@ -466,7 +466,7 @@ fn about_card(app: &App) -> Element<'_, Message> {
         let switch = container(widgets::segmented(
             t,
             SegmentedVariant::Bordered,
-            ButtonSize::Compact,
+            SegmentedSize::Compact,
             true,
             [
                 ("Sim", enabled, Message::SetAutostart(true)),

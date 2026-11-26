@@ -1796,6 +1796,7 @@ pub fn view(app: &App, window: window::Id) -> Element<'_, Message> {
 pub(super) mod tests {
     use tokio::sync::mpsc;
 
+    use crate::dashboard::money::{MASK, leaks};
     use crate::desktop::{Fake, Headless};
     use crate::store::erase::DeviceData;
 
@@ -1925,6 +1926,9 @@ pub(super) mod tests {
         assert_eq!(app.dashboard.header.hide_toggle, "Ocultar valores");
         let shown = format!("{:?}", app.dashboard.how_am_i);
         assert!(shown.contains("R$ "), "{shown}");
+        assert!(app.transactions.list.income_label.starts_with("+R$ "));
+        assert_eq!(app.transactions.synced_devices, 1);
+        let shown_transactions = app.transactions.clone();
 
         let _ = update(&mut app, Message::ToggleHideValues);
         assert!(app.hide_values);
@@ -1934,6 +1938,13 @@ pub(super) mod tests {
         assert_eq!(app.dashboard.month, app.month());
         let hidden = format!("{:?}", app.dashboard.how_am_i);
         assert!(hidden.contains("•••"), "{hidden}");
+        // Lancamentos tambem, mesmo sem estar na tela: o modelo e refeito junto, e o
+        // "· N aparelhos" do cabecalho (que vem do snapshot) nao se perde.
+        assert_eq!(app.screen, Screen::Dashboard);
+        assert_eq!(leaks(&format!("{:#?}", app.transactions)), None);
+        assert_eq!(app.transactions.list.income_label, MASK);
+        assert_eq!(app.transactions.synced_devices, 1);
+        assert_eq!(app.transactions.list.count, shown_transactions.list.count);
         wait_prefs(dir.path(), |p| p.hide_values);
 
         // Trocar o tema leva a escolha junto (a gravacao e do arquivo inteiro).
@@ -1943,8 +1954,35 @@ pub(super) mod tests {
 
         let _ = update(&mut app, Message::ToggleHideValues);
         assert!(!app.dashboard.hidden);
+        assert_eq!(app.transactions, shown_transactions);
         wait_prefs(dir.path(), |p| !p.hide_values);
         assert_eq!(UiPrefs::load(dir.path()).theme, ThemeMode::Light);
+    }
+
+    #[test]
+    fn alternar_ocultar_refaz_reservas_e_nao_mexe_no_que_vai_ao_assistente() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_reserves(dir.path());
+        let _ = update(&mut app, Message::SelectScreen(Screen::Transactions));
+        let shown_reserves = app.reserves.clone();
+        let envelope = app.current_envelope();
+        let findings = format!("{:?}", app.analysis);
+        assert!(leaks(&format!("{shown_reserves:#?}")).is_some());
+
+        // Alternar em Lancamentos refaz Reservas tambem: trocar de tela depois chega mascarado.
+        let _ = update(&mut app, Message::ToggleHideValues);
+        assert_eq!(leaks(&format!("{:#?}", app.reserves)), None);
+        assert_eq!(
+            app.reserves.movements.first().map(|m| m.amount.as_str()),
+            Some(MASK)
+        );
+        assert_eq!(app.reserves.totals, shown_reserves.totals);
+        // O envelope e os achados guardam os valores reais: a Analise mascara so ao desenhar.
+        assert_eq!(app.current_envelope(), envelope);
+        assert_eq!(format!("{:?}", app.analysis), findings);
+
+        let _ = update(&mut app, Message::ToggleHideValues);
+        assert_eq!(app.reserves, shown_reserves);
     }
 
     #[test]

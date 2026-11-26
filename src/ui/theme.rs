@@ -1619,12 +1619,6 @@ mod tests {
             assert_eq!(t.text_accent(), t.accent_300, "{:?}", t.mode);
             assert_eq!(t.state(false), t.text_alpha(0.04), "{:?}", t.mode);
             assert_eq!(t.state(true), t.text_alpha(0.08), "{:?}", t.mode);
-            assert_eq!(
-                t.tint(Tone::Warning, t.surface),
-                mix(t.surface, t.warning, 0.10),
-                "{:?}",
-                t.mode
-            );
             let glow = t.accent_glow();
             assert_eq!(glow.blur_radius, 24.0);
             assert_eq!(
@@ -1637,6 +1631,40 @@ mod tests {
         }
         assert!((DARK.accent_glow().color.a - 0.28).abs() < f32::EPSILON);
         assert!((LIGHT.accent_glow().color.a - 0.16).abs() < f32::EPSILON);
+    }
+
+    /// Canal a canal com folga de 1: a mistura e em float e dois canais do claro caem em x,5.
+    fn assert_rgb8(got: Color, want: u32, name: &str) {
+        let [r, g, b, a] = got.into_rgba8();
+        let w = hex(want).into_rgba8();
+        assert_eq!(a, 255, "{name} opaco");
+        for (c, wc) in [r, g, b].into_iter().zip(w) {
+            assert!(c.abs_diff(wc) <= 1, "{name}: {got:?} contra #{want:06x}");
+        }
+    }
+
+    /// Tinta de 10 % de cada tom sobre `surface`, conferida contra o hex calculado a mao da
+    /// paleta (tom a 10 % sobre #1e1e1e e #ffffff).
+    #[test]
+    fn tinta_de_cada_tom_sobre_surface() {
+        let cases = [
+            (Tone::Accent, 0x322e24, 0xf3f0e6),
+            (Tone::Income, 0x27302b, 0xeaf4f0),
+            (Tone::Expense, 0x332928, 0xfaeeee),
+            (Tone::Warning, 0x332a22, 0xf5eee6),
+        ];
+        for (tone, dark, light) in cases {
+            assert_rgb8(
+                DARK.tint(tone, DARK.surface),
+                dark,
+                &format!("{tone:?} escuro"),
+            );
+            assert_rgb8(
+                LIGHT.tint(tone, LIGHT.surface),
+                light,
+                &format!("{tone:?} claro"),
+            );
+        }
     }
 
     /// Relatorio 7.3: a borda do card nao e contraste, e percepcao (1,29 e 1,16 no escuro, 1,17
@@ -1746,11 +1774,16 @@ mod tests {
     ];
     const SIZES: [ButtonSize; 3] = [ButtonSize::Compact, ButtonSize::Regular, ButtonSize::Large];
 
+    /// Cor com alfa composta sobre um pai opaco, como a tela a desenha.
+    fn composite(c: Color, parent: Color) -> Color {
+        mix(parent, Color { a: 1.0, ..c }, c.a)
+    }
+
     /// Fundo opaco que o botao desenha sobre `parent` (tinta com alfa composta).
     fn painted(s: &button::Style, parent: Color) -> Color {
         match s.background {
             None => parent,
-            Some(Background::Color(c)) => mix(parent, Color { a: 1.0, ..c }, c.a),
+            Some(Background::Color(c)) => composite(c, parent),
             Some(Background::Gradient(_)) => panic!("botao com gradiente"),
         }
     }
@@ -1795,42 +1828,119 @@ mod tests {
     /// a camada `state` de 4 % (relatorio 9); o primario continua sem sombra.
     #[test]
     fn estilos_antigos_delegam_e_mantem_a_cara() {
+        let opaque = |c: Color| c.a == 1.0;
         for t in [&DARK, &LIGHT] {
             let theme = t.iced_theme();
-            let hover = button::Status::Hovered;
-            let active = button::Status::Active;
-            let g = ghost(t)(&theme, hover);
-            assert_eq!(g.background, bg(alpha(t.accent, 0.12)));
-            assert_eq!(g.border.radius, 6.0.into());
-            assert_eq!(
-                g,
-                button(t, ButtonKind::Ghost, ButtonSize::Compact)(&theme, hover)
+            let (rest, hover, down) = (
+                button::Status::Active,
+                button::Status::Hovered,
+                button::Status::Pressed,
             );
-            let p = outline_accent(t)(&theme, active);
-            assert_eq!(p.background, bg(alpha(t.accent, 0.08)));
-            assert_eq!(p.shadow, Shadow::default(), "primario sem brilho");
+            let m = t.mode;
+
+            let g = ghost(t);
+            assert_eq!(g(&theme, rest).background, None, "{m:?}");
             assert_eq!(
-                outline_accent(t)(&theme, hover).background,
-                bg(alpha(t.accent, 0.16))
+                g(&theme, hover).background,
+                bg(alpha(t.accent, 0.12)),
+                "{m:?}"
             );
             assert_eq!(
-                outline_divider(t)(&theme, hover).background,
-                bg(t.state(false))
+                g(&theme, down).background,
+                bg(alpha(t.accent, 0.20)),
+                "{m:?}"
+            );
+            assert_eq!(g(&theme, rest).border.radius, 6.0.into());
+            assert_eq!(g(&theme, rest).text_color, t.accent_300, "{m:?}");
+
+            let p = outline_accent(t);
+            assert_eq!(
+                p(&theme, rest).background,
+                bg(alpha(t.accent, 0.08)),
+                "{m:?}"
             );
             assert_eq!(
-                danger_outline(t)(&theme, hover).background,
-                bg(alpha(t.expense, 0.12))
+                p(&theme, hover).background,
+                bg(alpha(t.accent, 0.16)),
+                "{m:?}"
             );
             assert_eq!(
-                danger_filled(t)(&theme, active).background,
-                bg(alpha(t.expense, 0.14))
+                p(&theme, down).background,
+                bg(alpha(t.accent, 0.24)),
+                "{m:?}"
+            );
+            assert_eq!(p(&theme, rest).border.color, t.accent, "{m:?}");
+            assert_eq!(p(&theme, rest).border.radius, 8.0.into());
+            for status in [rest, hover, down] {
+                assert_eq!(
+                    p(&theme, status).shadow,
+                    Shadow::default(),
+                    "primario sem brilho"
+                );
+            }
+
+            let sec = outline_divider(t);
+            assert_eq!(sec(&theme, rest).background, None, "{m:?}");
+            assert_eq!(
+                sec(&theme, hover).background,
+                bg(alpha(t.text, 0.04)),
+                "{m:?}"
             );
             assert_eq!(
-                danger_filled(t)(&theme, hover).background,
-                bg(alpha(t.expense, 0.20))
+                sec(&theme, down).background,
+                bg(alpha(t.text, 0.08)),
+                "{m:?}"
             );
-            assert_eq!(link(t)(&theme, active).text_color, t.text_accent());
-            assert_eq!(link(t)(&theme, hover).text_color, t.accent_200);
+            assert_eq!(sec(&theme, rest).border.color, t.divider(), "{m:?}");
+
+            let d = danger_outline(t);
+            assert_eq!(
+                d(&theme, hover).background,
+                bg(alpha(t.expense, 0.12)),
+                "{m:?}"
+            );
+            assert_eq!(
+                d(&theme, down).background,
+                bg(alpha(t.expense, 0.12)),
+                "{m:?}"
+            );
+            assert_eq!(
+                d(&theme, hover).border.color,
+                alpha(t.expense, 0.45),
+                "{m:?}"
+            );
+            assert_eq!(d(&theme, down).border.color, t.expense, "{m:?}");
+            assert!(opaque(d(&theme, down).border.color), "{m:?}");
+
+            let f = danger_filled(t);
+            assert_eq!(
+                f(&theme, rest).background,
+                bg(alpha(t.expense, 0.14)),
+                "{m:?}"
+            );
+            assert_eq!(
+                f(&theme, hover).background,
+                bg(alpha(t.expense, 0.20)),
+                "{m:?}"
+            );
+            assert_eq!(
+                f(&theme, down).background,
+                bg(alpha(t.expense, 0.20)),
+                "{m:?}"
+            );
+            assert_eq!(
+                f(&theme, hover).border.color,
+                alpha(t.expense, 0.55),
+                "{m:?}"
+            );
+            assert_eq!(f(&theme, down).border.color, t.expense, "{m:?}");
+            assert!(opaque(f(&theme, down).border.color), "{m:?}");
+
+            let l = link(t);
+            assert_eq!(l(&theme, rest).text_color, t.accent_300, "{m:?}");
+            assert_eq!(l(&theme, hover).text_color, t.accent_200, "{m:?}");
+            assert_eq!(l(&theme, down).text_color, t.accent_100, "{m:?}");
+            assert_eq!(l(&theme, down).background, None, "{m:?}");
         }
     }
 
@@ -1902,6 +2012,63 @@ mod tests {
         assert!(near(contrast(LIGHT.on_accent, LIGHT.accent), 5.03));
     }
 
+    /// Relatorio 7.4: os valores de cada escala, em ordem.
+    #[test]
+    fn escalas_batem_com_o_relatorio() {
+        use space::*;
+        assert_eq!(
+            [XS, S, M, L, XL, XXL, XXXL, HUGE, GIANT],
+            [4.0, 8.0, 12.0, 16.0, 20.0, 24.0, 32.0, 40.0, 56.0]
+        );
+        assert_eq!(
+            [BETWEEN_CARDS, space::CARD, DIALOG, PAGE],
+            [16.0, 20.0, 24.0, 32.0]
+        );
+        assert_eq!(
+            [
+                radius::BAR,
+                radius::INSET,
+                radius::CONTROL,
+                radius::CARD,
+                radius::DIALOG,
+                radius::PILL
+            ],
+            [4.0, 6.0, 8.0, 8.0, 12.0, 999.0]
+        );
+        assert_eq!(
+            [
+                size::CTRL_S,
+                size::CTRL_M,
+                size::CTRL_L,
+                size::ROW,
+                size::ROW_RICH,
+                size::BORDER,
+                size::FOCUS_BORDER
+            ],
+            [28.0, 36.0, 44.0, 44.0, 52.0, 1.0, 2.0]
+        );
+        use type_scale as ty;
+        assert_eq!(
+            [
+                ty::MICRO,
+                ty::META,
+                ty::LABEL,
+                ty::BODY,
+                ty::SUPPORT,
+                ty::SECTION,
+                ty::VALUE_S,
+                ty::LEAD,
+                ty::VALUE_M,
+                ty::PAGE,
+                ty::VALUE_L,
+                ty::VALUE_XL
+            ],
+            [
+                11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 24.0, 30.0, 36.0, 44.0
+            ]
+        );
+    }
+
     #[test]
     fn tamanhos_de_botao_seguem_a_escala() {
         assert_eq!(
@@ -1911,7 +2078,8 @@ mod tests {
         assert_eq!(SIZES.map(ButtonSize::height), [28.0, 36.0, 44.0]);
         assert_eq!(ButtonSize::Compact.radius(), radius::INSET);
         assert_eq!(ButtonSize::Regular.radius(), radius::CONTROL);
-        assert_eq!(ButtonSize::Regular.text_size(), type_scale::LABEL);
+        assert_eq!(SIZES.map(ButtonSize::text_size), [13.0, 13.0, 14.0]);
+        assert_eq!(SIZES.map(ButtonSize::padding_x), [12.0, 16.0, 20.0]);
     }
 
     /// Relatorio 7.3, pares de componente que as primitivas da Fase 7 vao desenhar: banner (tom
@@ -1976,8 +2144,8 @@ mod tests {
                 ("lateral", t.side()),
                 ("surface", t.surface),
                 ("surface_2", t.surface_2),
-                ("hover", mix(t.surface, t.text, 0.04)),
-                ("pressionado", mix(t.surface, t.text, 0.08)),
+                ("hover", composite(t.state(false), t.surface)),
+                ("pressionado", composite(t.state(true), t.surface)),
             ];
             let texts = [
                 ("fg", t.text),
@@ -2001,7 +2169,7 @@ mod tests {
         assert!(contrast(DARK.text_disabled(), DARK.surface) < 4.5);
         assert!(contrast(LIGHT.text_disabled(), LIGHT.surface_2) < 4.5);
         assert!(contrast(LIGHT.accent, LIGHT.surface_2) < 4.5);
-        assert!(contrast(LIGHT.accent, mix(LIGHT.surface, LIGHT.text, 0.08)) < 4.5);
+        assert!(contrast(LIGHT.accent, composite(LIGHT.state(true), LIGHT.surface)) < 4.5);
         // Fechar da barra de titulo: #f2f2f2 sobre #c42b1c.
         let near = |got: f64, want: f64| (got - want).abs() < 0.01;
         for t in [&DARK, &LIGHT] {

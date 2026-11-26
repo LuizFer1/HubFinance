@@ -1886,6 +1886,58 @@ mod tests {
         assert_eq!(ButtonSize::Regular.text_size(), type_scale::LABEL);
     }
 
+    /// Relatorio 7.3, pares de componente que as primitivas da Fase 7 vao desenhar: banner (tom
+    /// sobre a propria tinta de 10 %, e o corpo em `fg`/`text_soft` sobre a pior tinta), toggle e
+    /// icone de severidade. Texto pede 4,5; borda, botao do toggle e icone pedem 3.
+    #[test]
+    fn pares_novos_dos_componentes_passam_o_piso() {
+        for t in [&DARK, &LIGHT] {
+            let tones = [
+                ("warning", Tone::Warning, t.warning),
+                ("expense", Tone::Expense, t.expense_fg),
+                ("income", Tone::Income, t.income_fg),
+                ("accent", Tone::Accent, t.text_accent()),
+            ];
+            for (fundo, parent) in [("bg", t.bg), ("surface", t.surface)] {
+                for (name, tone, fg) in tones {
+                    let tint = t.tint(tone, parent);
+                    let c = contrast(fg, tint);
+                    assert!(c >= 4.5, "banner {name}/{fundo} {:?}: {c:.2}", t.mode);
+                    for (body, color) in [("fg", t.text), ("text_soft", t.text_soft())] {
+                        let c = contrast(color, tint);
+                        assert!(c >= 4.5, "corpo {body} {name}/{fundo} {:?}: {c:.2}", t.mode);
+                    }
+                }
+            }
+            let text = [
+                ("toggle ligado", t.accent_200, t.accent_800),
+                ("toggle desligado", t.text_muted, t.neutral_900),
+                ("tag neutra", t.text_soft(), t.neutral_800),
+                ("segmento neutro", t.text, t.divider()),
+                ("tag de acento", t.accent_300, t.accent_900),
+            ];
+            for (name, fg, bg) in text {
+                let c = contrast(fg, bg);
+                assert!(c >= 4.5, "{name} {:?}: {c:.2}", t.mode);
+            }
+            let controls = [
+                ("borda do toggle ligado", t.accent, t.surface),
+                ("borda do toggle desligado", t.border_control(), t.surface),
+                ("icone expense", t.expense, t.surface),
+                ("icone warning", t.warning, t.surface),
+                ("icone income", t.income, t.surface),
+            ];
+            for (name, fg, bg) in controls {
+                let c = contrast(fg, bg);
+                assert!(c >= 3.0, "{name} {:?}: {c:.2}", t.mode);
+            }
+        }
+        // A tabela 7.3 mede o toggle ligado em 6,72 e 7,76.
+        let near = |got: f64, want: f64| (got - want).abs() < 0.01;
+        assert!(near(contrast(DARK.accent_200, DARK.accent_800), 6.72));
+        assert!(near(contrast(LIGHT.accent_200, LIGHT.accent_800), 7.76));
+    }
+
     #[test]
     fn token_segue_o_modo() {
         assert_eq!(DARK.token("fuchsia"), Color::from_rgb8(0xe0, 0x93, 0xcf));

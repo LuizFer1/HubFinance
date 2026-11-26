@@ -1,6 +1,6 @@
 //! Onde a chave do OpenRouter mora. Windows: DPAPI do usuario (`CryptProtectData`), entao o
 //! arquivo copiado para outra conta ou maquina nao abre. Outros sistemas: texto puro (so o dono
-//! le, `0600` em Unix) e o painel avisa. A chave nunca vai para log, `assistant.json` nem
+//! le, `0600` em Unix) e o dialogo avisa. A chave nunca vai para log, `assistant.json` nem
 //! `assistant.db`.
 
 use std::path::{Path, PathBuf};
@@ -13,7 +13,7 @@ pub trait SecretStore: Send {
     fn load(&self) -> std::io::Result<Option<String>>;
     fn save(&self, secret: &str) -> std::io::Result<()>;
     fn clear(&self) -> std::io::Result<()>;
-    /// `false` fora do Windows: o painel mostra o aviso de texto puro.
+    /// `false` fora do Windows: o dialogo mostra o aviso de texto puro.
     fn encrypted(&self) -> bool;
 }
 

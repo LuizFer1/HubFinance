@@ -275,7 +275,7 @@ pub struct App {
     pub(super) autostart_pref: Option<bool>,
     /// A ultima troca da opcao falhou no sistema: a linha em Ajustes avisa.
     pub(super) autostart_failed: bool,
-    /// "Ocultar valores" do Dashboard, lembrado no `ui.json` como o tema.
+    /// "Ocultar valores" (todas as telas de dados), lembrado no `ui.json` como o tema.
     pub(super) hide_values: bool,
     /// Texto digitado no chat da Analise.
     pub(super) chat_input: String,
@@ -334,7 +334,7 @@ pub enum Message {
     NextMonth,
     /// Seletor Pessoal | Comercial.
     SelectBook(Book),
-    /// Olho do cabecalho do Dashboard: "Ocultar valores" / "Mostrar valores".
+    /// Olho do cabecalho (e Ctrl+H): "Ocultar valores" / "Mostrar valores".
     ToggleHideValues,
     /// "Reduzir movimento" de Ajustes.
     ToggleReduceMotion,

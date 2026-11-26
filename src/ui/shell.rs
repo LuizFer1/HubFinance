@@ -516,7 +516,7 @@ pub(super) fn opening(app: &App) -> Element<'_, Message> {
 }
 
 /// "Conectar um celular" dos estados vazios, so quando nenhum aparelho esta pareado: sem isso o
-/// primeiro uso caia no Dashboard sem caminho para a Conexao. So navega (a Aparelhos, com o
+/// primeiro uso caia no Resumo sem caminho para Aparelhos. So navega (a Aparelhos, com o
 /// fluxo de pareamento aberto); o hub nunca cria dado.
 /// Com aparelho pareado o vazio e "aguardando sync" (ou filtro), e o botao nao ajudaria.
 pub(super) fn connect_phone_button(app: &App) -> Option<Element<'_, Message>> {
@@ -971,7 +971,7 @@ fn hide_values_button(app: &App) -> Element<'_, Message> {
 }
 
 /// Seletor de conta. So aparece com uma linha `books` viva de conta comercial (derivado das
-/// linhas, como no app) e fora da Conexao e de Ajustes, que sao do hub e nao de uma conta.
+/// linhas, como no app) e fora de Aparelhos e de Ajustes, que sao do hub e nao de uma conta.
 pub(super) fn book_switch(app: &App) -> Option<Element<'_, Message>> {
     let of_the_hub = matches!(app.screen, Screen::Connection | Screen::Settings);
     if of_the_hub || !app.snapshot.dashboard.has_business_book() {
@@ -1273,7 +1273,7 @@ mod tests {
         assert_eq!(app.dashboard.header.month_label, "Set 2026");
         app.screen = Screen::Transactions;
         assert_eq!(partial_chip(&app), Some("Parcial · até 24 set"));
-        // Reservas e Conexao nao tem seletor de mes.
+        // Reservas e Aparelhos nao tem seletor de mes.
         app.screen = Screen::Reserves;
         assert_eq!(partial_chip(&app), None);
         app.screen = Screen::Connection;

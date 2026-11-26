@@ -1514,7 +1514,7 @@ mod tests {
         }
     }
 
-    /// Pares texto/fundo de Conexao, Lancamentos, Reservas, dialogo de remocao, toasts e menus
+    /// Pares texto/fundo de Aparelhos, Lancamentos, Reservas, dialogo de remocao, toasts e menus
     /// (H4c), nos dois temas.
     #[test]
     fn textos_das_outras_telas_passam_4_5() {

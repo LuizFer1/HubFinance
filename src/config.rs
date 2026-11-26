@@ -134,9 +134,9 @@ struct PrefsFile {
     /// para o `ui.json` da 1.0.0 continuar identico ate alguem mexer na opcao.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     autostart: Option<bool>,
-    /// "Ocultar valores" do Dashboard (spec 7.4): local a este PC, nunca sincronizado, como o
-    /// tema. Desligado nao vai para o arquivo, pelo mesmo motivo do `autostart`: o `ui.json`
-    /// de quem nunca usou o olho fica igual ao de antes.
+    /// "Ocultar valores" de todas as telas de dados (spec 7.4): local a este PC, nunca
+    /// sincronizado, como o tema. Desligado nao vai para o arquivo, pelo mesmo motivo do
+    /// `autostart`: o `ui.json` de quem nunca usou o olho fica igual ao de antes.
     #[serde(default, skip_serializing_if = "is_false")]
     hide_values: bool,
     /// "Reduzir movimento": desligado nao vai para o arquivo, e um hub antigo ignora o campo.

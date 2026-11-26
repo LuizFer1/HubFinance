@@ -1,4 +1,4 @@
-//! Pessoa x aparelho, para "Usuarios conectados" na tela Conexao.
+//! Pessoa x aparelho, para "Conectados" na tela Aparelhos.
 //!
 //! O aparelho vem da tabela `devices` do hub; a pessoa, da linha `users[user_id]` que o app
 //! sincroniza. Os dois so se encontram aqui, e so para exibicao.

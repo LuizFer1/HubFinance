@@ -1779,6 +1779,7 @@ mod tests {
 
     use super::*;
     use crate::dashboard::dataset::{BOOKS, PAYMENT_METHODS, RESERVES, TRANSACTIONS};
+    use crate::dashboard::money::leaks;
     use crate::dashboard::{
         GRAFITE_TODAY, GrafiteRow, dataset_from, dataset_of, fixtures_grafite, grafite_rows,
     };
@@ -1824,25 +1825,6 @@ mod tests {
 
     fn close(a: f32, b: f64) -> bool {
         (f64::from(a) - b).abs() < 0.001
-    }
-
-    /// `\d{1,3}(\.\d{3})*,\d{2}|R\$\s?\d` (a regex de `privacy.test.tsx`), sem crate de regex:
-    /// a primeira alternativa casa sempre que ha digito, virgula e dois digitos.
-    fn leaks(text: &str) -> Option<String> {
-        let chars: Vec<char> = text.chars().collect();
-        for (i, w) in chars.windows(4).enumerate() {
-            let cents = w[0].is_ascii_digit()
-                && w[1] == ','
-                && w[2].is_ascii_digit()
-                && w[3].is_ascii_digit();
-            let currency = w[0] == 'R'
-                && w[1] == '$'
-                && (w[2].is_ascii_digit() || (w[2].is_whitespace() && w[3].is_ascii_digit()));
-            if cents || currency {
-                return Some(chars[i.saturating_sub(30)..(i + 4)].iter().collect());
-            }
-        }
-        None
     }
 
     /// A fixture com a linha `id` trocada por `patch` (campos de cima sobrescritos).

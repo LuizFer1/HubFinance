@@ -157,6 +157,19 @@ impl Money {
         self.or_mask(|| signed_brl_plus(minor))
     }
 
+    /// `+R$ 1,00` com o valor absoluto, inclusive no zero: entrada de dinheiro (deposito,
+    /// receitas do mes). Oculto nao mostra o sinal, como `signed`.
+    pub fn plus(self, minor: i64) -> String {
+        self.or_mask(|| format!("+{}", format_brl(minor)))
+    }
+
+    /// `−R$ 1,00` com o valor absoluto, inclusive no zero: saida de dinheiro (despesa,
+    /// retirada). Diferente de `signed(-x)`, que no zero perderia o `−` que a coluna sempre
+    /// mostrou. Oculto nao mostra o sinal.
+    pub fn minus(self, minor: i64) -> String {
+        self.or_mask(|| format!("{MINUS}{}", format_brl(minor)))
+    }
+
     /// `whole_brl`: reais inteiros, para estimativas.
     pub fn whole(self, minor: i64) -> String {
         self.or_mask(|| whole_brl(minor))
@@ -223,9 +236,41 @@ impl Money {
     }
 }
 
+/// Primeiro trecho de `text` com cara de dinheiro, com 30 caracteres de contexto; `None` se
+/// nao ha. E `\d{1,3}(\.\d{3})*,\d{2}|R\$\s?\d` (a regex de `privacy.test.tsx` do app) sem crate
+/// de regex: a primeira alternativa casa sempre que ha digito, virgula e dois digitos. Mora aqui
+/// para os testes de "Ocultar valores" de todas as telas cobrarem a mesma regra.
+#[cfg(test)]
+pub(crate) fn leaks(text: &str) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    for (i, w) in chars.windows(4).enumerate() {
+        let cents =
+            w[0].is_ascii_digit() && w[1] == ',' && w[2].is_ascii_digit() && w[3].is_ascii_digit();
+        let currency = w[0] == 'R'
+            && w[1] == '$'
+            && (w[2].is_ascii_digit() || (w[2].is_whitespace() && w[3].is_ascii_digit()));
+        if cents || currency {
+            return Some(chars[i.saturating_sub(30)..(i + 4)].iter().collect());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mais_e_menos_levam_o_sinal_ate_no_zero_e_somem_ocultos() {
+        let m = Money::new(false);
+        assert_eq!(m.plus(10_000), "+R$ 100,00");
+        assert_eq!(m.plus(0), "+R$ 0,00");
+        assert_eq!(m.minus(10_000), "\u{2212}R$ 100,00");
+        assert_eq!(m.minus(0), "\u{2212}R$ 0,00");
+        let h = Money::new(true);
+        assert_eq!(h.plus(10_000), MASK);
+        assert_eq!(h.minus(10_000), MASK);
+    }
 
     #[test]
     fn formatador_visivel_repete_as_funcoes_soltas() {

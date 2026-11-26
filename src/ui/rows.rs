@@ -7,7 +7,7 @@ use iced::{Alignment, Color, Element, Length};
 
 use super::app::{App, Message};
 use super::theme::Tokens;
-use super::widgets::RowHover;
+use super::widgets::{RowEdge, RowHover};
 use super::{fonts, icons, widgets};
 use crate::dashboard::contract::Kind;
 use crate::dashboard::list::{ListRow, RowAuthor};
@@ -97,14 +97,15 @@ pub(super) fn value_cell<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Mes
 }
 
 /// Linha de lista com o hover da tela (`app.hover_row`), sobre `widgets::list_row`. Altura por
-/// parametro: 52 nos lancamentos e nas conversas, 56 nas movimentacoes de reserva.
+/// parametro: 52 nos lancamentos e nas conversas, 56 nas movimentacoes de reserva, livre
+/// (`None`) na pessoa conectada, que cresce com as linhas de meta.
 pub(super) fn hover_row<'a>(
     app: &'a App,
     id: &str,
     content: impl Into<Element<'a, Message>>,
     padding: [u16; 2],
-    radius: f32,
-    height: f32,
+    edge: RowEdge,
+    height: Option<f32>,
 ) -> Element<'a, Message> {
     widgets::list_row(
         app.tokens,
@@ -114,8 +115,8 @@ pub(super) fn hover_row<'a>(
             enter: Message::HoverRow(id.to_string()),
             exit: Message::UnhoverRow(id.to_string()),
         },
-        Some(height),
+        height,
         padding,
-        radius,
+        edge,
     )
 }

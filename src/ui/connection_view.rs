@@ -13,9 +13,9 @@ use iced::widget::{Space, column, container, qr_code, rich_text, row, span, text
 use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
 use super::app::{App, CopyTarget, Message};
-use super::theme::{self, ButtonKind, ButtonSize, Tokens, radius};
-use super::widgets::{RowHover, SegmentedVariant};
-use super::{fonts, icons, measure, shell, time, widgets};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens};
+use super::widgets::{RowEdge, SegmentedVariant};
+use super::{fonts, icons, measure, rows, shell, time, widgets};
 use crate::config;
 use crate::dashboard::people::{Person, presence};
 use crate::dashboard::periods::paired_label;
@@ -626,17 +626,13 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
     .spacing(14)
     .align_y(Alignment::Center);
 
-    widgets::list_row(
-        t,
+    rows::hover_row(
+        app,
+        &person.device_id,
         content,
-        RowHover {
-            hovered: app.hover_row.as_deref() == Some(person.device_id.as_str()),
-            enter: Message::HoverRow(person.device_id.clone()),
-            exit: Message::UnhoverRow(person.device_id.clone()),
-        },
-        None,
         [10, 8],
-        radius::CONTROL,
+        RowEdge::Inset,
+        None,
     )
 }
 

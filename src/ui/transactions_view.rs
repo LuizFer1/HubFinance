@@ -13,7 +13,7 @@ use iced::{Alignment, Color, Element, Length, Padding};
 use super::app::{App, Message};
 use super::rows::{author_cell, category_tile, hover_row, value_cell};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, alpha, mix, size};
-use super::widgets::{ChipShape, SegmentedVariant, TagTone};
+use super::widgets::{ChipShape, RowEdge, SegmentedVariant, TagTone};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::list::{
     ALL_CATEGORIES_COLOR, CategoryOption, Filters, ListRow, NONE_KEY, TypeFilter,
@@ -452,7 +452,14 @@ fn table_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
         payment.into(),
         value_cell(t, r),
     ]);
-    hover_row(app, &r.id, content, [0, 20], 0.0, size::ROW_RICH)
+    hover_row(
+        app,
+        &r.id,
+        content,
+        [0, 20],
+        RowEdge::Flush,
+        Some(size::ROW_RICH),
+    )
 }
 
 // ---- vazio ----

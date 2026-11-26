@@ -14,7 +14,7 @@ use super::charts::{
 };
 use super::rows::{author_cell_of, hover_row, kicker_with_icon};
 use super::theme::{self, Tokens, type_scale};
-use super::widgets::{Bar, StatSize, TagTone};
+use super::widgets::{Bar, RowEdge, StatSize, TagTone};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::contract::MovementKind;
 use crate::dashboard::money::{format_brl, money_parts, whole_brl};
@@ -869,7 +869,14 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
     ]
     .spacing(14)
     .align_y(Alignment::Center);
-    hover_row(app, &m.id, content, [0, 8], 8.0, MOVEMENT_ROW_HEIGHT)
+    hover_row(
+        app,
+        &m.id,
+        content,
+        [0, 8],
+        RowEdge::Inset,
+        Some(MOVEMENT_ROW_HEIGHT),
+    )
 }
 
 // ---- estado vazio ----

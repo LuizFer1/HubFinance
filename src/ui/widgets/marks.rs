@@ -366,8 +366,8 @@ fn compact_colors(t: &Tokens, tone: CompactTone) -> (Color, Color) {
 }
 
 /// Tag compacta do Resumo: 11 Regular, sem altura fixa (o respiro faz a altura: 18 px com
-/// `[2, 8]`, 20 com `[3, 9]` no "hoje"). Fica fora da regua da `tag` pelo mesmo motivo do
-/// `partial_tag`: o Resumo do dono nao muda de tamanho nem de peso na Fase 7.
+/// `[2, 8]`, 20 com `[3, 9]` no "hoje"). Fica fora da regua da `tag` de proposito: o Resumo do
+/// dono nao muda de tamanho nem de peso na Fase 7.
 pub fn tag_compact<'a, M: 'a>(
     t: &'static Tokens,
     tone: CompactTone,
@@ -384,21 +384,6 @@ pub fn tag_compact<'a, M: 'a>(
     .padding(padding)
     .style(theme::fill(bg, radius::PILL))
     .into()
-}
-
-/// Chip "Parcial · até 19 nov" do cabecalho (texto pronto do modelo): a pilula de acento maior,
-/// 26 px com 12 Regular, ao lado dos controles de 36 do cabecalho. Fica fora da regua da tag de
-/// proposito: e o Resumo do dono, que a Fase 7 nao muda de tamanho.
-pub fn partial_tag<'a, M: 'a>(t: &'static Tokens, label: &str) -> Element<'a, M> {
-    pill(
-        text(label.to_string())
-            .size(type_scale::META)
-            .line_height(1.0)
-            .color(t.text_accent()),
-        t.accent_900,
-        26.0,
-        space::M,
-    )
 }
 
 #[cfg(test)]
@@ -535,7 +520,6 @@ mod tests {
                 let _: Element<'_, ()> = tag_icon(t, tone, icons::REPEAT, "Mensal");
             }
             let _: Element<'_, ()> = color_tag(t, "magenta");
-            let _: Element<'_, ()> = partial_tag(t, "Parcial · até 19 nov");
             for size in [28.0, 30.0, 32.0, 36.0] {
                 let _: Element<'_, ()> = tile(t, icons::ARROW_DOWN, t.accent_300, t.accent, size);
                 let _: Element<'_, ()> = token_tile(t, icons::REPEAT, "slate", size);

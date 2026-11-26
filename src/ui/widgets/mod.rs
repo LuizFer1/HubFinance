@@ -21,8 +21,8 @@ pub use controls::{
     segmented, toggle,
 };
 pub use marks::{
-    Bar, CompactTone, TagTone, bar, color_tag, neutral_tile, partial_tag, tag, tag_compact,
-    tag_icon, tile, token_tile,
+    Bar, CompactTone, TagTone, bar, color_tag, neutral_tile, tag, tag_compact, tag_icon, tile,
+    token_tile,
 };
 pub use surface::{
     banner, card, dialog, divider, empty_copy, empty_icon, empty_state, inset, section_heading,

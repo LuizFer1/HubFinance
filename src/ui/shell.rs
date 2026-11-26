@@ -588,18 +588,23 @@ fn content(app: &App) -> Element<'_, Message> {
             Screen::Settings => settings_view::view(app),
         }
     };
-    let mut page = column![header(app)].spacing(14);
     // O aviso vale para qualquer tela: na primeira abertura quem esta no dashboard tambem ve.
+    // Fica no topo da rolagem, e nao no cabecalho fixo: e um aviso de uma vez, e preso em cima
+    // ele comeria a altura de toda tela ate a pessoa decidir.
+    let mut page = column![].spacing(14);
     if let Some(banner) = remove_view::orphan_banner(app) {
         page = page.push(banner);
     }
     let page = page.push(body);
     let inner = container(page).width(Length::Fill).padding(Padding {
-        top: 28.0,
+        top: 20.0,
         right: 32.0,
         bottom: 40.0,
         left: 32.0,
     });
+    // So o conteudo rola (B7): titulo, conta, mes e olho ficam a vista enquanto a pessoa le a
+    // tela. A rolagem ocupa a largura toda, com o respiro dentro dela, para a barra ficar na
+    // borda da janela e a roda do mouse valer tambem sobre as margens.
     let scroll = scrollable(inner)
         .id(CONTENT_SCROLL)
         .direction(scrollable::Direction::Vertical(
@@ -613,7 +618,7 @@ fn content(app: &App) -> Element<'_, Message> {
         .height(Length::Fill);
     // Sem fundo proprio: o fundo e o do container de `frame`, que cobre lateral e conteudo
     // (um fundo aqui esconderia o gradiente atras da rolagem).
-    container(scroll)
+    container(column![header(app), widgets::divider(t), scroll])
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -627,9 +632,10 @@ pub(super) fn content_width(app: &App) -> f32 {
 }
 
 /// Abaixo desta largura util os controles do cabecalho descem para baixo do titulo (o
-/// `flex-wrap` do design). Com chip, Pessoal | Comercial, mes e olho eles somam ~560 px, e o
+/// `flex-wrap` do design). Com o chip, Pessoal | Comercial, mes e olho somavam ~560 px, e o
 /// titulo de 30 px precisa de ~240 ao lado; na janela minima (1024) a linha unica espremia o
-/// titulo em duas linhas.
+/// titulo em duas linhas. O chip virou a linha de baixo do titulo, mas o limite fica o mesmo
+/// (8.1: "os controles descem, como hoje").
 const HEADER_WRAP_WIDTH: f32 = 900.0;
 
 /// Controles do cabecalho na mesma linha do titulo?
@@ -637,15 +643,13 @@ pub(super) fn header_inline(width: f32) -> bool {
     width >= HEADER_WRAP_WIDTH
 }
 
-/// Cabecalho: titulo e subtitulo a esquerda; a direita, conforme a tela, o chip "Parcial", o
-/// seletor de conta, o de mes e (so no Dashboard) o olho de ocultar valores.
+/// Cabecalho fixo, fora da rolagem: titulo 30 e uma linha 13 `text_muted` a esquerda
+/// (`header_line`); a direita, conforme a tela, o seletor de conta, o de mes e o olho de
+/// ocultar valores. Abaixo de `HEADER_WRAP_WIDTH` os controles descem para baixo do titulo.
 fn header(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
-    let (title, subtitle) = titles(app);
+    let (title, line) = header_line(app);
     let mut controls = row![].spacing(10).align_y(Alignment::Center);
-    if let Some(label) = partial_chip(app) {
-        controls = controls.push(widgets::partial_tag(t, label));
-    }
     if let Some(switch) = book_switch(app) {
         controls = controls.push(switch);
     }
@@ -665,8 +669,8 @@ fn header(app: &App) -> Element<'_, Message> {
     if matches!(app.screen, Screen::Dashboard | Screen::Analysis) {
         controls = controls.push(hide_values_button(app));
     }
-    let title = widgets::page_title(t, title, &subtitle);
-    let line: Element<'_, Message> = if header_inline(content_width(app)) {
+    let title = widgets::page_title(t, title, &line);
+    let head: Element<'_, Message> = if header_inline(content_width(app)) {
         row![container(title).width(Length::Fill), controls]
             .spacing(16)
             .align_y(Alignment::Center)
@@ -674,16 +678,31 @@ fn header(app: &App) -> Element<'_, Message> {
     } else {
         column![title, controls].spacing(16).into()
     };
-    container(line)
+    container(head)
+        .width(Length::Fill)
         .padding(Padding {
-            bottom: 4.0,
-            ..Padding::ZERO
+            top: 28.0,
+            right: 32.0,
+            bottom: 18.0,
+            left: 32.0,
         })
         .into()
 }
 
+/// Titulo e a linha de baixo do cabecalho. Onde ha "Parcial" (mes corrente com dados, nas
+/// telas com seletor de mes), a linha e o "Parcial · até 24 set" do modelo, no lugar do
+/// subtitulo: o chip ao lado dos controles virou essa linha (8.1). Nas outras telas, ou em
+/// mes fechado, o subtitulo de `titles`.
+pub(super) fn header_line(app: &App) -> (&str, String) {
+    let (title, subtitle) = titles(app);
+    match partial_chip(app) {
+        Some(partial) => (title, partial.to_string()),
+        None => (title, subtitle),
+    }
+}
+
 /// "Parcial · até 19 nov": so nas telas com seletor de mes, no mes corrente e com dados (o
-/// modelo ja decide as duas ultimas).
+/// modelo ja decide as duas ultimas). Vira a linha do cabecalho (`header_line`).
 pub(super) fn partial_chip(app: &App) -> Option<&str> {
     matches!(app.screen, Screen::Dashboard | Screen::Transactions)
         .then_some(app.dashboard.header.partial.as_deref())
@@ -1145,6 +1164,47 @@ mod tests {
         app.screen = Screen::Dashboard;
         let _ = super::super::app::update(&mut app, Message::SelectScreen(Screen::Connection));
         assert_eq!(titles(&app).0, "Aparelhos");
+    }
+
+    #[test]
+    fn parcial_vira_a_linha_do_cabecalho() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        assert_eq!(
+            header_line(&app),
+            ("Resumo da casa", "Parcial · até 24 set".to_string())
+        );
+        app.screen = Screen::Transactions;
+        assert_eq!(
+            header_line(&app),
+            ("Lançamentos", "Parcial · até 24 set".to_string())
+        );
+        // Mes fechado: volta o subtitulo.
+        let _ = super::super::app::update(&mut app, Message::PrevMonth);
+        assert_eq!(header_line(&app), titles(&app));
+        // Telas sem seletor de mes: sempre o subtitulo.
+        for screen in [
+            Screen::Reserves,
+            Screen::Analysis,
+            Screen::Connection,
+            Screen::Settings,
+        ] {
+            app.screen = screen;
+            assert_eq!(header_line(&app), titles(&app));
+        }
+    }
+
+    #[test]
+    fn cabecalho_fixo_monta_nas_duas_larguras() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        for width in [1024.0, 1440.0] {
+            app.window_size.width = width;
+            for screen in nav_entries(&app).map(|e| e.screen) {
+                app.screen = screen;
+                let _ = root(&app);
+            }
+        }
     }
 
     #[test]

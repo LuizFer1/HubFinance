@@ -15,7 +15,7 @@ use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, radius, size};
 use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
 use super::{fonts, icons, rows, shell, time, widgets};
 use crate::advisor::{Finding, Severity};
-use crate::assistant::prompt::Role;
+use crate::assistant::prompt::{OPENING_REQUEST, Role};
 use crate::assistant::settings::{ProviderChoice, Settings};
 use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
 use crate::dashboard::money::{MASK, MASK_DIGITS, MINUS, group_thousands};
@@ -436,19 +436,17 @@ fn tokens_total_label(open: &OpenConversation) -> String {
     }
 }
 
-/// "Cancelar" na previa da nuvem. Sem nenhuma resposta do assistente nada nunca foi enviado e a
-/// conversa so tem a abertura automatica: fecha-la a deixaria no historico como lixo, entao ela
-/// some. Com resposta, ja ha o que guardar e so fecha.
-pub(super) fn cancel_preview_message(open: &OpenConversation) -> Message {
-    if open
-        .messages
-        .iter()
-        .any(|m| m.role == MessageRole::Assistant)
-    {
-        Message::CloseConversation
-    } else {
-        Message::DeleteConversation(open.id.clone())
-    }
+/// "Cancelar" na previa da nuvem. So apaga a conversa que e exatamente a abertura automatica
+/// recem-criada (uma pergunta, a `OPENING_REQUEST`) e sem nada chegando: nada nunca foi enviado
+/// e guarda-la deixaria lixo no historico. Qualquer outra (reaberta do historico com erro, com
+/// resposta, com pergunta da pessoa, ou com uma resposta local ainda chegando) tem o que
+/// guardar: o "Cancelar" so fecha a previa. Esc e o scrim nunca apagam (`ClosePreview`).
+pub(super) fn cancel_preview_message(open: &OpenConversation, busy: bool) -> Option<Message> {
+    let only_opening = matches!(
+        open.messages.as_slice(),
+        [m] if m.role == MessageRole::User && m.content == OPENING_REQUEST
+    );
+    (only_opening && !busy).then(|| Message::DeleteConversation(open.id.clone()))
 }
 
 /// Aviso acima da previa com "Ocultar valores" ligado: a tela mascara, o envio nao.
@@ -1021,7 +1019,7 @@ pub(super) fn shown_consent(app: &App) -> Option<&OpenConversation> {
 /// Dialogo "Enviar para a nuvem?" (8.5): o envelope **desta conversa** e as mensagens que vao
 /// no pedido (o que de fato sai; o `Resend` do nucleo le o mesmo texto), modelo, retencao e o
 /// aviso de valores ocultos. Na tela o texto segue o "Ocultar valores"; o que sai nunca e
-/// mascarado. Esc, o scrim e "Cancelar" cancelam do mesmo jeito.
+/// mascarado. Esc e o scrim so fecham; so o "Cancelar" pode apagar a abertura recem-criada.
 pub(super) fn consent_dialog(app: &App) -> Option<Element<'_, Message>> {
     let open = shown_consent(app)?;
     let t = app.tokens;
@@ -1101,7 +1099,7 @@ pub(super) fn consent_dialog(app: &App) -> Option<Element<'_, Message>> {
         app.window_size.width,
         640.0,
         Some(height),
-        Message::CancelPreview,
+        Message::ClosePreview,
     ))
 }
 
@@ -1561,32 +1559,33 @@ mod tests {
 
     #[test]
     fn cancelar_a_previa_apaga_a_conversa_que_nunca_foi_respondida() {
-        let fresh = conversation_with(vec![msg(MessageRole::User, None)]);
+        let opening = || {
+            let mut m = msg(MessageRole::User, None);
+            m.content = OPENING_REQUEST.into();
+            m
+        };
+        // So a abertura recem-criada, sem nada chegando, e apagada.
+        let fresh = conversation_with(vec![opening()]);
         assert!(matches!(
-            cancel_preview_message(&fresh),
-            Message::DeleteConversation(id) if id == "C1"
+            cancel_preview_message(&fresh, false),
+            Some(Message::DeleteConversation(id)) if id == "C1"
         ));
-        // Um erro nao e resposta: nada saiu.
-        let failed = conversation_with(vec![
-            msg(MessageRole::User, None),
-            msg(MessageRole::Error, None),
-        ]);
-        assert!(matches!(
-            cancel_preview_message(&failed),
-            Message::DeleteConversation(_)
-        ));
+        assert!(cancel_preview_message(&fresh, true).is_none());
+        // Conversa local com erro, reaberta do historico com a nuvem configurada: tem o que
+        // guardar, o "Cancelar" so fecha a previa.
+        let failed = conversation_with(vec![opening(), msg(MessageRole::Error, None)]);
+        assert!(cancel_preview_message(&failed, false).is_none());
+        // Pergunta da propria pessoa (nao a abertura) tambem fica.
+        let asked = conversation_with(vec![msg(MessageRole::User, None)]);
+        assert!(cancel_preview_message(&asked, false).is_none());
         let answered = conversation_with(vec![
-            msg(MessageRole::User, None),
+            opening(),
             msg(MessageRole::Assistant, None),
             msg(MessageRole::User, None),
         ]);
-        assert!(matches!(
-            cancel_preview_message(&answered),
-            Message::CloseConversation
-        ));
+        assert!(cancel_preview_message(&answered, false).is_none());
 
-        // Pela tela: o "Cancelar" do dialogo (o mesmo do Esc e do scrim) segue a regra acima e
-        // fecha a previa; o pe da conversa deixa de ser o campo de pergunta enquanto espera.
+        // Pela tela.
         use crate::assistant::settings::{ProviderChoice, Settings};
         use crate::hub::{AssistantCommand, Command};
         use crate::ui::app::tests::app_with_fixtures;
@@ -1600,18 +1599,45 @@ mod tests {
         };
         cloud.cloud.enabled = true;
         app.snapshot.assistant.settings = cloud;
-        let mut answered = answered;
-        answered.book = app.book;
-        app.snapshot.assistant.open = Some(answered);
+        let mut failed = failed;
+        failed.book = app.book;
+        app.snapshot.assistant.open = Some(failed);
         app.consent_preview = Some("C1".into());
         assert!(consent_dialog(&app).is_some());
         let _ = shell::root(&app);
         while rx.try_recv().is_ok() {}
+        // Esc/scrim e "Cancelar" so fecham a previa: nada sai para o nucleo.
+        let _ = update(&mut app, Message::ClosePreview);
+        assert!(app.consent_preview.is_none());
+        app.consent_preview = Some("C1".into());
         let _ = update(&mut app, Message::CancelPreview);
         assert!(app.consent_preview.is_none());
+        assert!(
+            rx.try_recv().is_err(),
+            "a conversa com erro nao foi apagada"
+        );
+
+        // Resposta local chegando e a troca para a nuvem: nao ha o que aprovar ainda, a previa
+        // nao aparece e o "Cancelar" nao apaga nada.
+        let mut streaming = fresh;
+        streaming.book = app.book;
+        app.snapshot.assistant.open = Some(streaming);
+        app.snapshot.assistant.busy = true;
+        app.consent_preview = Some("C1".into());
+        assert!(crate::ui::app::awaiting_cloud_consent(&app).is_none());
+        assert!(consent_dialog(&app).is_none());
+        let _ = update(&mut app, Message::CancelPreview);
+        assert!(
+            rx.try_recv().is_err(),
+            "a conversa com resposta chegando ficou"
+        );
+        // Terminada a resposta, a abertura sozinha e apagada pelo "Cancelar".
+        app.snapshot.assistant.busy = false;
+        app.consent_preview = Some("C1".into());
+        let _ = update(&mut app, Message::CancelPreview);
         assert!(matches!(
             rx.try_recv(),
-            Ok(Command::Assistant(AssistantCommand::Close))
+            Ok(Command::Assistant(AssistantCommand::Delete(id))) if id == "C1"
         ));
     }
 

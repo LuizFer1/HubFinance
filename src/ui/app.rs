@@ -441,8 +441,10 @@ pub enum Message {
     RemoveKey,
     /// "Ver previa e enviar" do pe da conversa que espera aprovacao.
     ShowCloudPreview,
-    /// "Cancelar", Esc ou scrim da previa.
+    /// "Cancelar" da previa: apaga so a abertura recem-criada; o resto so fecha.
     CancelPreview,
+    /// Esc ou scrim da previa: so fecha, nunca apaga.
+    ClosePreview,
     /// "Enviar ao OpenRouter" da previa: a pessoa viu o que sai e libera o envio desta conversa.
     ApproveCloudSend,
     /// "Conectar um celular" (cabecalho de Aparelhos, Resumo e vazios): vai a Aparelhos com o
@@ -1931,15 +1933,22 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::CancelPreview => {
-            // "Cancelar", Esc e o scrim: a conversa que nunca foi respondida some (nada saiu);
-            // a respondida so fecha.
+            // So o "Cancelar": a abertura recem-criada, sem nada saido, some; o resto so fecha
+            // a previa (`cancel_preview_message`).
+            let busy = app.snapshot.assistant.busy;
             let cancel = super::analysis_view::shown_consent(app)
-                .map(super::analysis_view::cancel_preview_message);
+                .and_then(|open| super::analysis_view::cancel_preview_message(open, busy));
             app.consent_preview = None;
             match cancel {
                 Some(message) => update(app, message),
                 None => Task::none(),
             }
+        }
+        Message::ClosePreview => {
+            // Esc e o scrim: um gesto rapido nao apaga nada. A conversa continua esperando,
+            // com "Ver previa e enviar" no pe.
+            app.consent_preview = None;
+            Task::none()
         }
         Message::ApproveCloudSend => {
             // O id vai junto: o nucleo so libera se for a conversa ainda aberta. E so a conversa
@@ -1969,9 +1978,13 @@ const PORT_DIGITS: usize = 5;
 
 /// A conversa aberta que ainda espera a previa da nuvem ser aprovada: o destino e a nuvem e
 /// nada saiu dela. Enquanto isso a tela mostra a previa no lugar do campo de pergunta.
+///
+/// Com resposta chegando (`busy`) nao espera nada: e o modelo local respondendo antes da troca
+/// para a nuvem, e a previa (com o "Cancelar" que apaga) nao pode cair por cima disso.
 pub(super) fn awaiting_cloud_consent(app: &App) -> Option<&OpenConversation> {
     super::analysis_view::open_conversation(app).filter(|o| {
         o.needs_cloud_consent
+            && !app.snapshot.assistant.busy
             && app
                 .snapshot
                 .assistant
@@ -4792,7 +4805,10 @@ pub(super) mod tests {
             id: "C1".into(),
             book,
             envelope: envelope.into(),
-            messages: vec![msg(MessageRole::User, "Resuma")],
+            messages: vec![msg(
+                MessageRole::User,
+                crate::assistant::prompt::OPENING_REQUEST,
+            )],
             needs_cloud_consent: true,
         }
     }
@@ -4979,7 +4995,7 @@ pub(super) mod tests {
                 let _ = super::super::shell::root(&app);
             }
         }
-        // "Cancelar" (e Esc, e o scrim): a conversa sem resposta some e a previa fecha.
+        // "Cancelar": a abertura recem-criada (nada saiu) some e a previa fecha.
         let _ = update(&mut app, Message::CancelPreview);
         assert!(app.consent_preview.is_none());
         assert_eq!(

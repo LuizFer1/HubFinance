@@ -105,8 +105,8 @@ fn escape(app: &App) -> Option<Message> {
     } else if app.envelope_preview.is_some() {
         Some(Message::CloseEnvelope)
     } else if analysis_view::shown_consent(app).is_some() {
-        // Como o "Cancelar": a conversa que nunca foi respondida some (nada saiu).
-        Some(Message::CancelPreview)
+        // So fecha (como o scrim): um Esc nunca apaga a conversa, so o "Cancelar".
+        Some(Message::ClosePreview)
     } else if app.assistant_setup.is_some() {
         // Como o "x": nada e gravado e a chave digitada e esquecida.
         Some(Message::CloseAssistantSetup)
@@ -256,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn esc_na_previa_de_envio_cancela_como_o_botao() {
+    fn esc_na_previa_de_envio_so_fecha() {
         use crate::assistant::settings::{ProviderChoice, Settings};
         use crate::assistant::view::{MessageRole, MessageView, OpenConversation};
         let (mut app, _dir) = app();
@@ -287,7 +287,7 @@ mod tests {
         // Sem a previa aberta, Esc nao faz nada com a conversa.
         assert!(shortcut(&app, &esc()).is_none());
         app.consent_preview = Some("C1".into());
-        assert!(is(shortcut(&app, &esc()), "Some(CancelPreview)"));
+        assert!(is(shortcut(&app, &esc()), "Some(ClosePreview)"));
         assert!(shortcut(&app, &ctrl_digit('2', Code::Digit2)).is_none());
     }
 

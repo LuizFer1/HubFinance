@@ -147,6 +147,42 @@ fn portions(weights: &[f64]) -> Vec<u16> {
         .collect()
 }
 
+/// Cor do passo `index` (0..) com o passo atual `current`: feito em `accent_700`, atual em
+/// `accent`, futuro em `neutral_800`.
+fn step_color(t: &Tokens, index: usize, current: usize) -> Color {
+    match index.cmp(&current) {
+        std::cmp::Ordering::Less => t.accent_700,
+        std::cmp::Ordering::Equal => t.accent,
+        std::cmp::Ordering::Greater => t.neutral_800,
+    }
+}
+
+/// Progresso de um fluxo em passos (dialogo com mais de uma etapa): `total` segmentos de 3 px,
+/// 4 px entre eles, raio de meia altura. `current` comeca em 0.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "sem fluxo em passos ainda: configuracao do assistente, issue 12"
+    )
+)]
+pub fn progress_steps<'a, M: 'a>(
+    t: &'static Tokens,
+    current: usize,
+    total: usize,
+) -> Element<'a, M> {
+    Row::with_children((0..total).map(|i| {
+        container(Space::new())
+            .width(Length::Fill)
+            .height(3)
+            .style(theme::fill(step_color(t, i, current), 1.5))
+            .into()
+    }))
+    .spacing(space::XS)
+    .width(Length::Fill)
+    .into()
+}
+
 /// Tinta do tile: a cor a 16 % sobre a superficie (antes 15, 16 ou 18 % conforme a tela).
 const TILE_TINT: f32 = 0.16;
 
@@ -386,6 +422,18 @@ mod tests {
                 },
                 10.0,
             );
+        }
+    }
+
+    #[test]
+    fn passos_feitos_atual_e_futuros() {
+        for t in [&DARK, &LIGHT] {
+            assert_eq!(step_color(t, 0, 1), t.accent_700);
+            assert_eq!(step_color(t, 1, 1), t.accent);
+            assert_eq!(step_color(t, 2, 1), t.neutral_800);
+            for total in [0, 1, 3] {
+                let _: Element<'_, ()> = progress_steps(t, 1, total);
+            }
         }
     }
 

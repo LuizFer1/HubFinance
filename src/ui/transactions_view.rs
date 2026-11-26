@@ -340,9 +340,10 @@ fn count_word(count: usize) -> &'static str {
 
 /// Largura util a partir da qual cada coluna opcional aparece. Pagamento sai primeiro, depois
 /// Autor (8.3); na janela minima (728 de largura util) as duas ja sairam e a descricao, a
-/// categoria e o valor ficam com o espaco. Com as quatro, a 880 cada coluna de texto curta
-/// ainda tem ~120 px, o bastante para "Cartão de crédito"; abaixo disso o nome sairia cortado.
-const PAYMENT_MIN_WIDTH: f32 = 880.0;
+/// categoria e o valor ficam com o espaco. Com as quatro colunas, a 930 a de Pagamento tem ~126
+/// px (fracao de (930 - 234) / 55); abaixo disso "Cartão de crédito" com o icone saia cortado.
+/// A largura do texto e estimada (o iced nao mede antes do layout): conferir na tela.
+const PAYMENT_MIN_WIDTH: f32 = 930.0;
 const AUTHOR_MIN_WIDTH: f32 = 780.0;
 
 /// Quais colunas opcionais a tabela mostra. Cabecalho e linhas leem a mesma resposta, para os
@@ -651,9 +652,9 @@ mod tests {
         // Janela inicial (1440 - 232 - 64).
         assert_eq!(visible_columns(1144.0), both);
         assert_eq!(visible_columns(PAYMENT_MIN_WIDTH), both);
-        // Entre os dois limites: so Pagamento saiu.
+        // Entre os dois limites: so Pagamento saiu (900 cortava "Cartão de crédito").
         assert_eq!(
-            visible_columns(820.0),
+            visible_columns(900.0),
             Visible {
                 author: true,
                 payment: false

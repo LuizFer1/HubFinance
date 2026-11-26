@@ -1328,6 +1328,8 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 app.window_size = INITIAL_SIZE;
                 // A geometria em cache pertence ao compositor, que morreu com a janela.
                 app.clear_charts();
+                // Sem janela nao ha quadros: o que andava termina aqui, nao ao reabrir.
+                app.motion.settle();
             }
             Task::none()
         }

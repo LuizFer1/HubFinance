@@ -78,6 +78,13 @@ impl Motion {
         }
     }
 
+    /// Encerra o que estiver andando, no estado final: sem janela nao chegam quadros, e o
+    /// toast que comecou a descer com ela fechando apareceria por um quadro ao reabrir.
+    pub fn settle(&mut self) {
+        self.scrim = settled(self.scene.dialog);
+        self.toast = settled(self.scene.toast.is_some());
+    }
+
     /// Um quadro: so anda o relogio da interpolacao.
     pub fn frame(&mut self, at: Instant) {
         self.now = at;
@@ -333,6 +340,25 @@ mod tests {
         assert!(m.cursor_on(), "parado e aceso");
         m.sync(Scene::default(), t0);
         assert!(m.toast().is_none(), "sem descida");
+    }
+
+    #[test]
+    fn encerrar_tira_o_toast_que_descia() {
+        let t0 = Instant::now();
+        let mut m = Motion::new(false, t0);
+        m.sync(
+            Scene {
+                toast: toast("x"),
+                ..Scene::default()
+            },
+            t0,
+        );
+        m.frame(t0 + TOAST);
+        m.sync(Scene::default(), t0 + TOAST);
+        assert!(m.toast().is_some(), "descendo");
+        m.settle();
+        assert!(m.toast().is_none());
+        assert!(!m.animating());
     }
 
     #[test]

@@ -98,7 +98,7 @@ pub fn build(analysis: &Analysis, ds: &Dataset, today: &str, book: Book) -> Enve
         .collect();
     let emergency_goal_minor = emergency
         // So o numero da meta: o envelope nunca leva mascara.
-        .map(|r| emergency_view(ds, r, &current, Money::default()).goal_minor)
+        .map(|r| emergency_view(ds, r, &current, Money::SHOWN).goal_minor)
         .filter(|g| *g > 0);
     Envelope {
         book,

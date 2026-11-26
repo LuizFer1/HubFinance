@@ -129,6 +129,11 @@ pub struct Money {
 }
 
 impl Money {
+    /// Sempre visivel, de proposito: o que vai ao assistente (achados, envelope) e os calculos
+    /// que so querem o numero. Nomeado para nao parecer um "padrao" esquecido no lugar do
+    /// "Ocultar valores".
+    pub const SHOWN: Self = Self { hidden: false };
+
     pub fn new(hidden: bool) -> Self {
         Self { hidden }
     }
@@ -157,15 +162,18 @@ impl Money {
         self.or_mask(|| signed_brl_plus(minor))
     }
 
-    /// `+R$ 1,00` com o valor absoluto, inclusive no zero: entrada de dinheiro (deposito,
-    /// receitas do mes). Oculto nao mostra o sinal, como `signed`.
+    /// `+R$ 1,00`, inclusive no zero: entrada de dinheiro (deposito, receitas do mes). O sinal e
+    /// do chamador, nao do valor: `minor` deveria ser >= 0, e um negativo (dado torto de outro
+    /// aparelho) sai pelo valor absoluto, com o `+`, em vez de derrubar a tela. Oculto nao mostra
+    /// o sinal, como `signed`.
     pub fn plus(self, minor: i64) -> String {
         self.or_mask(|| format!("+{}", format_brl(minor)))
     }
 
-    /// `−R$ 1,00` com o valor absoluto, inclusive no zero: saida de dinheiro (despesa,
-    /// retirada). Diferente de `signed(-x)`, que no zero perderia o `−` que a coluna sempre
-    /// mostrou. Oculto nao mostra o sinal.
+    /// `−R$ 1,00`, inclusive no zero: saida de dinheiro (despesa, retirada), com `minor` sendo o
+    /// valor positivo que saiu. Como em `plus`, um negativo sai pelo valor absoluto. Diferente de
+    /// `signed(-x)`, que no zero perderia o `−` que a coluna sempre mostrou. Oculto nao mostra o
+    /// sinal.
     pub fn minus(self, minor: i64) -> String {
         self.or_mask(|| format!("{MINUS}{}", format_brl(minor)))
     }
@@ -267,6 +275,10 @@ mod tests {
         assert_eq!(m.plus(0), "+R$ 0,00");
         assert_eq!(m.minus(10_000), "\u{2212}R$ 100,00");
         assert_eq!(m.minus(0), "\u{2212}R$ 0,00");
+        // Negativo e dado torto: sai pelo valor absoluto com o sinal do chamador.
+        assert_eq!(m.plus(-100), "+R$ 1,00");
+        assert_eq!(m.minus(-100), "\u{2212}R$ 1,00");
+        assert_eq!(Money::SHOWN, Money::new(false));
         let h = Money::new(true);
         assert_eq!(h.plus(10_000), MASK);
         assert_eq!(h.minus(10_000), MASK);

@@ -333,7 +333,7 @@ mod tests {
         .collect();
         ds.apply(rows);
 
-        let view = list_month(&ds, "2026-09", &Filters::default(), Money::default());
+        let view = list_month(&ds, "2026-09", &Filters::default(), Money::SHOWN);
         assert_eq!(view.count, 3);
         assert_eq!(view.groups.len(), 1);
         assert_eq!(view.groups[0].rows.len(), 3);
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn mes_sem_filtro_em_grupos_por_dia() {
         let ds = fixtures();
-        let view = list_month(&ds, "2026-09", &Filters::default(), Money::default());
+        let view = list_month(&ds, "2026-09", &Filters::default(), Money::SHOWN);
         assert_eq!(view.count, 7);
         assert_eq!(
             ids(&view),
@@ -412,7 +412,7 @@ mod tests {
         assert_eq!(view.balance_label, "R$ 4.190,00");
         assert_eq!(view.groups[0].net, "−R$ 470,00");
         assert_eq!(view.groups[4].net, "+R$ 6.500,00");
-        let empty = list_month(&ds, "2026-05", &Filters::default(), Money::default());
+        let empty = list_month(&ds, "2026-05", &Filters::default(), Money::SHOWN);
         assert!(empty.groups.is_empty());
         assert_eq!(empty.totals, Totals::default());
         // Mes vazio ainda mostra a linha de resumo zerada, com os sinais de sempre.
@@ -429,7 +429,7 @@ mod tests {
             &ds,
             "2026-09",
             &filters(Some("C1"), &[], TypeFilter::All),
-            Money::default(),
+            Money::SHOWN,
         );
         assert_eq!(ids(&one), vec!["T08"]);
         // "Sem categoria" pega a nula e a apagada.
@@ -437,7 +437,7 @@ mod tests {
             &ds,
             "2026-09",
             &filters(Some(""), &[], TypeFilter::All),
-            Money::default(),
+            Money::SHOWN,
         );
         assert_eq!(ids(&none), vec!["T10", "T11"]);
         assert_eq!(none.totals.expense_minor, 5_000);
@@ -450,14 +450,14 @@ mod tests {
             &ds,
             "2026-09",
             &filters(None, &["U1"], TypeFilter::All),
-            Money::default(),
+            Money::SHOWN,
         );
         assert_eq!(ids(&ana), vec!["T10", "T08", "T06"]);
         let both = list_month(
             &ds,
             "2026-09",
             &filters(None, &["U1", "U2"], TypeFilter::All),
-            Money::default(),
+            Money::SHOWN,
         );
         assert_eq!(ids(&both), vec!["T10", "T09", "T08", "T07", "T06"]);
         // Sem autor e autor apagado colapsam.
@@ -465,21 +465,21 @@ mod tests {
             &ds,
             "2026-09",
             &filters(None, &[""], TypeFilter::All),
-            Money::default(),
+            Money::SHOWN,
         );
         assert_eq!(ids(&nobody), vec!["T13", "T11"]);
         let income = list_month(
             &ds,
             "2026-09",
             &filters(None, &[], TypeFilter::Income),
-            Money::default(),
+            Money::SHOWN,
         );
         assert_eq!(ids(&income), vec!["T06"]);
         let expense = list_month(
             &ds,
             "2026-09",
             &filters(None, &[], TypeFilter::Expense),
-            Money::default(),
+            Money::SHOWN,
         );
         assert_eq!(expense.count, 6);
         // Combinados: Ana + despesa + Alimentacao.
@@ -487,14 +487,14 @@ mod tests {
             &ds,
             "2026-09",
             &filters(Some("C1"), &["U1"], TypeFilter::Expense),
-            Money::default(),
+            Money::SHOWN,
         );
         assert_eq!(ids(&combo), vec!["T08"]);
         let nothing = list_month(
             &ds,
             "2026-09",
             &filters(Some("C1"), &["U2"], TypeFilter::All),
-            Money::default(),
+            Money::SHOWN,
         );
         assert_eq!(nothing.count, 0);
         assert!(nothing.groups.is_empty());
@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn linha_resolve_referencias() {
         let ds = fixtures();
-        let view = list_month(&ds, "2026-09", &Filters::default(), Money::default());
+        let view = list_month(&ds, "2026-09", &Filters::default(), Money::SHOWN);
         let row = |id: &str| {
             view.groups
                 .iter()
@@ -581,14 +581,14 @@ mod tests {
             &ds,
             "2026-09",
             &filters(Some("C1"), &[], TypeFilter::All),
-            Money::default(),
+            Money::SHOWN,
         );
         assert_eq!(ids(&view), vec!["T08", "T20"]);
         let none = list_month(
             &ds,
             "2026-09",
             &filters(Some(""), &[], TypeFilter::All),
-            Money::default(),
+            Money::SHOWN,
         );
         assert!(!ids(&none).contains(&"T20"));
     }
@@ -613,7 +613,7 @@ mod tests {
     #[test]
     fn linha_da_copia_mostra_o_padrao() {
         let ds = crate::dashboard::fixtures_with_merged();
-        let row = to_row(&ds, &ds.transactions["T20"], Money::default());
+        let row = to_row(&ds, &ds.transactions["T20"], Money::SHOWN);
         assert_eq!(row.category_name, "Alimentação");
         assert_eq!(row.category_color.as_deref(), Some("orange"));
         assert_eq!(row.category_icon.as_deref(), Some("utensils"));

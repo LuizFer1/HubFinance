@@ -2211,12 +2211,12 @@ mod tests {
     fn meta_final_com_custo_das_categorias_diz_custo_essencial() {
         let ds = fixtures_grafite();
         let (re, _) = ordered(&ds);
-        let mut view = emergency_view(&ds, re.expect("emergencia"), "2026-11", Money::default());
+        let mut view = emergency_view(&ds, re.expect("emergencia"), "2026-11", Money::SHOWN);
         if let Some(c) = view.cost.as_mut() {
             c.informed = false;
         }
         assert_eq!(
-            emergency_card(&view, Some(55_000), Money::default()).goal_line,
+            emergency_card(&view, Some(55_000), Money::SHOWN).goal_line,
             "Meta final: 6 meses de custo essencial, R$ 15.000."
         );
     }

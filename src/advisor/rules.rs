@@ -309,7 +309,7 @@ pub(super) fn emergency(ds: &Dataset, today: &str) -> Option<Finding> {
     };
     // Sempre visivel: o achado vira texto do envelope do assistente, que leva os valores reais;
     // "Ocultar valores" e so da tela, que mascara o achado na hora de desenhar.
-    let view = emergency_view(ds, r, &current, Money::default());
+    let view = emergency_view(ds, r, &current, Money::SHOWN);
     let cost = view.cost.as_ref().filter(|c| c.total_minor > 0)?;
     // Decimos de mes por inteiros: o `coverage` f64 da view e so exibicao.
     let tenths = view.balance_minor.saturating_mul(10) / cost.total_minor;

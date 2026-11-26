@@ -252,10 +252,7 @@ mod tests {
         let v = build_transactions(&ds, "2026-09-24", "2026-09", &filters, false);
         assert_eq!(v.month, "2026-09");
         assert_eq!(v.month_label, "Setembro 2026");
-        assert_eq!(
-            v.list,
-            list_month(&ds, "2026-09", &filters, Money::default())
-        );
+        assert_eq!(v.list, list_month(&ds, "2026-09", &filters, Money::SHOWN));
         assert_eq!(v.list.count, 3);
         assert_eq!(v.categories, category_options(&ds, "2026-09"));
         let authors: Vec<(&str, &str, &str)> = v

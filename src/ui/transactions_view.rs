@@ -489,38 +489,32 @@ fn empty(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.transactions;
     let (title, body, show_clear) = empty_copy(v, &app.filters);
-    let mut col = column![
-        icons::icon(icons::FUNNEL_X, 28.0, t.accent_300),
-        Space::new().height(4),
-        text(title).size(16).font(fonts::INTER_MEDIUM).color(t.text),
-        container(
-            text(body)
-                .size(13)
-                .line_height(1.5)
-                .color(t.text_muted)
-                .align_x(Alignment::Center),
-        )
-        .max_width(380),
-    ]
-    .spacing(8)
-    .align_x(Alignment::Center);
-    // So no vazio do hub (nada sincronizado): o vazio por filtro ou por mes continua como esta.
-    if v.is_empty_hub
-        && let Some(connect) = shell::connect_phone_button(app)
-    {
-        col = col.push(Space::new().height(2)).push(connect);
-    }
-    if show_clear {
-        col = col.push(Space::new().height(2)).push(
+    // So no vazio do hub (nada sincronizado) vem "Conectar um celular"; o vazio por filtro tem
+    // "Limpar filtros" e o do mes nenhum. Os dois nunca aparecem juntos.
+    let connect = if v.is_empty_hub {
+        shell::connect_phone_button(app)
+    } else {
+        None
+    };
+    let action = connect.or_else(|| {
+        show_clear.then(|| {
             widgets::action_button(
                 t,
                 ButtonKind::Primary,
                 ButtonSize::Regular,
                 "Limpar filtros",
             )
-            .on_press(Message::ClearFilters),
-        );
-    }
+            .on_press(Message::ClearFilters)
+            .into()
+        })
+    });
+    let col = widgets::empty_state(
+        t,
+        icons::icon(icons::FUNNEL_X, 28.0, t.accent_300),
+        &title,
+        &body,
+        action,
+    );
     container(col)
         .padding([56, 24])
         .center_x(Length::Fill)

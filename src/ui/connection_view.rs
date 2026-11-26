@@ -669,37 +669,14 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
 fn empty_users<'a>(t: &'static Tokens) -> Element<'a, Message> {
     // O handoff desenha dois circulos tracejados sobrepostos (dois aparelhos); com borda solida,
     // que e o que o iced faz, eles viravam um interruptor. O celular num circulo diz o mesmo.
-    let device = container(icons::icon(icons::DEVICE_MOBILE, 20.0, t.neutral_700))
-        .center(44)
-        .style(move |_: &Theme| container::Style {
-            border: Border {
-                color: t.neutral_700,
-                width: 1.5,
-                radius: 22.0.into(),
-            },
-            ..container::Style::default()
-        });
-    let body = column![
-        device,
-        Space::new().height(6),
-        text("Nenhum usuário conectado")
-            .size(15)
-            .font(fonts::INTER_MEDIUM)
-            .color(t.text),
-        container(
-            text(
-                "Quando um celular abrir o endereço ao lado, a pessoa aparece aqui com o nome e \
-                 a cor que escolheu no app"
-            )
-            .size(13)
-            .line_height(1.5)
-            .color(t.text_muted)
-            .align_x(Alignment::Center),
-        )
-        .max_width(320),
-    ]
-    .spacing(8)
-    .align_x(Alignment::Center);
+    let body = widgets::empty_state(
+        t,
+        widgets::empty_icon(t, icons::DEVICE_MOBILE),
+        "Nenhum usuário conectado",
+        "Quando um celular abrir o endereço ao lado, a pessoa aparece aqui com o nome e a cor \
+         que escolheu no app",
+        None,
+    );
     column![
         widgets::divider(t),
         container(body)

@@ -1537,28 +1537,22 @@ fn empty_card(app: &App) -> Element<'_, Message> {
     })
     .width(EMPTY_WIDTH)
     .height(EMPTY_HEIGHT);
-    let mut copy = column![
-        text("Nenhum dado por aqui ainda")
-            .size(20)
-            .font(fonts::INTER_MEDIUM)
-            .color(t.text),
-        Space::new().height(8),
-        text(
-            "Assim que um celular pareado sincronizar, o dashboard se monta sozinho. Os dados \
-             viajam só pela rede de casa."
-        )
-        .size(14)
-        .line_height(1.55)
-        .color(t.text_muted),
-        Space::new().height(16),
+    let mut copy = widgets::empty_copy(
+        t,
+        "Nenhum dado por aqui ainda",
+        "Assim que um celular pareado sincronizar, o dashboard se monta sozinho. Os dados viajam \
+         só pela rede de casa.",
+        false,
+    )
+    .push(Space::new().height(16))
+    .push(
         row![
             swatch(t.warning, 7.0, 3.5),
             txt(waiting, 12.0, t.text_muted),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
-    ]
-    .max_width(460);
+    );
     if let Some(connect) = shell::connect_phone_button(app) {
         copy = copy.push(Space::new().height(20)).push(connect);
     }

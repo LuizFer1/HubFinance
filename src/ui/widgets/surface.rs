@@ -2,7 +2,7 @@
 //! largura padrao, para cada tela parar de montar o proprio `container` com o estilo.
 
 use iced::widget::text::Wrapping;
-use iced::widget::{Container, Space, container, row, text};
+use iced::widget::{Column, Container, Space, column, container, row, text};
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use crate::ui::theme::{self, Tokens, Tone, radius, size, space, type_scale};
@@ -98,6 +98,78 @@ pub fn section_heading<'a, M: 'a>(
         .into()
 }
 
+/// Largura maxima do texto de um estado vazio (relatorio 8.7).
+const EMPTY_TEXT_MAX: f32 = 420.0;
+
+/// Texto de estado vazio: titulo 18 Medium e corpo 14 `text_muted` ate 420 px, 8 px entre os
+/// dois. Devolve a `Column` (sem espaco proprio) para a tela acrescentar embaixo a linha de
+/// espera ou a acao com o respiro que ja tinha. `centered` alinha ao centro (vazio sozinho no
+/// card); sem ele, a esquerda (ao lado do esboco em canvas).
+pub fn empty_copy<'a, M: 'a>(
+    t: &'static Tokens,
+    title: &str,
+    body: &str,
+    centered: bool,
+) -> Column<'a, M> {
+    let align = if centered {
+        Alignment::Center
+    } else {
+        Alignment::Start
+    };
+    column![
+        text(title.to_string())
+            .size(type_scale::LEAD)
+            .font(fonts::INTER_MEDIUM)
+            .color(t.text),
+        Space::new().height(space::S),
+        text(body.to_string())
+            .size(type_scale::BODY)
+            .line_height(1.5)
+            .color(t.text_muted)
+            .align_x(align),
+    ]
+    .max_width(EMPTY_TEXT_MAX)
+    .align_x(align)
+}
+
+/// Icone de estado vazio: o glifo de 20 num circulo de 44 com contorno de 1,5 em
+/// `neutral_700` (o celular dos usuarios conectados).
+pub fn empty_icon<'a, M: 'a>(t: &'static Tokens, glyph: &'static str) -> Element<'a, M> {
+    let ring = t.neutral_700;
+    container(icons::icon(glyph, 20.0, ring))
+        .center(size::CTRL_L)
+        .style(move |_: &iced::Theme| container::Style {
+            border: iced::Border {
+                color: ring,
+                width: 1.5,
+                radius: (size::CTRL_L / 2.0).into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+/// Estado vazio centrado: icone, `empty_copy` e no maximo uma acao (navegar ou limpar filtro:
+/// o hub nunca cria dado). A tela poe o respiro em volta.
+pub fn empty_state<'a, M: 'a>(
+    t: &'static Tokens,
+    icon: Element<'a, M>,
+    title: &str,
+    body: &str,
+    action: Option<Element<'a, M>>,
+) -> Element<'a, M> {
+    let mut col = column![
+        icon,
+        Space::new().height(space::M),
+        empty_copy(t, title, body, true)
+    ]
+    .align_x(Alignment::Center);
+    if let Some(action) = action {
+        col = col.push(Space::new().height(space::L)).push(action);
+    }
+    col.into()
+}
+
 /// Cor do icone de um tom: a de texto de cada um (`accent` cru nao vira texto nem icone).
 fn tone_fg(t: &Tokens, tone: Tone) -> Color {
     match tone {
@@ -168,6 +240,14 @@ mod tests {
             let _: Element<'_, ()> = vdivider(t);
             let _: Element<'_, ()> = section_heading(t, "Título", "pergunta", Some("aparte"), 8.0);
             let _: Element<'_, ()> = section_heading(t, "Título", "", None, 0.0);
+            let _: Element<'_, ()> = empty_state(
+                t,
+                empty_icon(t, icons::DEVICE_MOBILE),
+                "Nenhum usuário conectado",
+                "Quando um celular abrir o endereço, a pessoa aparece aqui",
+                Some(text("Ação").into()),
+            );
+            let _: Element<'_, ()> = empty_copy(t, "Nada", "Corpo", false).into();
             let _: Element<'_, ()> = banner(
                 t,
                 Tone::Warning,

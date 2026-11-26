@@ -884,21 +884,13 @@ fn empty_card(app: &App) -> Element<'_, Message> {
     })
     .width(EMPTY_RESERVES_WIDTH)
     .height(EMPTY_RESERVES_HEIGHT);
-    let mut copy = column![
-        text("Nenhuma reserva sincronizada")
-            .size(20)
-            .font(fonts::INTER_MEDIUM)
-            .color(t.text),
-        Space::new().height(8),
-        text(
-            "A reserva de emergência e as caixinhas são criadas no app. Assim que um celular \
-             pareado sincronizar, saldos, metas e movimentações aparecem aqui."
-        )
-        .size(14)
-        .line_height(1.55)
-        .color(t.text_soft()),
-    ]
-    .max_width(460);
+    let mut copy = widgets::empty_copy(
+        t,
+        "Nenhuma reserva sincronizada",
+        "A reserva de emergência e as caixinhas são criadas no app. Assim que um celular pareado \
+         sincronizar, saldos, metas e movimentações aparecem aqui.",
+        false,
+    );
     if let Some(connect) = shell::connect_phone_button(app) {
         copy = copy.push(Space::new().height(20)).push(connect);
     }

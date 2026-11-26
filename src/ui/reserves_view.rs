@@ -779,9 +779,7 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
         .height(EVOLUTION_HEIGHT)
         .into()
     };
-    widgets::card(t, column![header, Space::new().height(18), body])
-        .padding(pad(18.0, 20.0, 20.0))
-        .into()
+    widgets::card(t, column![header, Space::new().height(18), body]).into()
 }
 
 // ---- linha 4: movimentacoes ----

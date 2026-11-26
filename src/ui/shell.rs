@@ -576,7 +576,7 @@ fn status_card(app: &App) -> Element<'_, Message> {
 
 fn content(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
-    let body: Element<'_, Message> = if let Status::Failed(msg) = &app.snapshot.status {
+    let body: Element<'_, Message> = if let Some(msg) = failure(app) {
         failed_card(app, msg)
     } else {
         match app.screen {
@@ -810,7 +810,18 @@ pub(super) fn thousands(n: usize) -> String {
     group_thousands(n as u64)
 }
 
-/// Hub que nao subiu: no lugar de qualquer tela, o motivo e onde ficam os dados.
+/// Motivo do hub que nao subiu, se a tela atual deve dar lugar a ele. Ajustes fica de fora:
+/// tema, inicializacao e as pastas de dados e logs nao dependem do nucleo, e as pastas sao
+/// justamente o que a pessoa procura para entender a falha.
+pub(super) fn failure(app: &App) -> Option<&str> {
+    match &app.snapshot.status {
+        Status::Failed(msg) if app.screen != Screen::Settings => Some(msg),
+        _ => None,
+    }
+}
+
+/// Hub que nao subiu: no lugar de qualquer tela (menos Ajustes), o motivo e onde ficam os
+/// dados.
 fn failed_card<'a>(app: &'a App, msg: &'a str) -> Element<'a, Message> {
     let t = app.tokens;
     widgets::card(
@@ -1164,6 +1175,25 @@ mod tests {
         app.screen = Screen::Dashboard;
         let _ = super::super::app::update(&mut app, Message::SelectScreen(Screen::Connection));
         assert_eq!(titles(&app).0, "Aparelhos");
+    }
+
+    #[test]
+    fn hub_com_erro_cobre_as_telas_menos_ajustes() {
+        let dir = tempfile::tempdir().unwrap();
+        let snap = Snapshot {
+            status: Status::Failed("Porta 7777 em uso".into()),
+            ..Snapshot::default()
+        };
+        let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
+        for screen in nav_entries(&app).map(|e| e.screen) {
+            app.screen = screen;
+            let want = (screen != Screen::Settings).then_some("Porta 7777 em uso");
+            assert_eq!(failure(&app), want, "{screen:?}");
+            let _ = root(&app);
+        }
+        app.snapshot.status = Status::Running;
+        app.screen = Screen::Dashboard;
+        assert_eq!(failure(&app), None);
     }
 
     #[test]

@@ -253,15 +253,12 @@ fn chat_area(app: &App) -> Option<Element<'_, Message>> {
     // "Enviar" ao lado do Enter: quem nao sabe do Enter nao fica sem saida. Desabilitado nas
     // mesmas condicoes em que `ChatSubmit` nao faria nada.
     let can_send = !view.busy && !app.chat_input.trim().is_empty();
-    let send = button(
-        container(text("Enviar").size(13).font(fonts::INTER_MEDIUM))
-            .height(Length::Fill)
-            .align_y(Alignment::Center),
-    )
-    .height(40)
-    .padding([0, 16])
-    .style(theme::outline_accent(t))
-    .on_press_maybe(can_send.then_some(Message::ChatSubmit));
+    // Mesma altura do campo sem numero magico: texto de 14 com a altura de linha padrao e o
+    // mesmo respiro vertical de 10 (14 x 1,3 + 20 = 38,2 nos dois).
+    let send = button(text("Enviar").size(14).font(fonts::INTER_MEDIUM))
+        .padding([10, 16])
+        .style(theme::outline_accent(t))
+        .on_press_maybe(can_send.then_some(Message::ChatSubmit));
     col = col.push(row![input, send].spacing(8).align_y(Alignment::Center));
     Some(card(t, col))
 }

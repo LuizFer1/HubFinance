@@ -705,7 +705,7 @@ fn certificate_step(app: &App, os: PhoneOs) -> Element<'_, Message> {
         switch,
         steps,
     ]
-    .spacing(space::L)
+    .spacing(14)
     .width(Length::Fill)
     .into()
 }
@@ -713,7 +713,7 @@ fn certificate_step(app: &App, os: PhoneOs) -> Element<'_, Message> {
 /// Passo 3: QR e codigo a esquerda, os passos e o endereco a direita.
 fn pair_step(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
-    let mut info = column![].spacing(space::M).width(Length::Fill);
+    let mut info = column![].spacing(10).width(Length::Fill);
     for (i, line) in PAIR_STEPS.iter().enumerate() {
         let n = u8::try_from(i + 1).unwrap_or(u8::MAX);
         info = info.push(widgets::step(t, n, widgets::step_text(t, *line).into()));

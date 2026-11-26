@@ -8,7 +8,7 @@ use iced::{Alignment, Border, Color, Element, Length, Theme};
 
 use super::fonts;
 use super::icons;
-use super::theme::{self, Tokens, space};
+use super::theme::{self, Tokens};
 
 mod controls;
 mod marks;
@@ -125,6 +125,13 @@ pub fn avatar<'a, M: 'a>(
 ) -> Element<'a, M> {
     let (color, fill) = t.avatar_colors(token);
     if let Some(handle) = photo {
+        // Com foto fica como antes da spec 9: sem cor de perfil, o anel e o cinza claro do
+        // avatar antigo (`neutral_300` no escuro, `neutral_700` no claro), nao o de controle.
+        let color = match (token, t.mode) {
+            (Some(_), _) => color,
+            (None, crate::dashboard::colors::Mode::Dark) => t.neutral_300,
+            (None, crate::dashboard::colors::Mode::Light) => t.neutral_700,
+        };
         let ring = AVATAR_RING;
         let gap = 2.0;
         let outer = size + 2.0 * (ring + gap);
@@ -183,7 +190,7 @@ pub fn step<'a, M: 'a>(t: &'static Tokens, n: u8, content: Element<'a, M>) -> El
     .center(20)
     .style(theme::fill(t.accent_900, 10.0));
     row![number, container(content).width(Length::Fill)]
-        .spacing(space::M)
+        .spacing(10)
         .align_y(Alignment::Start)
         .into()
 }

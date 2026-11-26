@@ -9,7 +9,7 @@ use iced::widget::{
 use iced::{Alignment, Element, Length, Padding, mouse, window};
 
 use super::app::{App, Message, Screen};
-use super::theme::{self, ButtonKind, ButtonSize, Tokens};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, space};
 use super::widgets::{SegmentedSize, SegmentedVariant};
 use super::{
     analysis_view, connection_view, dashboard_view, fonts, icons, remove_view, reserves_view,
@@ -605,32 +605,55 @@ fn content(app: &App) -> Element<'_, Message> {
         page = page.push(banner);
     }
     let page = page.push(body);
-    let inner = container(page).width(Length::Fill).padding(Padding {
-        top: 20.0,
-        right: 32.0,
-        bottom: 40.0,
-        left: 32.0,
-    });
-    // So o conteudo rola (B7): titulo, conta, mes e olho ficam a vista enquanto a pessoa le a
-    // tela. A rolagem ocupa a largura toda, com o respiro dentro dela, para a barra ficar na
-    // borda da janela e a roda do mouse valer tambem sobre as margens.
-    let scroll = scrollable(inner)
-        .id(CONTENT_SCROLL)
-        .direction(scrollable::Direction::Vertical(
-            scrollable::Scrollbar::new()
-                .width(6)
-                .scroller_width(6)
-                .margin(3),
-        ))
-        .style(theme::scrollbar(t))
-        .width(Length::Fill)
-        .height(Length::Fill);
+    let scroll: Element<'_, Message> = if owns_scroll(app) {
+        // A tela tem rolagem propria (Lancamentos: filtros, resumo e cabecalho da tabela fixos,
+        // so as linhas rolam). Aqui ela so ganha o respiro e a altura que sobra; a rolagem dela
+        // usa o mesmo `CONTENT_SCROLL`, entao o `snap_to` da troca de tela continua valendo.
+        container(page)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(Padding {
+                top: 20.0,
+                right: 32.0,
+                bottom: space::PAGE,
+                left: 32.0,
+            })
+            .into()
+    } else {
+        let inner = container(page).width(Length::Fill).padding(Padding {
+            top: 20.0,
+            right: 32.0,
+            bottom: 40.0,
+            left: 32.0,
+        });
+        // So o conteudo rola (B7): titulo, conta, mes e olho ficam a vista enquanto a pessoa le
+        // a tela. A rolagem ocupa a largura toda, com o respiro dentro dela, para a barra ficar
+        // na borda da janela e a roda do mouse valer tambem sobre as margens.
+        scrollable(inner)
+            .id(CONTENT_SCROLL)
+            .direction(scrollable::Direction::Vertical(
+                scrollable::Scrollbar::new()
+                    .width(6)
+                    .scroller_width(6)
+                    .margin(3),
+            ))
+            .style(theme::scrollbar(t))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    };
     // Sem fundo proprio: o fundo e o do container de `frame`, que cobre lateral e conteudo
     // (um fundo aqui esconderia o gradiente atras da rolagem).
     container(column![header(app), widgets::divider(t), scroll])
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+/// A tela atual gerencia a propria rolagem? So Lancamentos (B7), e so quando aparece de fato:
+/// com o hub em erro o card de falha entra no lugar e volta a rolagem geral.
+pub(super) fn owns_scroll(app: &App) -> bool {
+    app.screen == Screen::Transactions && failure(app).is_none()
 }
 
 /// Largura util do conteudo (sem a lateral e o padding de 32 + 32; a divisoria vertical saiu
@@ -1233,6 +1256,32 @@ mod tests {
         app.snapshot.status = Status::Running;
         app.screen = Screen::Dashboard;
         assert_eq!(failure(&app), None);
+    }
+
+    #[test]
+    fn so_lancamentos_rola_por_conta_propria_e_o_erro_devolve_a_rolagem_geral() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        for screen in nav_entries(&app).map(|e| e.screen) {
+            app.screen = screen;
+            assert_eq!(
+                owns_scroll(&app),
+                screen == Screen::Transactions,
+                "{screen:?}"
+            );
+            let _ = root(&app);
+        }
+        // Com o menu de categoria aberto a tela continua montando, nas duas larguras.
+        app.screen = Screen::Transactions;
+        app.cat_menu_open = true;
+        for width in [1024.0, 1440.0] {
+            app.window_size.width = width;
+            let _ = root(&app);
+        }
+        // Hub em erro: o card de falha entra no lugar e precisa da rolagem da casca.
+        app.snapshot.status = Status::Failed("Porta 7777 em uso".into());
+        assert!(!owns_scroll(&app));
+        let _ = root(&app);
     }
 
     #[test]

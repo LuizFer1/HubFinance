@@ -103,7 +103,6 @@ pub mod space {
     pub const L: f32 = 16.0;
     pub const XL: f32 = 20.0;
     pub const XXL: f32 = 24.0;
-    #[cfg_attr(not(test), expect(dead_code, reason = "margem da pagina, issue 05"))]
     pub const XXXL: f32 = 32.0;
     #[cfg_attr(not(test), expect(dead_code, reason = "sem uso ainda"))]
     pub const HUGE: f32 = 40.0;
@@ -120,7 +119,6 @@ pub mod space {
     /// Padding de dialogo.
     pub const DIALOG: f32 = XXL;
     /// Margem da pagina.
-    #[cfg_attr(not(test), expect(dead_code, reason = "margem da pagina, issue 05"))]
     pub const PAGE: f32 = XXXL;
 }
 

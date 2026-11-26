@@ -33,13 +33,18 @@ const COLUMNS: [u16; 4] = [22, 13, 10, 10];
 const VALUE_WIDTH: f32 = 128.0;
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let mut base = column![filter_bar(app), summary_line(app), table(app)]
+    // Altura cheia: a casca nao rola esta tela (`shell::owns_scroll`). Filtros, resumo e o
+    // cabecalho da tabela ficam parados; so as linhas rolam, dentro do card (`table`).
+    let base = column![filter_bar(app), summary_line(app), table(app)]
         .spacing(GAP)
-        .width(Length::Fill);
+        .width(Length::Fill)
+        .height(Length::Fill);
     if !app.cat_menu_open {
         return base.into();
     }
-    // Camada que fecha o menu ao clicar fora (dentro da area da tela) e, por cima, o menu.
+    // Camada que fecha o menu ao clicar fora (dentro da area da tela) e, por cima, o menu. A
+    // tela ocupa a altura toda da regiao de conteudo, entao o menu (no maximo 42 + 360) cabe
+    // mesmo com poucas linhas: na janela minima (720) a regiao tem perto de 500 px.
     let catcher = opaque(
         mouse_area(
             container(Space::new())
@@ -48,19 +53,14 @@ pub fn view(app: &App) -> Element<'_, Message> {
         )
         .on_press(Message::CloseCategoryMenu),
     );
-    // O `stack` tem o tamanho da primeira camada: com poucas linhas ela e mais baixa que o
-    // menu, que sairia cortado. Um espaco no fim da tela completa a altura que falta (o iced
-    // nao tem altura minima, e um espacador ao lado numa `row` nao estica a linha).
-    let needed = MENU_OFFSET + menu_height(app.transactions.categories.len()) + 12.0 + 8.0;
-    let missing = needed - estimated_height(&app.transactions);
-    if missing > 0.0 {
-        base = base.push(Space::new().height(missing));
-    }
     let menu = column![
         Space::new().height(MENU_OFFSET),
         row![opaque(category_menu(app)), Space::new().width(Length::Fill)],
     ];
-    stack![base, catcher, menu].width(Length::Fill).into()
+    stack![base, catcher, menu]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 /// Cor de um token de categoria, com o marcador "neutral" de "Todas as categorias".
@@ -122,19 +122,6 @@ fn category_button(app: &App) -> Element<'_, Message> {
     )
     .on_press(Message::ToggleCategoryMenu)
     .into()
-}
-
-/// Altura aproximada da tela sem o menu: barra de filtros (36), resumo (~25), cabecalho da
-/// tabela (41), grupos (35) e linhas (53), ou o vazio (~250). So decide se falta espaco para o
-/// menu; errar para cima so deixa um pouco de rolagem a mais.
-fn estimated_height(v: &TransactionsView) -> f32 {
-    let table = 41.0
-        + if v.list.count == 0 {
-            250.0
-        } else {
-            v.list.groups.len() as f32 * 35.0 + v.list.count as f32 * 53.0
-        };
-    36.0 + GAP + 25.0 + GAP + table
 }
 
 /// Altura da lista do menu: um item de 34 por opcao, ate 360 com o padding de 6.
@@ -367,16 +354,16 @@ fn table(app: &App) -> Element<'_, Message> {
     .height(40)
     .padding([0, 20])
     .align_y(Alignment::Center);
-    let mut col = column![header, widgets::divider(t)];
+    let mut rows = column![];
     if v.list.count == 0 {
-        col = col.push(empty(app));
+        rows = rows.push(empty(app));
     }
     let day_bg = mix(t.surface, t.bg, 0.45);
     for (i, group) in v.list.groups.iter().enumerate() {
         if i > 0 {
-            col = col.push(widgets::divider(t));
+            rows = rows.push(widgets::divider(t));
         }
-        col = col.push(
+        rows = rows.push(
             container(
                 row![
                     text(group.heading.clone())
@@ -395,12 +382,31 @@ fn table(app: &App) -> Element<'_, Message> {
             .style(theme::fill(day_bg, 0.0)),
         );
         for r in &group.rows {
-            col = col.push(widgets::divider(t)).push(table_row(app, r));
+            rows = rows.push(widgets::divider(t)).push(table_row(app, r));
         }
     }
+    // So as linhas rolam (B7). Altura `Shrink`: o iced limita a rolagem ao que sobra abaixo dos
+    // filtros, do resumo e do cabecalho, e com poucas linhas o card acaba nelas em vez de
+    // esticar ate o pe da janela. A barra flutua sobre o respiro de 20 da direita (sem
+    // `spacing`): reservar a largura dela estreitaria as linhas e a coluna Valor sairia da
+    // linha do cabecalho. O id e o da casca, para a troca de tela voltar ao topo.
+    let scroll = scrollable(rows)
+        .id(shell::CONTENT_SCROLL)
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new()
+                .width(6)
+                .scroller_width(6)
+                .margin(3),
+        ))
+        .style(theme::scrollbar(t))
+        .width(Length::Fill)
+        .height(Length::Shrink);
     // `padding(1)`: as faixas de dia sao opacas e de largura cheia, e o iced desenha a borda por
     // dentro; sem o respiro elas, os divisores e o hover da ultima linha cobrem a borda do card.
-    widgets::card(t, col).padding(1).clip(true).into()
+    widgets::card(t, column![header, widgets::divider(t), scroll])
+        .padding(1)
+        .clip(true)
+        .into()
 }
 
 fn table_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {

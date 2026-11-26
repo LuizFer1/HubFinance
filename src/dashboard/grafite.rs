@@ -20,7 +20,7 @@ use super::insights::{
     history, normal_balance, pace_axis_top, plan_fit, round_to_tens, savings_rate, spending_pace,
     zero_allowance,
 };
-use super::list::{Filters, list_month, to_row};
+use super::list::to_row;
 use super::money::{BigMoney, MINUS, Money};
 use super::periods::{
     days_between, days_in_month, month_long, month_of, month_short, month_short_year,
@@ -1698,7 +1698,9 @@ fn upcoming_card(ds: &Dataset, today: &str, m: Money) -> UpcomingCard {
 }
 
 fn recent_card(ds: &Dataset, month: &str, m: Money) -> Recent {
-    let count = list_month(ds, month, &Filters::default(), m).count;
+    // A mesma contagem da tela Lancamentos sem filtro (`list_month` conta todo lancamento vivo
+    // do mes, marcado ou nao), sem montar a lista inteira so para contar.
+    let count = in_month(ds, month).count();
     let name = month_long(month);
     Recent {
         title: "Últimos lançamentos".to_string(),
@@ -1713,6 +1715,9 @@ fn recent_card(ds: &Dataset, month: &str, m: Money) -> Recent {
                     meta.push(a.name.clone());
                 }
                 meta.push(partial_label(&row.occurred_on));
+                // `row.amount` (o texto da tela Lancamentos) nao e usado de proposito: na despesa
+                // zerada o Resumo mostra "R$ 0,00" e a lista mostra "−R$ 0,00". Divergencia
+                // conhecida e so no zero, mantida para nao mudar o Resumo validado pelo dono.
                 RecentLine {
                     amount: if income {
                         m.signed_plus(row.amount_minor)

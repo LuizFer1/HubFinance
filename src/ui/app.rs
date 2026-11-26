@@ -1075,6 +1075,15 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::Resize(direction) => app.with_window(|id| window::drag_resize(id, direction)),
         Message::SelectScreen(screen) => {
+            let top = iced::widget::operation::snap_to(
+                super::shell::CONTENT_SCROLL,
+                iced::widget::operation::RelativeOffset::START,
+            );
+            // Clicar na tela em que ja se esta so volta ao topo: a pessoa nao saiu dela, entao
+            // a remocao pendente segue com o "Desfazer" e a chave digitada fica no campo.
+            if screen == app.screen {
+                return top;
+            }
             app.commit_pending();
             // A chave digitada nao fica na memoria de uma tela que a pessoa deixou.
             if screen != Screen::Analysis {
@@ -1082,10 +1091,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             app.screen = screen;
             app.cat_menu_open = false;
-            iced::widget::operation::snap_to(
-                super::shell::CONTENT_SCROLL,
-                iced::widget::operation::RelativeOffset::START,
-            )
+            top
         }
         Message::ConfigureAssistant => {
             // O mesmo caminho da navegacao (remocao pendente, chave, rolagem ao topo) e o
@@ -2275,6 +2281,7 @@ pub(super) mod tests {
     fn outra_remocao_ou_trocar_de_tela_envia_a_pendente() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, mut rx, _tx) = app_with_two_people(dir.path());
+        app.screen = Screen::Connection;
         let _ = update(&mut app, Message::AskRemove("D1".into()));
         let _ = update(&mut app, Message::ConfirmRemove);
         let _ = update(&mut app, Message::AskRemove("D2".into()));
@@ -2286,6 +2293,29 @@ pub(super) mod tests {
         );
         let _ = update(&mut app, Message::SelectScreen(Screen::Dashboard));
         assert_eq!(revoked(&mut rx), vec!["D2".to_string()]);
+    }
+
+    #[test]
+    fn clicar_na_tela_atual_so_volta_ao_topo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_two_people(dir.path());
+        app.screen = Screen::Connection;
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ConfirmRemove);
+        app.key_input = "sk-rascunho".into();
+        let task = update(&mut app, Message::SelectScreen(Screen::Connection));
+        // Volta ao topo, mas a remocao continua pendente (com "Desfazer") e nada saiu.
+        assert_eq!(task.units(), 1);
+        assert!(revoked(&mut rx).is_empty());
+        assert_eq!(
+            app.pending_removal
+                .as_ref()
+                .and_then(PendingRemoval::device_id),
+            Some("D1")
+        );
+        assert_eq!(app.key_input, "sk-rascunho");
+        let _ = update(&mut app, Message::UndoRemove);
+        assert_eq!(app.pending_removal, None);
     }
 
     #[test]
@@ -2868,6 +2898,7 @@ pub(super) mod tests {
             app.transactions.list.count, 2,
             "sem categoria: nula e apagada"
         );
+        app.screen = Screen::Transactions;
         let _ = update(&mut app, Message::ToggleCategoryMenu);
         let _ = update(&mut app, Message::SelectScreen(Screen::Dashboard));
         assert!(!app.cat_menu_open, "trocar de tela fecha");

@@ -87,6 +87,100 @@ const fn rgb(c: Rgb) -> Color {
     Color::from_rgb8(c.0, c.1, c.2)
 }
 
+// ---- escalas (relatorio Grafite · Mesa 7.4) ----
+//
+// Uma regua para todas as telas: hoje convivem tres geracoes de UI (14 contra 16 entre cards,
+// padding de 18, 20 e 24, oito alturas de botao). As telas migram para estas constantes uma a
+// uma nas proximas tarefas; ate la, valor fora da escala numa tela e divida, nao regra nova.
+
+/// Espacamento. Os valores 3, 5, 7, 10, 14 e 28 que as telas ainda usam arredondam para o
+/// vizinho daqui.
+#[allow(dead_code, reason = "as telas migram para a escala na Fase 7")]
+pub mod space {
+    pub const XS: f32 = 4.0;
+    pub const S: f32 = 8.0;
+    pub const M: f32 = 12.0;
+    pub const L: f32 = 16.0;
+    pub const XL: f32 = 20.0;
+    pub const XXL: f32 = 24.0;
+    pub const XXXL: f32 = 32.0;
+    pub const HUGE: f32 = 40.0;
+    pub const GIANT: f32 = 56.0;
+    /// Entre cards de uma tela.
+    pub const BETWEEN_CARDS: f32 = L;
+    /// Padding de card.
+    pub const CARD: f32 = XL;
+    /// Padding de dialogo.
+    pub const DIALOG: f32 = XXL;
+    /// Margem da pagina.
+    pub const PAGE: f32 = XXXL;
+}
+
+/// Raio. Saem 5, 10 e 14.
+#[allow(dead_code, reason = "as telas migram para a escala na Fase 7")]
+pub mod radius {
+    /// Barra de progresso.
+    pub const BAR: f32 = 4.0;
+    /// Segmento, item de menu, caixa interna, tile, botao compacto.
+    pub const INSET: f32 = 6.0;
+    /// Botao, input, linha.
+    pub const CONTROL: f32 = 8.0;
+    pub const CARD: f32 = 8.0;
+    /// Dialogo e quadro do QR.
+    pub const DIALOG: f32 = 12.0;
+    pub const PILL: f32 = 999.0;
+}
+
+/// Alturas de controle e linha, e espessuras de borda.
+#[allow(dead_code, reason = "as telas migram para a escala na Fase 7")]
+pub mod size {
+    /// Controle compacto, dentro de linha.
+    pub const CTRL_S: f32 = 28.0;
+    /// Controle padrao.
+    pub const CTRL_M: f32 = 36.0;
+    /// Cabecalho e navegacao.
+    pub const CTRL_L: f32 = 44.0;
+    /// Linha simples.
+    pub const ROW: f32 = 44.0;
+    /// Linha de duas linhas.
+    pub const ROW_RICH: f32 = 52.0;
+    /// Toda borda tem 1 px.
+    pub const BORDER: f32 = 1.0;
+    /// Menos o foco do input, que tem 2 px no acento.
+    pub const FOCUS_BORDER: f32 = 2.0;
+}
+
+/// Escala de tipo, derivada do Dashboard do dono sem mudar nada nele: as outras telas e que se
+/// conformam. Light so em numero de 24 ou mais; SemiBold so em inicial de avatar e numero de
+/// passo. Saem 10, 20 e 32.
+#[allow(dead_code, reason = "as telas migram para a escala na Fase 7")]
+pub mod type_scale {
+    /// Tag, eixo, escala (Regular ou Medium).
+    pub const MICRO: f32 = 11.0;
+    /// Meta, legenda.
+    pub const META: f32 = 12.0;
+    /// Rotulo de bloco (muted), botao, celula secundaria.
+    pub const LABEL: f32 = 13.0;
+    /// Corpo, linha de lista.
+    pub const BODY: f32 = 14.0;
+    /// Frase de apoio dentro do card.
+    pub const SUPPORT: f32 = 15.0;
+    /// Titulo de secao, fora do card (Medium).
+    pub const SECTION: f32 = 16.0;
+    /// Valor secundario ("Receitas", "Guardado").
+    pub const VALUE_S: f32 = 17.0;
+    /// Frase de previsao; titulo de dialogo e de estado vazio.
+    pub const LEAD: f32 = 18.0;
+    /// Valor medio (Light ou Regular).
+    pub const VALUE_M: f32 = 24.0;
+    /// Titulo da pagina.
+    pub const PAGE: f32 = 30.0;
+    /// Valor grande do bloco (Light).
+    pub const VALUE_L: f32 = 36.0;
+    /// Valor heroi, um por tela (Light).
+    pub const VALUE_XL: f32 = 44.0;
+}
+
 pub static DARK: Tokens = Tokens {
     mode: Mode::Dark,
     bg: hex(0x131313),

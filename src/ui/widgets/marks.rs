@@ -46,27 +46,20 @@ pub fn bar<'a, M: 'a>(spec: Bar<'_>, height: f32) -> Element<'a, M> {
             outlined,
         } => fraction_bar(value, color, track, outlined, height, r),
         Bar::Parts { parts, track } => {
-            let weights: Vec<f64> = parts.iter().map(|(w, _)| *w).collect();
-            let shares = portions(&weights);
-            if shares.iter().all(|p| *p == 0) {
+            let Some(pieces) = parts_plan(parts) else {
                 return container(Space::new())
                     .width(Length::Fill)
                     .height(height)
                     .style(theme::fill(track, r))
                     .into();
-            }
-            let segments =
-                shares
-                    .into_iter()
-                    .zip(parts)
-                    .filter(|(p, _)| *p > 0)
-                    .map(|(p, (_, color))| {
-                        container(Space::new())
-                            .width(Length::FillPortion(p))
-                            .height(height)
-                            .style(theme::fill(*color, r))
-                            .into()
-                    });
+            };
+            let segments = pieces.into_iter().map(|(p, color)| {
+                container(Space::new())
+                    .width(Length::FillPortion(p))
+                    .height(height)
+                    .style(theme::fill(color, r))
+                    .into()
+            });
             Row::with_children(segments)
                 .spacing(3)
                 .width(Length::Fill)
@@ -129,6 +122,19 @@ fn fraction_bar<'a, M: 'a>(
         Some(track) => bar.style(theme::fill(track, r)).into(),
         None => bar.into(),
     }
+}
+
+/// Pedacos da barra de partes, em milesimos, sem os de peso zero. `None` quando nenhum peso e
+/// positivo: a barra mostra so o trilho.
+fn parts_plan(parts: &[(f64, Color)]) -> Option<Vec<(u16, Color)>> {
+    let weights: Vec<f64> = parts.iter().map(|(w, _)| *w).collect();
+    let pieces: Vec<(u16, Color)> = portions(&weights)
+        .into_iter()
+        .zip(parts)
+        .filter(|(p, _)| *p > 0)
+        .map(|(p, (_, color))| (p, *color))
+        .collect();
+    (!pieces.is_empty()).then_some(pieces)
 }
 
 /// Milesimos de cada peso no total (negativo conta zero). Peso positivo minimo vale 1, para a
@@ -431,6 +437,18 @@ mod tests {
         assert_eq!(portions(&[300.0, 100.0]), vec![750, 250]);
         assert_eq!(portions(&[1.0, 1_000_000.0]), vec![1, 999]);
         assert_eq!(portions(&[-5.0, 10.0]), vec![0, 1000]);
+    }
+
+    #[test]
+    fn parte_de_peso_zero_sai_e_tudo_zerado_fica_so_o_trilho() {
+        let (a, b, c) = (Color::WHITE, Color::BLACK, Color::from_rgb(1.0, 0.0, 0.0));
+        assert_eq!(
+            parts_plan(&[(300.0, a), (0.0, b), (100.0, c)]),
+            Some(vec![(750, a), (250, c)])
+        );
+        assert_eq!(parts_plan(&[(0.0, a), (0.0, b)]), None);
+        assert_eq!(parts_plan(&[(-5.0, a)]), None);
+        assert_eq!(parts_plan(&[]), None);
     }
 
     #[test]

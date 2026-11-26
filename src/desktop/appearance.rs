@@ -1,9 +1,11 @@
 //! Tema do sistema (escuro ou claro), para a preferencia "Sistema" da janela.
 //!
-//! Lido do registro, e nao so do `system::theme_changes` do iced: a janela sempre recebe um
-//! tema concreto (a paleta Grafite), o iced repassa esse modo ao winit, e no Windows o winit so
-//! avisa troca do tema do sistema em janela sem tema fixo. A assinatura do iced continua ligada
-//! para os sistemas em que ela chega (Linux); no Windows a UI consulta isto a cada tique.
+//! Lido do registro, e nao do `system::theme_changes` do iced. No Windows o winit 0.30 decide o
+//! tema por `ShouldAppsUseDarkMode` (uxtheme, ordinal 132, nao documentado) sem chamar antes
+//! `RefreshImmersiveColorPolicyState`, entao o `ThemeChanged` que vira `theme_changes` nao chega
+//! ou chega com o valor anterior. O `AppsUseLightTheme` do registro e o que o proprio Windows
+//! grava ao trocar o tema: e a fonte confiavel, e a UI o consulta a cada tique. Onde o registro
+//! nao responde (fora do Windows), vale a assinatura do iced.
 
 /// `true` = escuro; `None` = o sistema nao diz (fora do Windows, ou valor ausente).
 #[cfg(windows)]

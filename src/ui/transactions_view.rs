@@ -12,6 +12,7 @@ use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{App, Message};
 use super::rows::{author_cell, category_tile, hover_row, value_cell};
+use super::shell::Arrival;
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, alpha, mix, size, space, type_scale};
 use super::widgets::{ChipShape, RowEdge, SegmentedSize, SegmentedVariant, TagTone};
 use super::{fonts, icons, shell, widgets};
@@ -35,6 +36,11 @@ const COLUMNS: [u16; 4] = [22, 13, 10, 10];
 const VALUE_WIDTH: f32 = 128.0;
 
 pub fn view(app: &App) -> Element<'_, Message> {
+    // No boot o "Nenhum lançamento sincronizado" seria um vazio falso: o esqueleto comum das
+    // telas de dados entra antes de filtros e tabela (que nem tem o que filtrar ainda).
+    if shell::screen_arrival(app, !app.transactions.is_empty_hub) == Arrival::Opening {
+        return shell::opening(app);
+    }
     // Altura cheia: a casca nao rola esta tela (`shell::owns_scroll`). Filtros, resumo e o
     // cabecalho da tabela ficam parados; so as linhas rolam, dentro do card (`table`). A roda do
     // mouse so rola sobre as linhas: sobre os filtros e as margens nao ha o que rolar.

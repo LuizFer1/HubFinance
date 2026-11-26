@@ -338,6 +338,12 @@ pub(super) fn transactions_count(app: &App) -> usize {
 /// Aparelhos ativos: e o numero de linhas da lista "Usuarios conectados" (sem a remocao
 /// pendente, que ja sumiu da tela).
 pub(super) fn active_devices(app: &App) -> usize {
+    active_device_names(app).len()
+}
+
+/// Nomes dos aparelhos ativos, na ordem do snapshot. A mesma regra de `active_devices`, para o
+/// "Aguardando o primeiro sync de ..." nunca citar um aparelho que a contagem nao conta.
+pub(super) fn active_device_names(app: &App) -> Vec<&str> {
     let pending = app
         .pending_removal
         .as_ref()
@@ -346,7 +352,110 @@ pub(super) fn active_devices(app: &App) -> usize {
         .devices
         .iter()
         .filter(|d| !d.revoked && Some(d.device_id.as_str()) != pending)
-        .count()
+        .map(|d| d.name.as_str())
+        .collect()
+}
+
+/// O que uma tela de dados mostra enquanto nao tem o que mostrar (spec 8.2 e A5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Arrival {
+    /// A tela tem dados: desenha o que tem.
+    Data,
+    /// Nucleo subindo (`Starting`). O primeiro snapshot sai vazio antes de o banco abrir
+    /// (`hub/run.rs`); dizer "Nenhum dado" nesse intervalo seria um vazio falso.
+    Opening,
+    /// Nucleo no ar, hub sem nenhuma linha e nenhum aparelho pareado: "Comece por aqui".
+    FirstUse,
+    /// Hub sem nenhuma linha, mas com aparelho pareado: "Aguardando o primeiro sync de ...".
+    Waiting(String),
+    /// Sem dados para esta tela, mas o hub tem linhas (so reservas, conta comercial vazia) ou
+    /// o nucleo esta desligando: o vazio de sempre, sem prometer um sync que talvez ja houve.
+    Empty,
+}
+
+/// Escolhe o estado. A ordem importa: dado na tela ganha de tudo (um snapshot com dados nunca
+/// mostra esqueleto), depois o boot, e so com o nucleo no ar e o hub vazio de verdade os passos
+/// do primeiro uso ou a espera; o hub com erro nem chega aqui (a casca troca a tela pelo card
+/// de falha).
+pub(super) fn arrival(
+    status: &Status,
+    screen_has_data: bool,
+    hub_has_rows: bool,
+    devices: &[&str],
+) -> Arrival {
+    if screen_has_data {
+        return Arrival::Data;
+    }
+    match status {
+        Status::Starting => Arrival::Opening,
+        Status::Running | Status::NoNetwork if !hub_has_rows => {
+            if devices.is_empty() {
+                Arrival::FirstUse
+            } else {
+                Arrival::Waiting(waiting_line(devices))
+            }
+        }
+        _ => Arrival::Empty,
+    }
+}
+
+/// "Aguardando o primeiro sync de Pixel da Ana"; com mais de um, a contagem ("de 2 celulares"):
+/// a lista de nomes numa linha so nao caberia, e qualquer um deles pode ser o primeiro.
+pub(super) fn waiting_line(devices: &[&str]) -> String {
+    match devices {
+        [] => "Aguardando o primeiro sync".to_string(),
+        [one] => format!("Aguardando o primeiro sync de {one}"),
+        many => format!(
+            "Aguardando o primeiro sync de {}",
+            plural(many.len(), "celular", "celulares")
+        ),
+    }
+}
+
+/// Ha alguma linha viva no hub, em qualquer conta: lancamento ou reserva. E o que separa o hub
+/// que nunca recebeu um sync (passos, espera) da tela que so esta vazia nesta conta.
+pub(super) fn hub_has_rows(app: &App) -> bool {
+    let ds = &app.snapshot.dashboard;
+    !ds.is_empty() || ds.has_reserves()
+}
+
+/// O estado de uma tela de dados que tem (ou nao) o que mostrar.
+pub(super) fn screen_arrival(app: &App, screen_has_data: bool) -> Arrival {
+    arrival(
+        &app.snapshot.status,
+        screen_has_data,
+        hub_has_rows(app),
+        &active_device_names(app),
+    )
+}
+
+/// Texto do estado "Abrindo", o mesmo nas tres telas de dados.
+pub(super) const OPENING_TEXT: &str = "Abrindo os dados da casa";
+
+/// Esqueleto do boot, o mesmo em Resumo, Lancamentos e Reservas: o texto e blocos de
+/// `surface_2` no lugar das secoes (uma faixa larga, duas lado a lado na proporcao 2:1 do
+/// Resumo e mais uma larga). Nao imita cada tela: dura o tempo de abrir o banco. A altura total\n/// (~480) cabe na janela minima sem rolar, porque em Lancamentos a casca nao rola (owns_scroll).
+pub(super) fn opening(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let block = |height: f32| {
+        container(Space::new())
+            .width(Length::Fill)
+            .height(height)
+            .style(theme::fill(t.surface_2, 8.0))
+    };
+    column![
+        text(OPENING_TEXT).size(13).color(t.text_muted),
+        block(120.0),
+        row![
+            container(block(180.0)).width(Length::FillPortion(2)),
+            container(block(180.0)).width(Length::FillPortion(1)),
+        ]
+        .spacing(space::BETWEEN_CARDS),
+        block(120.0),
+    ]
+    .spacing(space::BETWEEN_CARDS)
+    .width(Length::Fill)
+    .into()
 }
 
 /// "Conectar um celular" dos estados vazios, so quando nenhum aparelho esta pareado: sem isso o
@@ -813,14 +922,21 @@ pub(super) fn book_switch(app: &App) -> Option<Element<'_, Message>> {
 /// casa"); a navegacao diz so "Resumo".
 pub(super) fn titles(app: &App) -> (&str, String) {
     let empty = !has_transactions(app);
+    // No boot o vazio ainda nao quer dizer nada: "Nada sincronizado ainda" la seria o mesmo
+    // vazio falso do corpo. A linha volta ao que a tela e; o corpo diz que esta abrindo.
+    let opening = app.snapshot.status == Status::Starting;
     match app.screen {
         Screen::Dashboard => (
             app.dashboard.header.title.as_str(),
-            app.dashboard.header.subtitle.clone(),
+            if opening && app.dashboard.is_empty {
+                DASHBOARD_LINE.into()
+            } else {
+                app.dashboard.header.subtitle.clone()
+            },
         ),
         Screen::Transactions => (
             "Lançamentos",
-            if empty {
+            if empty && !opening {
                 "Nada sincronizado ainda".into()
             } else {
                 transactions_question(&app.transactions.month)
@@ -828,7 +944,7 @@ pub(super) fn titles(app: &App) -> (&str, String) {
         ),
         Screen::Reserves => (
             "Reservas",
-            if app.reserves.is_empty {
+            if app.reserves.is_empty && !opening {
                 "Nada sincronizado ainda".into()
             } else {
                 RESERVES_QUESTION.into()
@@ -856,6 +972,10 @@ fn transactions_question(month: &str) -> String {
 /// A pergunta que Reservas responde. A tela nao tem seletor de mes, entao nunca da lugar ao
 /// "Parcial".
 const RESERVES_QUESTION: &str = "Quanto está guardado, e para quê?";
+
+/// Linha do Resumo no boot: a da conta pessoal com dados (`grafite::header`), que e o que a
+/// tela vai dizer quando o banco abrir na maioria das casas.
+const DASHBOARD_LINE: &str = "Somente leitura · dados do último sync";
 
 /// "1 lançamento" / "1.234 lançamentos" (milhar com ponto, como o pt-BR do app).
 pub(super) fn plural(n: usize, one: &str, many: &str) -> String {
@@ -1015,10 +1135,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
         app.screen = Screen::Reserves;
+        // Boot: a pergunta da tela, nunca o vazio.
+        assert_eq!(titles(&app).1, "Quanto está guardado, e para quê?");
+        app.snapshot.status = Status::Running;
         assert_eq!(
             titles(&app),
             ("Reservas", "Nada sincronizado ainda".to_string())
         );
+        app.screen = Screen::Transactions;
+        assert_eq!(titles(&app).1, "Nada sincronizado ainda");
+        app.snapshot.status = Status::Starting;
+        assert!(titles(&app).1.starts_with("O que entrou e saiu em "));
         let (mut app, _rx, _tx) = super::super::app::tests::app_with_reserves(dir.path());
         app.screen = Screen::Reserves;
         assert_eq!(
@@ -1066,7 +1193,11 @@ mod tests {
             )
         );
         assert_eq!(nav_entries(&app)[0].label, "Resumo");
-        let (empty, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        let snap = Snapshot {
+            status: Status::Running,
+            ..Snapshot::default()
+        };
+        let (empty, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
         assert_eq!(
             titles(&empty),
             ("Resumo da casa", "Nada sincronizado ainda".to_string())
@@ -1353,9 +1484,100 @@ mod tests {
     }
 
     #[test]
+    fn estado_da_tela_sem_dados_por_status_aparelho_e_hub() {
+        let ana = ["Pixel da Ana"];
+        // Com dados na tela, dados, ate no boot.
+        assert_eq!(arrival(&Status::Starting, true, true, &ana), Arrival::Data);
+        assert_eq!(arrival(&Status::Running, true, true, &[]), Arrival::Data);
+        // Boot: abrindo, mesmo sem aparelho no snapshot inicial.
+        assert_eq!(
+            arrival(&Status::Starting, false, false, &[]),
+            Arrival::Opening
+        );
+        // Nucleo no ar, hub vazio e nenhum aparelho: primeiro uso (tambem sem rede).
+        assert_eq!(
+            arrival(&Status::Running, false, false, &[]),
+            Arrival::FirstUse
+        );
+        assert_eq!(
+            arrival(&Status::NoNetwork, false, false, &[]),
+            Arrival::FirstUse
+        );
+        // Aparelho pareado, nada chegou: aguardando.
+        assert_eq!(
+            arrival(&Status::Running, false, false, &ana),
+            Arrival::Waiting("Aguardando o primeiro sync de Pixel da Ana".into())
+        );
+        // O hub tem linhas (so reservas, outra conta): o vazio de sempre, sem prometer sync.
+        assert_eq!(arrival(&Status::Running, false, true, &ana), Arrival::Empty);
+        assert_eq!(arrival(&Status::Running, false, true, &[]), Arrival::Empty);
+        // Desligando ou desligado: nem passos nem espera.
+        assert_eq!(arrival(&Status::Stopped, false, false, &[]), Arrival::Empty);
+        assert_eq!(
+            arrival(&Status::Stopping, false, false, &ana),
+            Arrival::Empty
+        );
+    }
+
+    #[test]
+    fn texto_do_aguardando_com_um_e_com_varios_aparelhos() {
+        assert_eq!(
+            waiting_line(&["Pixel da Ana"]),
+            "Aguardando o primeiro sync de Pixel da Ana"
+        );
+        assert_eq!(
+            waiting_line(&["Pixel da Ana", "iPhone do Luiz"]),
+            "Aguardando o primeiro sync de 2 celulares"
+        );
+        assert_eq!(waiting_line(&[]), "Aguardando o primeiro sync");
+    }
+
+    #[test]
+    fn estados_sem_dados_escolhidos_pelo_app_e_montados_nas_tres_telas() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        let draw = |app: &mut App| {
+            for screen in [Screen::Dashboard, Screen::Transactions, Screen::Reserves] {
+                app.screen = screen;
+                let _ = root(app);
+            }
+            app.screen = Screen::Dashboard;
+        };
+        assert_eq!(screen_arrival(&app, false), Arrival::Opening);
+        draw(&mut app);
+        app.snapshot.status = Status::Running;
+        assert_eq!(screen_arrival(&app, false), Arrival::FirstUse);
+        draw(&mut app);
+        // Revogado nao conta; com um ativo, o nome dele.
+        app.snapshot.devices = vec![
+            device("Pixel da Ana", None, None, false),
+            device("Velho", None, None, true),
+        ];
+        assert_eq!(
+            screen_arrival(&app, false),
+            Arrival::Waiting("Aguardando o primeiro sync de Pixel da Ana".into())
+        );
+        draw(&mut app);
+        app.snapshot
+            .devices
+            .push(device("iPhone do Luiz", None, None, false));
+        assert_eq!(
+            screen_arrival(&app, false),
+            Arrival::Waiting("Aguardando o primeiro sync de 2 celulares".into())
+        );
+        // Com dados: o Resumo do dono, intocado.
+        let (app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        assert_eq!(screen_arrival(&app, !app.dashboard.is_empty), Arrival::Data);
+        assert!(hub_has_rows(&app));
+    }
+
+    #[test]
     fn subtitulos() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        // No boot o vazio nao e verdade ainda: a linha nao diz "Nada sincronizado".
+        assert_eq!(titles(&app).1, "Somente leitura · dados do último sync");
+        app.snapshot.status = Status::Running;
         assert_eq!(titles(&app).1, "Nada sincronizado ainda");
         app.screen = Screen::Connection;
         assert_eq!(

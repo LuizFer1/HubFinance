@@ -17,6 +17,7 @@ use super::charts::{
     series_color,
 };
 use super::rows::{author_cell_of, hover_row};
+use super::shell::Arrival;
 use super::theme::{self, Tokens, space, type_scale};
 use super::widgets::{Bar, RowEdge, StatSize, TagTone};
 use super::{fonts, icons, shell, widgets};
@@ -49,6 +50,10 @@ const EMPTY_PADDING_X: f32 = 32.0;
 pub fn view(app: &App) -> Element<'_, Message> {
     let v = &app.reserves;
     if v.is_empty {
+        // No boot o vazio seria falso: o esqueleto comum das telas de dados no lugar.
+        if shell::screen_arrival(app, false) == Arrival::Opening {
+            return shell::opening(app);
+        }
         return empty_card(app);
     }
     column![

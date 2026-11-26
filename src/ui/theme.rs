@@ -96,7 +96,6 @@ const fn rgb(c: Rgb) -> Color {
 
 /// Espacamento. Os valores 3, 5, 7, 10, 14 e 28 que as telas ainda usam arredondam para o
 /// vizinho daqui.
-#[cfg_attr(not(test), expect(dead_code, reason = "as telas migram na Fase 7"))]
 pub mod space {
     pub const XS: f32 = 4.0;
     pub const S: f32 = 8.0;
@@ -104,16 +103,24 @@ pub mod space {
     pub const L: f32 = 16.0;
     pub const XL: f32 = 20.0;
     pub const XXL: f32 = 24.0;
+    #[cfg_attr(not(test), expect(dead_code, reason = "margem da pagina, issue 05"))]
     pub const XXXL: f32 = 32.0;
+    #[cfg_attr(not(test), expect(dead_code, reason = "sem uso ainda"))]
     pub const HUGE: f32 = 40.0;
+    #[cfg_attr(not(test), expect(dead_code, reason = "sem uso ainda"))]
     pub const GIANT: f32 = 56.0;
     /// Entre cards de uma tela.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "espaco entre blocos, issue de cada tela")
+    )]
     pub const BETWEEN_CARDS: f32 = L;
     /// Padding de card.
     pub const CARD: f32 = XL;
     /// Padding de dialogo.
     pub const DIALOG: f32 = XXL;
     /// Margem da pagina.
+    #[cfg_attr(not(test), expect(dead_code, reason = "margem da pagina, issue 05"))]
     pub const PAGE: f32 = XXXL;
 }
 
@@ -132,7 +139,6 @@ pub mod radius {
 }
 
 /// Alturas de controle e linha, e espessuras de borda.
-#[cfg_attr(not(test), expect(dead_code, reason = "as telas migram na Fase 7"))]
 pub mod size {
     /// Controle compacto, dentro de linha.
     pub const CTRL_S: f32 = 28.0;
@@ -141,6 +147,7 @@ pub mod size {
     /// Cabecalho e navegacao.
     pub const CTRL_L: f32 = 44.0;
     /// Linha simples.
+    #[cfg_attr(not(test), expect(dead_code, reason = "linha simples sem tela ainda"))]
     pub const ROW: f32 = 44.0;
     /// Linha de duas linhas.
     pub const ROW_RICH: f32 = 52.0;
@@ -153,7 +160,6 @@ pub mod size {
 /// Escala de tipo, derivada do Dashboard do dono sem mudar nada nele: as outras telas e que se
 /// conformam. Light so em numero de 24 ou mais; SemiBold so em inicial de avatar e numero de
 /// passo. Saem 10, 20 e 32.
-#[cfg_attr(not(test), expect(dead_code, reason = "as telas migram na Fase 7"))]
 pub mod type_scale {
     /// Tag, eixo, escala (Regular ou Medium).
     pub const MICRO: f32 = 11.0;
@@ -168,12 +174,17 @@ pub mod type_scale {
     /// Titulo de secao, fora do card (Medium).
     pub const SECTION: f32 = 16.0;
     /// Valor secundario ("Receitas", "Guardado").
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "valor secundario, issue de cada tela")
+    )]
     pub const VALUE_S: f32 = 17.0;
     /// Frase de previsao; titulo de dialogo e de estado vazio.
     pub const LEAD: f32 = 18.0;
     /// Valor medio (Light ou Regular).
     pub const VALUE_M: f32 = 24.0;
     /// Titulo da pagina.
+    #[cfg_attr(not(test), expect(dead_code, reason = "titulo da pagina, issue 05"))]
     pub const PAGE: f32 = 30.0;
     /// Valor grande do bloco (Light).
     pub const VALUE_L: f32 = 36.0;

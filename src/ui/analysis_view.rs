@@ -8,7 +8,7 @@ use iced::{Alignment, Color, Element, Length};
 
 use super::app::{App, Message, awaiting_cloud_consent};
 use super::assistant_settings_view;
-use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, radius, size};
 use super::{fonts, icons, rows, time, widgets};
 use crate::advisor::{Finding, Severity};
 use crate::assistant::prompt::Role;
@@ -551,7 +551,14 @@ fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
         let delete = widgets::action_button(t, ButtonKind::Danger, ButtonSize::Compact, "Apagar")
             .on_press(Message::AskDeleteConversation(c.id.clone()));
         let line = row![title, delete].spacing(8).align_y(Alignment::Center);
-        col = col.push(rows::hover_row(app, &c.id, line, [0, 4], 8.0, 52.0));
+        col = col.push(rows::hover_row(
+            app,
+            &c.id,
+            line,
+            [0, 4],
+            radius::CONTROL,
+            size::ROW_RICH,
+        ));
     }
     Some(widgets::card(t, col).padding([18, 20]).into())
 }

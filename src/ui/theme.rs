@@ -390,8 +390,15 @@ impl Tokens {
         self.idle()
     }
 
-    /// Brilho do botao primario (heranca do Nocturne: primario e contorno com brilho, nunca
-    /// preenchido). No claro o alfa e menor porque a sombra dourada sobre branco suja o fundo.
+    /// Brilho dourado do primario do Nocturne (relatorio 7.2). No claro o alfa e menor porque a
+    /// sombra dourada sobre branco suja o fundo.
+    ///
+    /// **Nao e aplicado ao botao.** No renderizador de software (tiny-skia, o que o iced usa sem
+    /// GPU, em VM ou RDP) a sombra e pintada fora de `quad.bounds` sem respeitar o recorte
+    /// (`iced_tiny_skia-0.14.1/src/engine.rs`, desenho do quad), e o dano de `layer.rs::damage`
+    /// so cobre o quad: o halo fica acumulado na tela a cada quadro. No wgpu a sombra e cortada
+    /// a 24 px na borda do `scrollable`. Fica aqui para quem desenhar o brilho por outro caminho.
+    #[cfg_attr(not(test), expect(dead_code, reason = "sem uso no botao, ver acima"))]
     pub fn accent_glow(&self) -> Shadow {
         Shadow {
             color: alpha(
@@ -755,7 +762,8 @@ pub fn seg_option(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonKind {
     /// Acao principal do bloco: contorno `accent`, tinta de 8/16/24 % (repouso, mouse,
-    /// pressionado), texto `text_accent` e `accent_glow`. Nunca preenchido (heranca do Nocturne).
+    /// pressionado) e texto `text_accent`. Nunca preenchido (heranca do Nocturne), e sem o
+    /// `accent_glow`: ver o motivo nele.
     Primary,
     /// Contorno no divisor, texto `fg`, camada `state` de 4/8 % ("Cancelar", "Fechar").
     Secondary,
@@ -868,7 +876,6 @@ pub fn button(
                 background: bg(alpha(t.accent, press.pick(0.08, 0.16, 0.24))),
                 text_color: t.text_accent(),
                 border: outline(t.accent, r),
-                shadow: t.accent_glow(),
                 ..button::Style::default()
             },
             ButtonKind::Secondary => button::Style {
@@ -1764,7 +1771,7 @@ mod tests {
 
     /// O que o relatorio nao pediu para mudar continua igual: fantasma a 12 % no hover com raio
     /// 6, primario a 8/16 %, perigo a 12 % e preenchido a 14/20 %. O secundario passou de 7 % para
-    /// a camada `state` de 4 % (relatorio 9), e o primario ganhou o brilho.
+    /// a camada `state` de 4 % (relatorio 9); o primario continua sem sombra.
     #[test]
     fn estilos_antigos_delegam_e_mantem_a_cara() {
         for t in [&DARK, &LIGHT] {
@@ -1780,7 +1787,7 @@ mod tests {
             );
             let p = outline_accent(t)(&theme, active);
             assert_eq!(p.background, bg(alpha(t.accent, 0.08)));
-            assert_eq!(p.shadow, t.accent_glow());
+            assert_eq!(p.shadow, Shadow::default(), "primario sem brilho");
             assert_eq!(
                 outline_accent(t)(&theme, hover).background,
                 bg(alpha(t.accent, 0.16))

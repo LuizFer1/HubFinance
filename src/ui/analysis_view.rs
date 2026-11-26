@@ -14,7 +14,7 @@ use super::{fonts, icons, rows, time, widgets};
 use crate::advisor::{Finding, Severity};
 use crate::assistant::prompt::Role;
 use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
-use crate::dashboard::money::{MASK, MINUS, group_thousands};
+use crate::dashboard::money::{MASK, MASK_DIGITS, MINUS, group_thousands};
 use crate::hub::snapshot::Status;
 
 const GAP: f32 = 14.0;
@@ -660,39 +660,109 @@ fn mask<'a>(app: &App, s: &'a str) -> Cow<'a, str> {
     }
 }
 
-/// Troca cada "R$ ..." por `MASK`. O "−" colado ao valor sai junto (oculto nao mostra o sinal,
-/// como o `signed_brl` do dashboard); o "~" de estimativa e a pontuacao em volta ficam. O fim
-/// do numero e decidido por digitos: um ponto ou virgula so pertence ao valor quando vem um
-/// digito depois, senao "R$ 960,00." comeria o ponto final e "R$ 5 de R$ 9" comeria o " de".
-/// "R$" sem digito depois (parte do nome de uma categoria, por ex.) nao e valor: fica literal.
+/// Troca todo valor em dinheiro do texto pela mascara. Os achados trazem "R$ 1.234,56", mas a
+/// resposta do modelo pode vir sem o "R$" ("1.500 reais", "5.500,00"), entao ha duas regras:
+///
+/// - "R$" seguido de numero vira `MASK`. O fim do numero e decidido por digitos: um ponto ou
+///   virgula so pertence ao valor quando vem um digito depois, senao "R$ 960,00." comeria o
+///   ponto final e "R$ 5 de R$ 9" comeria o " de". "R$" sem digito depois (parte do nome de uma
+///   categoria, por ex.) nao e valor: fica literal.
+/// - Numero solto com cara de dinheiro vira `MASK_DIGITS`: centavos (`1.234,56`, `1500,00`, a
+///   regra de `money::leaks`) ou milhar com ponto (`1.500`). Porcentagem com uma casa ("12,5%"),
+///   meses ("0,5 mês") e numero pequeno ("3 meses") nao tem esse formato e ficam.
+///
+/// O sinal colado ao valor ("−" ou "-") sai junto: oculto nao mostra o sinal, como o
+/// `signed_brl` do dashboard. O "~" de estimativa e a pontuacao em volta ficam.
 fn mask_str(s: &str) -> String {
+    let b = s.as_bytes();
     let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(i) = rest.find("R$") {
-        let before = &rest[..i];
-        let after_sign = &rest[i + 2..];
-        let number = after_sign.trim_start_matches([' ', '\u{a0}']);
-        let chars: Vec<(usize, char)> = number.char_indices().collect();
-        let mut end = 0;
-        for (n, &(pos, c)) in chars.iter().enumerate() {
-            let next_is_digit = chars.get(n + 1).is_some_and(|&(_, d)| d.is_ascii_digit());
-            if c.is_ascii_digit() || (matches!(c, '.' | ',') && next_is_digit) {
-                end = pos + c.len_utf8();
+    let mut copied = 0;
+    let mut i = 0;
+    while i < b.len() {
+        if s[i..].starts_with("R$") {
+            let after = i + 2;
+            let number =
+                after + (s.len() - after - s[after..].trim_start_matches([' ', '\u{a0}']).len());
+            let end = loose_number_end(b, number);
+            if end > number {
+                out.push_str(strip_sign(&s[copied..i]));
+                out.push_str(MASK);
+                copied = end;
+                i = end;
             } else {
-                break;
+                i = after;
             }
+            continue;
         }
-        if end == 0 {
-            out.push_str(before);
-            out.push_str("R$");
-        } else {
-            out.push_str(before.strip_suffix(MINUS).unwrap_or(before));
-            out.push_str(MASK);
+        if b[i].is_ascii_digit() {
+            let word = s[..i]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_alphanumeric);
+            let run_end = loose_number_end(b, i);
+            if !word && let Some(end) = bare_money_end(b, i) {
+                out.push_str(strip_sign(&s[copied..i]));
+                out.push_str(MASK_DIGITS);
+                copied = end;
+            }
+            // Pula o numero inteiro: recomecar no meio dele acharia "500,00" em "x1500,00".
+            i = run_end.max(i + 1);
+            continue;
         }
-        rest = if end == 0 { after_sign } else { &number[end..] };
+        i += s[i..].chars().next().map_or(1, char::len_utf8);
     }
-    out.push_str(rest);
+    out.push_str(&s[copied..]);
     out
+}
+
+/// Fim do numero a partir de `start`: digitos, e ponto ou virgula so com digito depois.
+fn loose_number_end(b: &[u8], start: usize) -> usize {
+    let mut end = start;
+    while end < b.len() {
+        let c = b[end];
+        let next_is_digit = b.get(end + 1).is_some_and(u8::is_ascii_digit);
+        if c.is_ascii_digit() || (matches!(c, b'.' | b',') && next_is_digit) {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    // Termina sempre num digito: o ultimo byte aceito e digito pela regra acima.
+    end
+}
+
+/// Fim do numero solto em `start` se ele tem cara de dinheiro: `\d+(\.\d{3})*,\d{2}` (com
+/// milhar, a primeira parte tem 1 a 3 digitos) ou `\d{1,3}(\.\d{3})+`, sem digito colado
+/// depois. `None` para o resto ("12,5", "2026", "3").
+fn bare_money_end(b: &[u8], start: usize) -> Option<usize> {
+    let digits = |from: usize| b[from..].iter().take_while(|c| c.is_ascii_digit()).count();
+    let lead = digits(start);
+    let mut end = start + lead;
+    let mut groups = 0;
+    while b.get(end) == Some(&b'.') && digits(end + 1) == 3 {
+        end += 4;
+        groups += 1;
+    }
+    if groups > 0 && lead > 3 {
+        return None;
+    }
+    if b.get(end) == Some(&b',') && digits(end + 1) == 2 {
+        return Some(end + 3);
+    }
+    (groups > 0).then_some(end)
+}
+
+/// Tira o sinal colado ao fim de `before` ("−" tipografico ou "-" ASCII), so quando ele nao
+/// emenda numa palavra: "item-1.500" nao e sinal.
+fn strip_sign(before: &str) -> &str {
+    for sign in [MINUS, "-"] {
+        if let Some(rest) = before.strip_suffix(sign)
+            && !rest.chars().next_back().is_some_and(char::is_alphanumeric)
+        {
+            return rest;
+        }
+    }
+    before
 }
 
 #[cfg(test)]
@@ -734,10 +804,11 @@ mod tests {
     }
 
     #[test]
-    fn mascara_nao_deixa_valor_nenhum_nos_achados_do_exemplo() {
+    fn mascara_nao_deixa_valor_nenhum_nos_achados_nem_na_resposta() {
+        use crate::dashboard::money::leaks;
         use crate::dashboard::{GRAFITE_TODAY, fixtures_grafite};
         let analysis = crate::advisor::analyze(&fixtures_grafite(), GRAFITE_TODAY);
-        let texts: Vec<&str> = analysis
+        let mut texts: Vec<&str> = analysis
             .findings
             .iter()
             .flat_map(|f| {
@@ -750,15 +821,43 @@ mod tests {
             .flatten()
             .collect();
         assert!(
-            texts.iter().any(|t| t.contains("R$ ")),
+            texts.iter().any(|t| leaks(t).is_some()),
             "o teste so vale se algum texto trouxer dinheiro"
         );
+        // Resposta do modelo sem "R$": o prompt pede o formato, mas a mascara nao confia nele.
+        let reply = "Você gastou 1.500 reais em mercado e faltam 5.500,00 para a meta; \
+                     no mês passado foram 1500,00 e o saldo ficou -R$ 3,00.";
+        texts.push(reply);
         for t in texts {
             let masked = mask_str(t);
-            let leaked = masked
-                .match_indices("R$ ")
-                .any(|(i, _)| masked[i + 3..].starts_with(|c: char| c.is_ascii_digit()));
-            assert!(!leaked, "{t:?} -> {masked:?}");
+            assert_eq!(leaks(&masked), None, "{t:?} -> {masked:?}");
+        }
+        assert_eq!(
+            mask_str(reply),
+            format!(
+                "Você gastou {MASK_DIGITS} reais em mercado e faltam {MASK_DIGITS} para a meta; \
+                 no mês passado foram {MASK_DIGITS} e o saldo ficou {MASK}."
+            )
+        );
+    }
+
+    #[test]
+    fn mascara_tira_o_hifen_antes_do_valor_so_quando_e_sinal() {
+        assert_eq!(mask_str("saldo -R$ 3,00"), format!("saldo {MASK}"));
+        assert_eq!(mask_str("saldo -1.500"), format!("saldo {MASK_DIGITS}"));
+        assert_eq!(mask_str("item-1.500"), format!("item-{MASK_DIGITS}"));
+    }
+
+    #[test]
+    fn mascara_deixa_numeros_que_nao_sao_dinheiro() {
+        for t in [
+            "Você guarda 80% da renda",
+            "cobre só 0,5 mês",
+            "subiu 12,5% em 2026",
+            "3 meses, dia 24/09",
+            "A1234",
+        ] {
+            assert_eq!(mask_str(t), t);
         }
     }
 

@@ -1,7 +1,10 @@
 //! As tres animacoes da janela (spec 11): o scrim do dialogo entrando, o toast entrando e
 //! saindo, e o cursor da resposta que chega. O iced nao tem transicao implicita; cada uma e uma
-//! `iced::Animation` que a `view` interpola contra `now`, e `window::frames()` so fica ligado
-//! enquanto alguma anda (`App::animating`). Fora disso a janela nao redesenha a toa.
+//! `iced::Animation` que a `view` interpola contra `now`. O scrim e o toast ligam o
+//! `window::frames()` so enquanto andam (`Motion::animating`); o cursor nao usa quadros: a
+//! resposta pode levar minutos, e quadros na taxa da tela a toda hora seria redesenhar 60 vezes
+//! por segundo para trocar um caractere duas. Ele tem um relogio proprio, um `Frame` a cada
+//! `BLINK` (`Motion::blinking`, `app::blinks`). Fora disso a janela nao redesenha a toa.
 //!
 //! "Reduzir movimento" (Ajustes) desliga as tres: o estado final aparece na hora e o cursor
 //! fica parado, aceso.
@@ -140,13 +143,17 @@ impl Motion {
         }
     }
 
-    /// Alguma animacao em curso: e o que liga o `window::frames()`. O cursor conta enquanto a
-    /// resposta chega (ele se repete para sempre, entao nunca "termina" sozinho).
+    /// Scrim ou toast em curso: e o que liga o `window::frames()`. O cursor fica de fora (ver
+    /// `blinking`).
     pub fn animating(&self) -> bool {
-        !self.reduce
-            && (self.scrim.is_animating(self.now)
-                || self.toast.is_animating(self.now)
-                || self.scene.streaming)
+        !self.reduce && (self.scrim.is_animating(self.now) || self.toast.is_animating(self.now))
+    }
+
+    /// Cursor piscando: liga o relogio de piscada, um `Frame` a cada `BLINK`. A piscada troca
+    /// no meio de cada meio ciclo (`step`), entao a amostra a cada `BLINK` cai sempre a
+    /// 265 ms da troca e acerta o estado mesmo com atraso do relogio.
+    pub fn blinking(&self) -> bool {
+        !self.reduce && self.scene.streaming
     }
 
     /// Fracao da opacidade final do scrim (0 a 1).
@@ -305,7 +312,8 @@ mod tests {
             ..Scene::default()
         };
         m.sync(streaming, t0);
-        assert!(m.animating());
+        assert!(!m.animating(), "o cursor nao liga os quadros");
+        assert!(m.blinking());
         let ms = |n| t0 + Duration::from_millis(n);
         let samples: Vec<bool> = [100, 400, 700, 1000, 1200, 1500]
             .into_iter()
@@ -316,9 +324,17 @@ mod tests {
             .collect();
         // Aceso ate 265 ms, apagado ate 795, aceso ate 1325, apagado de novo.
         assert_eq!(samples, [true, false, false, true, true, false]);
+        // Amostras do relogio de piscada (a cada `BLINK`, com alguns ms de atraso) alternam.
+        let ticks: Vec<bool> = (1..=6)
+            .map(|k| {
+                m.frame(t0 + BLINK * k + Duration::from_millis(7));
+                m.cursor_on()
+            })
+            .collect();
+        assert_eq!(ticks, [false, true, false, true, false, true]);
         m.sync(Scene::default(), ms(1600));
         assert!(m.cursor_on());
-        assert!(!m.animating());
+        assert!(!m.blinking());
     }
 
     #[test]
@@ -377,9 +393,10 @@ mod tests {
         m.set_reduce(true);
         assert!(!m.animating());
         assert_eq!(m.scrim(), 1.0);
+        assert!(!m.blinking());
         m.set_reduce(false);
         assert!(
-            m.animating(),
+            m.blinking(),
             "a resposta ainda chega: o cursor volta a piscar"
         );
     }

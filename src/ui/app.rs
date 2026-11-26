@@ -2209,6 +2209,30 @@ fn ticks() -> futures::channel::mpsc::Receiver<()> {
     rx
 }
 
+/// Um instante a cada `BLINK`, enquanto a assinatura existir. Os prazos saem do inicio
+/// (`inicio + k * BLINK`), nao de `sleep` encadeado: o atraso de cada volta nao se acumula e a
+/// amostra nao escorrega ate a troca do cursor numa resposta longa.
+fn blinks() -> futures::channel::mpsc::Receiver<Instant> {
+    let (mut tx, rx) = futures::channel::mpsc::channel(1);
+    std::thread::spawn(move || {
+        let start = Instant::now();
+        let mut k: u32 = 0;
+        loop {
+            k = k.saturating_add(1);
+            let deadline = start + super::motion::BLINK * k;
+            std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            // Cheio = a UI ainda nao consumiu o anterior; pular um nao importa. Desconectado =
+            // a assinatura saiu (a resposta terminou): a thread acaba.
+            if let Err(e) = tx.try_send(Instant::now())
+                && e.is_disconnected()
+            {
+                break;
+            }
+        }
+    });
+    rx
+}
+
 /// Nucleo no ar (com ou sem rede local): o unico estado em que da para gerar codigo.
 fn is_up(snap: &Snapshot) -> bool {
     matches!(snap.status, Status::Running | Status::NoNetwork)
@@ -2227,6 +2251,11 @@ pub fn subscription(app: &App) -> Subscription<Message> {
     // segundo parada.
     if app.motion.animating() {
         subs.push(window::frames().map(Message::Frame));
+    }
+    // O cursor da resposta tem relogio proprio: quadros a toda hora durante uma resposta de
+    // minutos seriam 60 redesenhos por segundo para piscar um caractere.
+    if app.motion.blinking() {
+        subs.push(Subscription::run(blinks).map(Message::Frame));
     }
     Subscription::batch(subs)
 }

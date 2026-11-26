@@ -94,10 +94,10 @@ pub fn icon_button<'a, M: Clone + 'a>(
     .into()
 }
 
-/// Variante do segmentado. `Pill` (ativo neutro, no divisor) e o seletor de tema e de conta,
-/// num trilho `surface` sobre o fundo da pagina; `PillInset` e a mesma peca dentro de card,
-/// com trilho `surface_2` (o `surface` sumiria no card). `Bordered` (ativo no acento) e o
-/// Sim | Nao e o filtro de tipo: trilho so com contorno.
+/// Variante do segmentado. `Pill` (ativo neutro, no divisor) e o seletor de conta, num trilho
+/// `surface` sobre o fundo da pagina; `PillInset` e a mesma peca dentro de card (o tema em
+/// Ajustes), com trilho `surface_2` (o `surface` sumiria no card). `Bordered` (ativo no acento)
+/// e o filtro de tipo: trilho so com contorno.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SegmentedVariant {
     Pill,
@@ -158,8 +158,8 @@ fn segment_plan<'a, M>(
 }
 
 /// Segmentado de N opcoes `(rotulo, ativa, mensagem)`. `size` da a altura da opcao. `fill`
-/// divide a largura igualmente (lateral, Sim | Nao); sem ele cada opcao tem a largura do
-/// rotulo mais o respiro.
+/// divide a largura igualmente (opcoes de mesmo peso numa coluna fixa); sem ele cada opcao tem
+/// a largura do rotulo mais o respiro.
 pub fn segmented<'a, M: Clone + 'a>(
     t: &'static Tokens,
     variant: SegmentedVariant,

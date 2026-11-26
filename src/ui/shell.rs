@@ -203,7 +203,7 @@ fn resize_frame<'a>() -> Element<'a, Message> {
 
 // ---- barra lateral ----
 
-/// "Somente leitura" ja esta no subtitulo do Dashboard e no card "Sobre"; a versao precisa de um
+/// "Somente leitura" ja esta no subtitulo do Resumo; a versao precisa de um
 /// lugar permanente, e o subtitulo curto deixa de quebrar em duas linhas.
 pub(super) fn brand_subtitle() -> String {
     format!("Hub de casa · v{}", crate::config::VERSION)

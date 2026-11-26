@@ -1164,6 +1164,12 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             })
         }
         Message::SystemTheme(mode) => {
+            // Onde o registro responde (Windows), so ele manda: o aviso do winit la chega
+            // atrasado ou com o valor anterior (ver `desktop::appearance`), e aceita-lo fazia
+            // o tema piscar entre o velho e o novo, sobretudo com alto contraste.
+            if app.desktop.system_dark().is_some() {
+                return Task::none();
+            }
             // `None` = o sistema nao tem preferencia: fica o ultimo valor conhecido.
             match mode {
                 iced::theme::Mode::Dark => app.set_system_dark(true),
@@ -2000,10 +2006,13 @@ pub(super) mod tests {
         fake.system_dark.set(Some(true));
         let _ = update(&mut app, Message::Tick);
         assert!(std::ptr::eq(app.tokens, &super::super::theme::DARK));
-        // O aviso do iced tambem troca (caminho do Linux); `None` nao mexe.
+        // Com o registro respondendo, o aviso do iced e ignorado: ele chega velho no Windows.
+        let _ = update(&mut app, Message::SystemTheme(iced::theme::Mode::Light));
+        assert!(std::ptr::eq(app.tokens, &super::super::theme::DARK));
+        // Sem registro (Linux), o aviso do iced troca; `None` nao mexe.
+        fake.system_dark.set(None);
         let _ = update(&mut app, Message::SystemTheme(iced::theme::Mode::Light));
         assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
-        fake.system_dark.set(None);
         let _ = update(&mut app, Message::SystemTheme(iced::theme::Mode::None));
         let _ = update(&mut app, Message::Tick);
         assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));

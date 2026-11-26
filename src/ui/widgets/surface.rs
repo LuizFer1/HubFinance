@@ -58,8 +58,11 @@ pub fn vdivider<'a, M: 'a>(t: &'static Tokens) -> Element<'a, M> {
 /// Linha de ajuste: rotulo 14 em `fg` a esquerda, ocupando o que sobra, com um detalhe
 /// opcional embaixo (frase de apoio, caminho de pasta), e o controle a direita. Altura minima
 /// de 52 px (`size::ROW_RICH`), e nao fixa: o detalhe pode quebrar (o iced 0.14 nao tem
-/// reticencias, e um caminho cortado nao serve) e a linha cresce com ele. O `Space` de 52 na
-/// propria linha e o que segura a altura: o `container` do iced nao tem altura minima.
+/// reticencias, e um caminho cortado nao serve) e a linha cresce com ele. Um `Space` de 52 de
+/// altura e largura zero segura a altura (o `container` do iced nao tem altura minima); ele
+/// fica numa linha de fora, sem espacamento, porque o `spacing` do iced vale tambem depois de
+/// filho de largura zero e empurraria o rotulo 16 px para dentro, desalinhando-o das notas
+/// soltas da tela.
 pub fn settings_row<'a, M: 'a>(
     t: &'static Tokens,
     label: &str,
@@ -70,15 +73,17 @@ pub fn settings_row<'a, M: 'a>(
     if let Some(detail) = detail {
         left = left.push(detail);
     }
-    row![
-        Space::new().width(0).height(size::ROW_RICH),
+    let line = row![
         container(left.padding([space::S, 0.0])).width(Length::Fill),
         control.into()
     ]
     .spacing(space::L)
     .align_y(Alignment::Center)
-    .width(Length::Fill)
-    .into()
+    .width(Length::Fill);
+    row![Space::new().width(0).height(size::ROW_RICH), line]
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .into()
 }
 
 /// Titulo de secao, fora do card: titulo 16 Medium, pergunta 13 `text_muted` ao lado (vazia

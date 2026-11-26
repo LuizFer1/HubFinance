@@ -197,6 +197,46 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn codigo_revogado_nao_pareia_nem_abre_o_guia() {
+        use std::net::Ipv4Addr;
+        use std::sync::RwLock;
+
+        use crate::server::ca_http::{CaState, ca_router};
+
+        let app = test_app();
+        let token = app.issue_token();
+        // O "Conectar um celular" fechou: `CancelPairingToken` revoga no mesmo livro que os dois
+        // servidores consultam.
+        app.state.tokens.lock().unwrap().revoke();
+        let (status, body) = app
+            .call(
+                "POST",
+                "/v1/pair",
+                Some(json!({ "token": token, "deviceId": DEVICE_A, "name": "A" })),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"], "invalid_token");
+        assert!(app.state.store.list_devices().unwrap().is_empty());
+
+        let ca = CaState {
+            ca_pem: Arc::new(String::new()),
+            tokens: app.state.tokens.clone(),
+            primary_ip: Arc::new(RwLock::new(Some(Ipv4Addr::new(192, 168, 0, 5)))),
+            https_port: 7777,
+            now: Arc::new(t0),
+            events: mpsc::unbounded_channel().0,
+        };
+        let req = Request::builder()
+            .uri(format!("/p/{token}"))
+            .body(Body::empty())
+            .unwrap();
+        let res = ca_router(ca).oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
     async fn pair_feliz_grava_hash_e_avisa() {
         let mut app = test_app();
         let token = app.issue_token();

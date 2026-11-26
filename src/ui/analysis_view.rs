@@ -734,7 +734,9 @@ fn streaming_view<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> {
     let shown = if partial.is_empty() {
         Cow::Borrowed("…")
     } else if app.hide_values {
-        Cow::Owned(mask_streaming(partial))
+        // A mascara olha o texto desenhado, nao o Markdown cru: "R$ **1500**" e "1.**234**,56"
+        // so viram dinheiro depois de interpretados.
+        Cow::Owned(mask_streaming(&plain_text(partial)))
     } else {
         Cow::Borrowed(partial)
     };
@@ -761,23 +763,61 @@ fn streaming_view<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> {
     .into()
 }
 
-/// A mascara do texto chegando. O numero no fim do parcial pode estar pela metade ("1500,0"
-/// vira "1500,00" no proximo pedaco): incompleto, a mascara nao o reconhece como dinheiro. Por
-/// isso a ultima sequencia de digitos, "." e "," que encosta no fim fica escondida ate o texto
-/// seguir.
-pub(super) fn mask_streaming(partial: &str) -> String {
-    let tail = partial
-        .bytes()
-        .rev()
-        .take_while(|b| b.is_ascii_digit() || matches!(b, b'.' | b','))
-        .count();
-    let head = &partial[..partial.len() - tail];
-    let tail_text = &partial[head.len()..];
-    if tail_text.bytes().any(|b| b.is_ascii_digit()) {
-        mask_str(head)
-    } else {
-        mask_str(partial)
+/// A mascara do texto chegando (`plain_text` do parcial). O numero no fim pode estar pela
+/// metade ("1500,0" vira "1500,00"; "5 " vira "5 mil"; "1 " vira "1 234,56"): incompleto, a
+/// mascara nao o reconhece como dinheiro. Por isso o fim que ainda pode virar valor fica
+/// escondido ate o texto seguir (`pending_number_start`).
+pub(super) fn mask_streaming(drawn: &str) -> String {
+    let drawn = drawn.trim_end();
+    match pending_number_start(drawn) {
+        Some(cut) => mask_str(&drawn[..cut]),
+        None => mask_str(drawn),
     }
+}
+
+/// Inicio do numero que encosta no fim de `text` e ainda pode crescer, se ha um. Andando de tras
+/// para frente: um comeco de unidade ("m", "mi", "re"), espacos, e a sequencia de digitos,
+/// separadores (".", ",", espaco de milhar) e marcas de Markdown ainda abertas ("**", "~~"),
+/// com o sinal colado. Sem digito nessa sequencia nao ha numero pendente.
+fn pending_number_start(text: &str) -> Option<usize> {
+    let mut end = text.len();
+    let word = text[..end]
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_alphabetic())
+        .last()
+        .map(|(i, _)| i);
+    if let Some(start) = word {
+        let w = text[start..end].to_lowercase();
+        let unit = MAGNITUDES
+            .iter()
+            .chain(UNITS.iter())
+            .any(|u| u.starts_with(&w));
+        let before = text[..start].chars().next_back();
+        if unit && before.is_some_and(|c| c.is_whitespace() || c.is_ascii_digit()) {
+            end = start;
+        }
+    }
+    let end = text[..end].trim_end().len();
+    let mut start = end;
+    let mut digit = false;
+    for (i, c) in text[..end].char_indices().rev() {
+        let part = c.is_ascii_digit()
+            || matches!(c, '.' | ',' | '*' | '_' | '~' | '`' | '\\')
+            || thousands_space(text, i).is_some();
+        if !part {
+            break;
+        }
+        digit |= c.is_ascii_digit();
+        start = i;
+    }
+    if !digit {
+        return None;
+    }
+    // Comeca no primeiro digito ou marca, nao no espaco que separa da palavra anterior.
+    start = end - text[start..end].trim_start().len();
+    let head = strip_sign(&text[..start]);
+    Some(head.len())
 }
 
 // ---- Markdown da resposta ----
@@ -1050,9 +1090,17 @@ pub(super) fn retention_value(deny_data_collection: bool) -> &'static str {
 }
 
 /// O envelope da conversa como aparece na previa: o da propria conversa (e o que de fato vai),
-/// com a mascara de "Ocultar valores" so na tela.
+/// com a mascara de "Ocultar valores" so na tela. Com o olho desligado e o texto exato do envio.
+/// Com ele ligado, as respostas anteriores do assistente passam antes por `plain_text`: sao
+/// Markdown, e "R$ **1500**" ou "R\$ 1.500" so viram dinheiro que a mascara reconhece depois de
+/// interpretados.
 pub(super) fn preview_shown(app: &App, open: &OpenConversation) -> String {
-    mask(app, &preview_body(open)).into_owned()
+    if !app.hide_values {
+        return preview_body(open);
+    }
+    mask_str(&preview_text_with(open, |turn| {
+        plain_text(turn).trim_end().to_string()
+    }))
 }
 
 /// Tudo que o dono dos dados autoriza ao aprovar: o envelope e as mensagens que vao no pedido.
@@ -1060,18 +1108,26 @@ pub(super) fn preview_shown(app: &App, open: &OpenConversation) -> String {
 /// para a previa nao poder divergir do que de fato sai. As regras fixas do assistente (sem
 /// dado nenhum) so sao citadas na introducao.
 pub(super) fn preview_body(open: &OpenConversation) -> String {
+    preview_text_with(open, str::to_string)
+}
+
+/// A montagem da previa, com `assistant` aplicado ao texto de cada resposta anterior.
+fn preview_text_with(open: &OpenConversation, assistant: impl Fn(&str) -> String) -> String {
     let payload = open.payload();
     let mut out = open.envelope.clone();
     out.push_str("\n\n— Conversa —");
     for turn in payload.iter().skip(1) {
-        let who = match turn.role {
-            Role::Assistant => "Assistente",
-            _ => "Você",
-        };
         out.push('\n');
-        out.push_str(who);
-        out.push_str(": ");
-        out.push_str(&turn.content);
+        match turn.role {
+            Role::Assistant => {
+                out.push_str("Assistente: ");
+                out.push_str(&assistant(&turn.content));
+            }
+            _ => {
+                out.push_str("Você: ");
+                out.push_str(&turn.content);
+            }
+        }
     }
     out
 }
@@ -1341,17 +1397,23 @@ fn mask<'a>(app: &App, s: &'a str) -> Cow<'a, str> {
 }
 
 /// Troca todo valor em dinheiro do texto pela mascara. Os achados trazem "R$ 1.234,56", mas a
-/// resposta do modelo pode vir sem o "R$" ("1.500 reais", "5.500,00"), entao ha duas regras:
+/// resposta do modelo pode vir sem o "R$" ("1.500 reais", "5 mil", "1234.56"), entao ha duas
+/// regras:
 ///
-/// - "R$" seguido de numero vira `MASK`. O fim do numero e decidido por digitos: um ponto ou
-///   virgula so pertence ao valor quando vem um digito depois, senao "R$ 960,00." comeria o
-///   ponto final e "R$ 5 de R$ 9" comeria o " de". "R$" sem digito depois (parte do nome de uma
-///   categoria, por ex.) nao e valor: fica literal.
-/// - Numero solto com cara de dinheiro vira `MASK_DIGITS`: centavos (`1.234,56`, `1500,00`, a
-///   regra de `money::leaks`) ou milhar com ponto (`1.500`). Porcentagem com uma casa ("12,5%"),
-///   meses ("0,5 mês") e numero pequeno ("3 meses") nao tem esse formato e ficam.
+/// - "R$" seguido de numero (depois de qualquer espaco Unicode: NBSP, U+202F, tab) vira `MASK`.
+///   O fim do numero sai de `scan_number`: um ponto ou virgula so pertence ao valor quando vem
+///   um digito depois, senao "R$ 960,00." comeria o ponto final e "R$ 5 de R$ 9" comeria o
+///   " de". "R$" sem digito depois (parte do nome de uma categoria, por ex.) fica literal.
+/// - Numero solto com cara de dinheiro vira `MASK_DIGITS`: parte inteira de 3 ou mais digitos
+///   ("1500", "1500,5", "1234.56"; um ano tambem cai aqui, e e aceito: vazar valor e pior),
+///   milhar com ponto ou espaco ("1.500", "1 234,56"), duas casas ("12,50") ou unidade depois
+///   ("3 reais", "5 mil", "1,5 mil", "5k"). Porcentagem ("12,5%", "150%"), meses ("0,5 mês"),
+///   datas ("19 nov", "24/09") e numero pequeno ("3 meses") ficam.
 ///
-/// O sinal colado ao valor ("−" ou "-") sai junto: oculto nao mostra o sinal, como o
+/// A ordem de grandeza ("mil", "milhões", "k") some junto com o numero: "••••• mil" ainda diria
+/// o tamanho do valor. "reais" fica, como o resto da frase.
+///
+/// O sinal colado ao valor ("−", "-" ou "+") sai junto: oculto nao mostra o sinal, como o
 /// `signed_brl` do dashboard. O "~" de estimativa e a pontuacao em volta ficam.
 fn mask_str(s: &str) -> String {
     let b = s.as_bytes();
@@ -1361,10 +1423,10 @@ fn mask_str(s: &str) -> String {
     while i < b.len() {
         if s[i..].starts_with("R$") {
             let after = i + 2;
-            let number =
-                after + (s.len() - after - s[after..].trim_start_matches([' ', '\u{a0}']).len());
-            let end = loose_number_end(b, number);
-            if end > number {
+            let number = s.len() - s[after..].trim_start().len();
+            if b.get(number).is_some_and(u8::is_ascii_digit) {
+                let n = scan_number(s, number);
+                let end = magnitude_end(s, n.end).unwrap_or(n.end);
                 out.push_str(strip_sign(&s[copied..i]));
                 out.push_str(MASK);
                 copied = end;
@@ -1379,11 +1441,13 @@ fn mask_str(s: &str) -> String {
                 .chars()
                 .next_back()
                 .is_some_and(char::is_alphanumeric);
-            let run_end = loose_number_end(b, i);
-            if !word && let Some(end) = bare_money_end(b, i) {
+            let n = scan_number(s, i);
+            let mut run_end = n.end;
+            if !word && let Some(end) = bare_money_end(s, &n) {
                 out.push_str(strip_sign(&s[copied..i]));
                 out.push_str(MASK_DIGITS);
                 copied = end;
+                run_end = end;
             }
             // Pula o numero inteiro: recomecar no meio dele acharia "500,00" em "x1500,00".
             i = run_end.max(i + 1);
@@ -1395,47 +1459,113 @@ fn mask_str(s: &str) -> String {
     out
 }
 
-/// Fim do numero a partir de `start`: digitos, e ponto ou virgula so com digito depois.
-fn loose_number_end(b: &[u8], start: usize) -> usize {
-    let mut end = start;
-    while end < b.len() {
-        let c = b[end];
-        let next_is_digit = b.get(end + 1).is_some_and(u8::is_ascii_digit);
-        if c.is_ascii_digit() || (matches!(c, b'.' | b',') && next_is_digit) {
-            end += 1;
-        } else {
-            break;
-        }
-    }
-    // Termina sempre num digito: o ultimo byte aceito e digito pela regra acima.
-    end
+/// Um numero lido por `scan_number`.
+struct Number {
+    /// Fim do numero (byte); termina sempre num digito.
+    end: usize,
+    /// Digitos da parte inteira, milhares incluidos.
+    int_digits: usize,
+    /// Tem separador de milhar ("1.500", "1 234").
+    grouped: bool,
+    /// Termina em virgula ou ponto com exatamente duas casas ("12,50", "15.90").
+    cents: bool,
 }
 
-/// Fim do numero solto em `start` se ele tem cara de dinheiro: `\d+(\.\d{3})*,\d{2}` (com
-/// milhar, a primeira parte tem 1 a 3 digitos) ou `\d{1,3}(\.\d{3})+`, sem digito colado
-/// depois. `None` para o resto ("12,5", "2026", "3").
-fn bare_money_end(b: &[u8], start: usize) -> Option<usize> {
-    let digits = |from: usize| b[from..].iter().take_while(|c| c.is_ascii_digit()).count();
+/// Espaco que separa milhar ("1 234,56"): o comum, o NBSP, o fino e o U+202F que alguns
+/// formatadores usam. Devolve o tamanho em bytes.
+fn thousands_space(s: &str, at: usize) -> Option<usize> {
+    match s.get(at..)?.chars().next()? {
+        c @ (' ' | '\u{a0}' | '\u{2009}' | '\u{202f}') => Some(c.len_utf8()),
+        _ => None,
+    }
+}
+
+/// Le o numero que comeca no digito `start`: parte inteira, grupos de milhar (ponto ou espaco
+/// e exatamente 3 digitos, so se a primeira parte tem ate 3) e parte decimal (virgula ou ponto
+/// seguido de digito). Separador sem digito depois nao entra: e pontuacao da frase.
+fn scan_number(s: &str, start: usize) -> Number {
+    let b = s.as_bytes();
+    let digits = |from: usize| {
+        b.get(from..)
+            .map_or(0, |r| r.iter().take_while(|c| c.is_ascii_digit()).count())
+    };
     let lead = digits(start);
     let mut end = start + lead;
-    let mut groups = 0;
-    while b.get(end) == Some(&b'.') && digits(end + 1) == 3 {
-        end += 4;
-        groups += 1;
+    let mut int_digits = lead;
+    let mut grouped = false;
+    if lead <= 3 {
+        loop {
+            let sep = if b.get(end) == Some(&b'.') {
+                Some(1)
+            } else {
+                thousands_space(s, end)
+            };
+            match sep {
+                Some(n) if digits(end + n) == 3 => {
+                    end += n + 3;
+                    int_digits += 3;
+                    grouped = true;
+                }
+                _ => break,
+            }
+        }
     }
-    if groups > 0 && lead > 3 {
-        return None;
+    let mut cents = false;
+    if matches!(b.get(end), Some(b',' | b'.')) {
+        let frac = digits(end + 1);
+        if frac > 0 {
+            cents = frac == 2;
+            end += 1 + frac;
+        }
     }
-    if b.get(end) == Some(&b',') && digits(end + 1) == 2 {
-        return Some(end + 3);
+    Number {
+        end,
+        int_digits,
+        grouped,
+        cents,
     }
-    (groups > 0).then_some(end)
 }
 
-/// Tira o sinal colado ao fim de `before` ("−" tipografico ou "-" ASCII), so quando ele nao
+/// A palavra logo depois de `at` (pulando espacos), em minusculas, e onde ela termina. Palavra
+/// inteira: "5 kg" le "kg", e nao "k".
+fn next_word(s: &str, at: usize) -> Option<(String, usize)> {
+    let rest = s.get(at..)?;
+    let start = at + (rest.len() - rest.trim_start().len());
+    let len: usize = s[start..]
+        .chars()
+        .take_while(|c| c.is_alphanumeric())
+        .map(char::len_utf8)
+        .sum();
+    (len > 0).then(|| (s[start..start + len].to_lowercase(), start + len))
+}
+
+/// Ordem de grandeza depois do numero: some junto com ele.
+const MAGNITUDES: [&str; 4] = ["mil", "milhão", "milhões", "k"];
+/// Unidade depois do numero: faz dele dinheiro, mas fica na frase.
+const UNITS: [&str; 2] = ["reais", "real"];
+
+/// Fim da ordem de grandeza ("mil", "k") depois do numero que termina em `at`.
+fn magnitude_end(s: &str, at: usize) -> Option<usize> {
+    next_word(s, at).and_then(|(w, end)| MAGNITUDES.contains(&w.as_str()).then_some(end))
+}
+
+/// Fim do trecho a mascarar se o numero solto `n` tem cara de dinheiro; `None` para o resto
+/// ("12,5%", "0,5 mês", "3 meses").
+fn bare_money_end(s: &str, n: &Number) -> Option<usize> {
+    if s[n.end..].trim_start().starts_with('%') {
+        return None;
+    }
+    if let Some(end) = magnitude_end(s, n.end) {
+        return Some(end);
+    }
+    let unit = next_word(s, n.end).is_some_and(|(w, _)| UNITS.contains(&w.as_str()));
+    (n.int_digits >= 3 || n.grouped || n.cents || unit).then_some(n.end)
+}
+
+/// Tira o sinal colado ao fim de `before` ("−" tipografico, "-" ou "+"), so quando ele nao
 /// emenda numa palavra: "item-1.500" nao e sinal.
 fn strip_sign(before: &str) -> &str {
-    for sign in [MINUS, "-"] {
+    for sign in [MINUS, "-", "+"] {
         if let Some(rest) = before.strip_suffix(sign)
             && !rest.chars().next_back().is_some_and(char::is_alphanumeric)
         {
@@ -1608,11 +1738,68 @@ mod tests {
         for t in [
             "Você guarda 80% da renda",
             "cobre só 0,5 mês",
-            "subiu 12,5% em 2026",
+            "subiu 12,5% no mês",
+            "subiu 150% no ano",
             "3 meses, dia 24/09",
+            "fechou em 19 nov",
             "A1234",
+            "5 kg de arroz e 5 km",
+            "5 mililitros",
         ] {
             assert_eq!(mask_str(t), t);
+        }
+        // Um ano tem 4 digitos e cai na regra do inteiro longo: aceito, vazar valor e pior.
+        assert_eq!(
+            mask_str("subiu 12,5% em 2026"),
+            format!("subiu 12,5% em {MASK_DIGITS}")
+        );
+    }
+
+    /// Os formatos que o modelo usa sem "R$": cada um vira mascara, sem digito nenhum sobrando
+    /// (o `leaks` so ve "d,dd" e "R$ d", entao o texto exato e conferido tambem).
+    #[test]
+    fn mascara_pega_valor_sem_cifrao_em_qualquer_formato() {
+        use crate::dashboard::money::leaks;
+        let d = MASK_DIGITS;
+        let cases = [
+            ("gastou 1500 reais", format!("gastou {d} reais")),
+            ("gastou 3 reais", format!("gastou {d} reais")),
+            ("1 real a mais", format!("{d} real a mais")),
+            ("sobram 5 mil", format!("sobram {d}")),
+            ("sobram 1,5 mil.", format!("sobram {d}.")),
+            ("sobram 5k no mês", format!("sobram {d} no mês")),
+            ("perto de 2 milhões", format!("perto de {d}")),
+            ("total 1500 no mês", format!("total {d} no mês")),
+            ("total 1234.56", format!("total {d}")),
+            ("total 1500,5 hoje", format!("total {d} hoje")),
+            ("total 1 234,56 hoje", format!("total {d} hoje")),
+            ("total 1\u{a0}234,56", format!("total {d}")),
+            ("total 1\u{202f}234,56", format!("total {d}")),
+            ("total 12,50 hoje", format!("total {d} hoje")),
+            ("saldo +1.500", format!("saldo {d}")),
+            ("saldo +R$ 3,00", format!("saldo {MASK}")),
+            ("R$ 5 mil no mês", format!("{MASK} no mês")),
+            ("R$ 1 234,56.", format!("{MASK}.")),
+        ];
+        for (input, expected) in cases {
+            let masked = mask_str(input);
+            assert_eq!(masked, expected, "{input:?}");
+            assert_eq!(leaks(&masked), None, "{input:?} -> {masked:?}");
+            assert!(
+                !masked.chars().any(|c| c.is_ascii_digit()),
+                "{input:?} -> {masked:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mascara_apara_todo_espaco_unicode_depois_do_cifrao() {
+        use crate::dashboard::money::leaks;
+        for space in [" ", "\u{a0}", "\u{202f}", "\t", "\u{2009}", "  "] {
+            let input = format!("custou R${space}1.234,56 hoje");
+            let masked = mask_str(&input);
+            assert_eq!(masked, format!("custou {MASK} hoje"), "{input:?}");
+            assert_eq!(leaks(&masked), None, "{input:?}");
         }
     }
 
@@ -2017,6 +2204,95 @@ mod tests {
             "{done}"
         );
         assert_eq!(mask_streaming("tudo certo."), "tudo certo.");
+    }
+
+    /// O streaming mascara o texto desenhado (`plain_text` do parcial): a cada pedaco que chega,
+    /// nenhum digito de valor aparece, nem quando a unidade, o milhar ou a enfase ainda nao
+    /// chegaram.
+    #[test]
+    fn texto_chegando_nao_mostra_digito_em_prefixo_nenhum() {
+        use crate::dashboard::money::leaks;
+        let full = [
+            "gastou 5 mil no mês",
+            "sobram 1,5 mil hoje",
+            "total 1 234,56 hoje",
+            "foi R$ **1500** no mês",
+            "foi 1.**234**,56 hoje",
+            "foi R\\$ 1.500 hoje",
+            "saldo -1.500 e +R$ 3,00 ok",
+        ];
+        for text in full {
+            for (i, _) in text.char_indices().skip(1).chain([(text.len(), ' ')]) {
+                let partial = &text[..i];
+                let shown = mask_streaming(&plain_text(partial));
+                assert!(
+                    !shown.chars().any(|c| c.is_ascii_digit()),
+                    "{partial:?} -> {shown:?}"
+                );
+                assert_eq!(leaks(&shown), None, "{partial:?} -> {shown:?}");
+            }
+        }
+        // Terminados, os tres casos de Markdown viram a mascara exata.
+        assert_eq!(
+            mask_streaming(&plain_text("foi R$ **1500** no mês")),
+            format!("foi {MASK} no mês")
+        );
+        assert_eq!(
+            mask_streaming(&plain_text("foi 1.**234**,56 hoje")),
+            format!("foi {MASK_DIGITS} hoje")
+        );
+        assert_eq!(
+            mask_streaming(&plain_text("foi R\\$ 1.500 hoje")),
+            format!("foi {MASK} hoje")
+        );
+    }
+
+    /// A previa com o olho ligado mascara o texto que as respostas anteriores desenham; com ele
+    /// desligado continua o payload exato, Markdown incluido.
+    #[test]
+    fn previa_mascara_o_texto_desenhado_das_respostas_anteriores() {
+        use crate::assistant::view::MessageRole;
+        use crate::dashboard::money::leaks;
+        use crate::ui::app::tests::app_with_fixtures;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let replies = ["foi R$ **1500**", "foi 1.**234**,56", "foi R\\$ 1.500"];
+        let mut messages = Vec::new();
+        for (i, reply) in replies.iter().enumerate() {
+            let mut q = msg(MessageRole::User, None);
+            q.id = format!("q{i}");
+            q.content = "e agora?".into();
+            let mut a = msg(MessageRole::Assistant, None);
+            a.id = format!("a{i}");
+            a.content = (*reply).to_string();
+            messages.extend([q, a]);
+        }
+        let mut pending = msg(MessageRole::User, None);
+        pending.id = "q".into();
+        pending.content = "e o resto?".into();
+        messages.push(pending);
+        let open = conversation_with(messages);
+
+        app.hide_values = false;
+        let exact = preview_shown(&app, &open);
+        assert_eq!(exact, preview_body(&open));
+        for reply in replies {
+            assert!(exact.contains(reply), "{exact}");
+        }
+
+        app.hide_values = true;
+        let shown = preview_shown(&app, &open);
+        assert_eq!(leaks(&shown), None, "{shown}");
+        assert!(!shown.chars().any(|c| c.is_ascii_digit()), "{shown}");
+        assert!(
+            shown.contains(&format!("Assistente: foi {MASK}\n")),
+            "{shown}"
+        );
+        assert!(
+            shown.contains(&format!("Assistente: foi {MASK_DIGITS}\n")),
+            "{shown}"
+        );
+        assert!(shown.ends_with("Você: e o resto?"), "{shown}");
     }
 
     #[test]

@@ -8,7 +8,7 @@ use iced::{Alignment, Border, Color, Element, Length, Theme};
 
 use super::fonts;
 use super::icons;
-use super::theme::{self, Tokens};
+use super::theme::{self, Tokens, space};
 
 mod controls;
 mod marks;
@@ -56,7 +56,7 @@ pub fn kicker_accent<'a, M: 'a>(t: &'static Tokens, content: &str) -> Element<'a
 pub fn page_title<'a, M: 'a>(t: &'static Tokens, title: &str, subtitle: &str) -> Element<'a, M> {
     iced::widget::column![
         text(title.to_string())
-            .size(30)
+            .size(theme::type_scale::PAGE)
             .line_height(1.1)
             .color(t.text),
         text(subtitle.to_string()).size(13).color(t.text_muted),
@@ -183,7 +183,7 @@ pub fn step<'a, M: 'a>(t: &'static Tokens, n: u8, content: Element<'a, M>) -> El
     .center(20)
     .style(theme::fill(t.accent_900, 10.0));
     row![number, container(content).width(Length::Fill)]
-        .spacing(10)
+        .spacing(space::M)
         .align_y(Alignment::Start)
         .into()
 }

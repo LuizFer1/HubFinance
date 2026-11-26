@@ -38,27 +38,26 @@ pub struct Tokens {
     divider: Color,
     pub accent: Color,
     /// Texto/icone sobre preenchimento `accent`.
-    #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
+    #[allow(dead_code, reason = "degrau da paleta §4.1 inteira, sem uso nas telas")]
     pub on_accent: Color,
     pub accent_100: Color,
     pub accent_200: Color,
     pub accent_300: Color,
     pub accent_400: Color,
     /// No escuro e o proprio `accent`; no claro e um degrau mais claro que ele.
-    #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
+    #[allow(dead_code, reason = "degrau da paleta §4.1 inteira, sem uso nas telas")]
     pub accent_500: Color,
-    #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
+    #[allow(dead_code, reason = "degrau da paleta §4.1 inteira, sem uso nas telas")]
     pub accent_600: Color,
     pub accent_700: Color,
     /// Trilho do toggle ligado (paleta §4.1).
-    #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
     pub accent_800: Color,
     pub accent_900: Color,
     /// Atencao (meta estourando, "sem dados", codigo expirado). Nao e o `tag-amber` das
     /// categorias: o dourado do acento ficou quase igual a ele, entao atencao virou laranja.
     pub warning: Color,
     pub neutral_100: Color,
-    #[allow(dead_code, reason = "degrau da paleta para a Fase 7")]
+    #[allow(dead_code, reason = "degrau da paleta §4.1 inteira, sem uso nas telas")]
     pub neutral_200: Color,
     pub neutral_300: Color,
     pub neutral_400: Color,
@@ -174,7 +173,6 @@ pub mod type_scale {
     /// Valor medio (Light ou Regular).
     pub const VALUE_M: f32 = 24.0;
     /// Titulo da pagina.
-    #[cfg_attr(not(test), expect(dead_code, reason = "titulo da pagina, issue 05"))]
     pub const PAGE: f32 = 30.0;
     /// Valor grande do bloco (Light).
     pub const VALUE_L: f32 = 36.0;
@@ -393,29 +391,6 @@ impl Tokens {
     /// controle inativo), e e o que separa "desabilitado" de "secundario".
     pub fn text_disabled(&self) -> Color {
         self.idle()
-    }
-
-    /// Brilho dourado do primario do Nocturne (relatorio 7.2). No claro o alfa e menor porque a
-    /// sombra dourada sobre branco suja o fundo.
-    ///
-    /// **Nao e aplicado ao botao.** No renderizador de software (tiny-skia, o que o iced usa sem
-    /// GPU, em VM ou RDP) a sombra e pintada fora de `quad.bounds` sem respeitar o recorte
-    /// (`iced_tiny_skia-0.14.1/src/engine.rs`, desenho do quad), e o dano de `layer.rs::damage`
-    /// so cobre o quad: o halo fica acumulado na tela a cada quadro. No wgpu a sombra e cortada
-    /// a 24 px na borda do `scrollable`. Fica aqui para quem desenhar o brilho por outro caminho.
-    #[cfg_attr(not(test), expect(dead_code, reason = "sem uso no botao, ver acima"))]
-    pub fn accent_glow(&self) -> Shadow {
-        Shadow {
-            color: alpha(
-                self.accent,
-                match self.mode {
-                    Mode::Dark => 0.28,
-                    Mode::Light => 0.16,
-                },
-            ),
-            offset: Vector::ZERO,
-            blur_radius: 24.0,
-        }
     }
 
     /// Divisoria opaca: o hex da paleta sobre `surface` (sobre `bg` fica um tom mais clara que
@@ -823,7 +798,9 @@ pub fn seg_option(
 pub enum ButtonKind {
     /// Acao principal do bloco: contorno `accent`, tinta de 8/16/24 % (repouso, mouse,
     /// pressionado) e texto `text_accent`. Nunca preenchido (heranca do Nocturne), e sem o
-    /// `accent_glow`: ver o motivo nele.
+    /// brilho dourado do prototipo: no renderizador de software (tiny-skia, sem GPU, em VM ou
+    /// RDP) a sombra e pintada fora de `quad.bounds` sem recorte e o dano so cobre o quad, entao
+    /// o halo se acumula na tela a cada quadro; no wgpu ela e cortada na borda do `scrollable`.
     Primary,
     /// Contorno no divisor, texto `fg`, camada `state` de 4/8 % ("Cancelar", "Fechar").
     Secondary,
@@ -1721,18 +1698,7 @@ mod tests {
             assert_eq!(t.text_accent(), t.accent_300, "{:?}", t.mode);
             assert_eq!(t.state(false), t.text_alpha(0.04), "{:?}", t.mode);
             assert_eq!(t.state(true), t.text_alpha(0.08), "{:?}", t.mode);
-            let glow = t.accent_glow();
-            assert_eq!(glow.blur_radius, 24.0);
-            assert_eq!(
-                Color {
-                    a: 1.0,
-                    ..glow.color
-                },
-                t.accent
-            );
         }
-        assert!((DARK.accent_glow().color.a - 0.28).abs() < f32::EPSILON);
-        assert!((LIGHT.accent_glow().color.a - 0.16).abs() < f32::EPSILON);
     }
 
     /// Canal a canal com folga de 1: a mistura e em float e dois canais do claro caem em x,5.

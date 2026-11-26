@@ -356,7 +356,7 @@ pub fn field_copy<'a, M: Clone + 'a>(
     let copy = copy_button(t, copied, on_copy);
     container(
         row![icons::icon(glyph, 15.0, glyph_color), value, copy]
-            .spacing(10)
+            .spacing(space::M)
             .align_y(Alignment::Center),
     )
     .height(size::CTRL_L)

@@ -431,7 +431,7 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
     .spacing(12)
     .align_y(Alignment::Center);
     let mut balance = row![widgets::money(t, &e.balance, StatSize::L, t.text)]
-        .spacing(10)
+        .spacing(space::M)
         .align_y(Alignment::End);
     if let Some(goal) = &e.goal_note {
         balance = balance.push(
@@ -594,7 +594,7 @@ fn essential_section<'a>(
                 .wrapping(Wrapping::None)
                 .color(t.text_soft()),
         ]
-        .spacing(10)
+        .spacing(space::M)
         .height(28)
         .align_y(Alignment::Center)
         .width(Length::Fill)
@@ -730,7 +730,7 @@ fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
             .align_y(Alignment::Center),
         );
     }
-    container(row![tile, body].spacing(14).align_y(Alignment::Start))
+    container(row![tile, body].spacing(space::L).align_y(Alignment::Start))
         .padding([14, 0])
         .width(Length::Fill)
         .into()
@@ -750,7 +750,7 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
         .size(15)
         .font(fonts::INTER_MEDIUM)
         .color(t.text);
-    let mut keys = row![].spacing(14).align_y(Alignment::Center);
+    let mut keys = row![].spacing(space::L).align_y(Alignment::Center);
     for s in &v.series {
         keys = keys.push(
             row![
@@ -911,7 +911,7 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
         .width(MOVEMENT_VALUE_WIDTH)
         .align_x(Alignment::End),
     ]
-    .spacing(14)
+    .spacing(space::L)
     .align_y(Alignment::Center);
     hover_row(
         app,

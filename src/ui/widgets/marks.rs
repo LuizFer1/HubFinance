@@ -331,7 +331,7 @@ pub fn color_tag<'a, M: 'a>(t: &'static Tokens, token: &str) -> Element<'a, M> {
             dot(t.token(token), 6.0),
             tag_text(crate::dashboard::colors::color_name(token), t.text_soft()),
         ]
-        .spacing(5)
+        .spacing(space::XS)
         .align_y(Alignment::Center),
         t.token_tint(token, 0.16),
         TAG_HEIGHT,

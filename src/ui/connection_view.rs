@@ -13,7 +13,7 @@ use iced::widget::{Space, column, container, qr_code, row, text};
 use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
 use super::app::{App, CopyTarget, Message, Screen};
-use super::theme::{self, ButtonKind, ButtonSize, Tokens, type_scale};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, space, type_scale};
 use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
 use super::{fonts, icons, measure, rows, shell, time, widgets};
 use crate::dashboard::people::{Person, presence};
@@ -416,7 +416,7 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
             icons::icon(icons::DEVICE_MOBILE, 12.0, muted),
             text(person.device_name.clone()).size(12).color(muted),
         ]
-        .spacing(5)
+        .spacing(space::XS)
         .align_y(Alignment::Center),
         text(format!(
             "desde {}",
@@ -428,10 +428,10 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
             widgets::dot(dot, 6.0),
             text(seen.label(person.user_known)).size(12).color(muted),
         ]
-        .spacing(5)
+        .spacing(space::XS)
         .align_y(Alignment::Center),
     ]
-    .spacing(10)
+    .spacing(space::M)
     .align_y(Alignment::Center)
     .wrap()
     .vertical_spacing(4);
@@ -449,10 +449,10 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
         // Altura minima da linha (68 com o padding): o iced nao tem `min-height`.
         Space::new().width(0).height(48),
         avatar,
-        column![name, meta].spacing(3).width(Length::Fill),
+        column![name, meta].spacing(space::XS).width(Length::Fill),
         remove,
     ]
-    .spacing(14)
+    .spacing(space::L)
     .align_y(Alignment::Center);
 
     rows::hover_row(
@@ -491,7 +491,7 @@ fn activity_card(app: &App) -> Element<'_, Message> {
                 text(at).size(12).color(t.text_muted).width(44),
                 text(entry.text.clone()).size(13).color(color),
             ]
-            .spacing(10)
+            .spacing(space::M)
             .height(28)
             .align_y(Alignment::Center),
         );
@@ -600,7 +600,7 @@ fn footer<'a>(t: &'static Tokens, step: ConnectStep) -> Element<'a, Message> {
             .on_press(Message::ConnectBack)
     };
     let mut line = row![Space::new().width(Length::Fill)]
-        .spacing(10)
+        .spacing(space::M)
         .align_y(Alignment::Center);
     match step {
         ConnectStep::WiFi => {
@@ -705,7 +705,7 @@ fn certificate_step(app: &App, os: PhoneOs) -> Element<'_, Message> {
         switch,
         steps,
     ]
-    .spacing(14)
+    .spacing(space::L)
     .width(Length::Fill)
     .into()
 }
@@ -713,7 +713,7 @@ fn certificate_step(app: &App, os: PhoneOs) -> Element<'_, Message> {
 /// Passo 3: QR e codigo a esquerda, os passos e o endereco a direita.
 fn pair_step(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
-    let mut info = column![].spacing(10).width(Length::Fill);
+    let mut info = column![].spacing(space::M).width(Length::Fill);
     for (i, line) in PAIR_STEPS.iter().enumerate() {
         let n = u8::try_from(i + 1).unwrap_or(u8::MAX);
         info = info.push(widgets::step(t, n, widgets::step_text(t, *line).into()));

@@ -13,7 +13,7 @@ use super::app::{App, Message, RemoveStep};
 // As contagens usam o "4.688" do resto da UI: numero grande sem separador e dificil de ler justo
 // no dialogo em que a pessoa decide o que apagar.
 use super::shell::{plural, thousands};
-use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, space};
 use super::{fonts, icons, widgets};
 use crate::hub::snapshot::DeviceView;
 use crate::store::erase::{Area, AreaSet, DeviceData};
@@ -243,7 +243,7 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
                 widgets::action_button(t, kind, size, primary_label)
             }
             .on_press(Message::RemoveContinue);
-            row![Space::new().width(Length::Fill), cancel, primary].spacing(10)
+            row![Space::new().width(Length::Fill), cancel, primary].spacing(space::M)
         }
         RemoveStep::Confirm => {
             let back = widgets::action_button(t, ButtonKind::Secondary, size, "Voltar")
@@ -255,7 +255,7 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
                 confirm_label(data, state.selected, orphan),
             )
             .on_press(Message::ConfirmRemove);
-            row![Space::new().width(Length::Fill), back, confirm].spacing(10)
+            row![Space::new().width(Length::Fill), back, confirm].spacing(space::M)
         }
     };
 

@@ -11,7 +11,7 @@ use iced::widget::{
 use iced::{Alignment, Element, Length};
 
 use super::app::{App, Message};
-use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, space};
 use super::{fonts, icons, widgets};
 use crate::assistant::secret::Secret;
 use crate::assistant::settings::{ProviderChoice, Settings};
@@ -353,7 +353,7 @@ fn radio_row<'a>(
         .center(16)
         .style(theme::outlined(ring, 8.0));
     let mut line = row![dot, text(label).size(14).color(t.text).width(180)]
-        .spacing(10)
+        .spacing(space::M)
         .align_y(Alignment::Center);
     if let Some(detail) = detail {
         line = line.push(
@@ -427,7 +427,7 @@ fn local_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
         widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Regular, test_label)
             .on_press_maybe((!view.listing && port.is_some()).then_some(Message::SetupTest)),
     ]
-    .spacing(10)
+    .spacing(space::M)
     .align_y(Alignment::Center);
     let mut section = column![port_row].spacing(12);
     let listed_here = port.is_some() && view.models_port == port;

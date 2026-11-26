@@ -131,7 +131,7 @@ fn titlebar(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let mark = container(icons::icon(icons::HOUSE_LINE, 11.0, t.accent_400))
         .center(18)
-        .style(theme::fill(t.accent_900, 5.0));
+        .style(theme::fill(t.accent_900, theme::radius::INSET));
     let brand = row![mark, text("HubFinance").size(12).color(t.text_soft()),]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -244,7 +244,7 @@ fn sidebar(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let mark = container(icons::icon(icons::HOUSE_LINE, 20.0, t.accent_400))
         .center(36)
-        .style(theme::fill(t.accent_900, 10.0));
+        .style(theme::fill(t.accent_900, theme::radius::CONTROL));
     let brand = container(
         row![
             mark,
@@ -717,10 +717,10 @@ fn status_card(app: &App) -> Element<'_, Message> {
             halo_dot(lines.dot),
             text(lines.title).size(13).color(t.text)
         ]
-        .spacing(5)
+        .spacing(space::XS)
         .align_y(Alignment::Center)
     ]
-    .spacing(5);
+    .spacing(space::XS);
     if let Some(address) = lines.address {
         col = col.push(text(address).size(12).color(t.text_muted));
     }
@@ -764,7 +764,7 @@ fn content(app: &App) -> Element<'_, Message> {
     // ele comeria a altura de toda tela ate a pessoa decidir. Excecao: em Lancamentos, que rola
     // so as linhas (`owns_scroll`), ele fica fixo acima dos filtros e tira altura das linhas ate
     // a pessoa decidir.
-    let mut page = column![].spacing(14);
+    let mut page = column![].spacing(space::L);
     if let Some(banner) = remove_view::orphan_banner(app) {
         page = page.push(banner);
     }
@@ -868,7 +868,7 @@ pub(super) fn header_controls(screen: Screen) -> HeaderControls {
 fn header(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let (title, line) = header_line(app);
-    let mut controls = row![].spacing(10).align_y(Alignment::Center);
+    let mut controls = row![].spacing(space::M).align_y(Alignment::Center);
     if let Some(switch) = book_switch(app) {
         controls = controls.push(switch);
     }

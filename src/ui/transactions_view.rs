@@ -199,7 +199,7 @@ fn menu_item<'a>(
                     .color(t.text_muted),
                 container(check).width(14),
             ]
-            .spacing(10)
+            .spacing(space::M)
             .align_y(Alignment::Center),
         )
         .height(Length::Fill)

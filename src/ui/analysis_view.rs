@@ -11,7 +11,7 @@ use iced::widget::{
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{AnalysisTab, App, CopyTarget, Message, awaiting_cloud_consent};
-use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, radius, size};
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, radius, size, space, type_scale};
 use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
 use super::{fonts, icons, rows, shell, time, widgets};
 use crate::advisor::{FigureValue, Finding, FindingKind, Severity};
@@ -210,7 +210,7 @@ fn findings_panel(app: &App) -> Element<'_, Message> {
         .padding([40, 20])
         .into()
     } else {
-        let mut groups = column![].spacing(22).max_width(FINDINGS_MAX);
+        let mut groups = column![].spacing(space::XXL).max_width(FINDINGS_MAX);
         for severity in SEVERITIES {
             let items: Vec<&Finding> = findings.iter().filter(|f| f.severity == severity).collect();
             if items.is_empty() {
@@ -236,7 +236,7 @@ fn findings_panel(app: &App) -> Element<'_, Message> {
             groups = groups.push(group);
         }
         container(groups)
-            .padding([18, 20])
+            .padding(space::CARD)
             .width(Length::Fill)
             .into()
     };
@@ -331,7 +331,7 @@ fn comparison_view<'a>(app: &App, severity: Severity, c: &Comparison) -> Element
         };
         row![
             text(label)
-                .size(theme::type_scale::META)
+                .size(type_scale::META)
                 .color(t.text_muted)
                 .width(COMPARISON_LABEL),
             widgets::bar(
@@ -344,12 +344,12 @@ fn comparison_view<'a>(app: &App, severity: Severity, c: &Comparison) -> Element
                 6.0,
             ),
             text(shown)
-                .size(theme::type_scale::META)
+                .size(type_scale::META)
                 .color(t.text_soft())
                 .width(COMPARISON_VALUE)
                 .align_x(Alignment::End),
         ]
-        .spacing(theme::space::S)
+        .spacing(space::S)
         .align_y(Alignment::Center)
         .into()
     };
@@ -357,9 +357,9 @@ fn comparison_view<'a>(app: &App, severity: Severity, c: &Comparison) -> Element
         line("No mês", c.real, severity_fg(t, severity)),
         line(c.reference_label, c.reference, t.neutral_500),
     ]
-    .spacing(theme::space::XS)
+    .spacing(space::XS)
     .padding(Padding {
-        top: theme::space::XS,
+        top: space::XS,
         ..Padding::ZERO
     })
     .into()
@@ -551,7 +551,7 @@ fn conversation_body<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a
     // reenviaria sem a pessoa ver o que vai. A previa toma o lugar dele e do campo de pergunta.
     let awaiting = awaiting_cloud_consent(app).is_some();
     let last = open.messages.len().saturating_sub(1);
-    let mut messages = column![].spacing(14).width(Length::Fill);
+    let mut messages = column![].spacing(space::L).width(Length::Fill);
     for (i, m) in open.messages.iter().enumerate() {
         messages = messages.push(message_view(app, m, i == last && !view.busy && !awaiting));
     }
@@ -641,8 +641,8 @@ fn message_view<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<
         MessageRole::User => {
             let bubble = container(text(mask(app, &m.content)).size(14).color(t.text))
                 .padding([8, 12])
-                .max_width(300)
-                .style(theme::fill(t.surface_2, 10.0));
+                .max_width(320)
+                .style(theme::fill(t.surface_2, radius::CONTROL));
             // Pergunta sem resposta e sem nada em andamento (a abertura nao saiu, ou o envio
             // morreu antes do erro virar mensagem): sem este botao a conversa ficaria parada.
             let mut side = column![bubble].spacing(6).align_x(Alignment::End);
@@ -1104,7 +1104,7 @@ fn awaiting_foot(t: &'static Tokens) -> Element<'static, Message> {
             .on_press(Message::ShowCloudPreview),
         ],
     ]
-    .spacing(10)
+    .spacing(space::M)
     .into()
 }
 

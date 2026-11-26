@@ -3,7 +3,7 @@
 
 use iced::widget::text::Wrapping;
 use iced::widget::{container, row, text};
-use iced::{Alignment, Color, Element, Length};
+use iced::{Alignment, Element, Length};
 
 use super::app::{App, Message};
 use super::theme::Tokens;
@@ -14,18 +14,6 @@ use crate::dashboard::list::{ListRow, RowAuthor};
 
 /// Coluna do valor nas linhas de lancamento.
 const VALUE_WIDTH: f32 = 128.0;
-
-pub(super) fn kicker_with_icon<'a>(
-    t: &'static Tokens,
-    glyph: &'static str,
-    color: Color,
-    label: &str,
-) -> Element<'a, Message> {
-    row![icons::icon(glyph, 13.0, color), widgets::kicker(t, label)]
-        .spacing(6)
-        .align_y(Alignment::Center)
-        .into()
-}
 
 /// Tile da categoria; sem categoria viva, o tile neutro com `circle-dashed`.
 pub(super) fn category_tile<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Message> {

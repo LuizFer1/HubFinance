@@ -240,7 +240,7 @@ fn tile_box<'a, M: 'a>(
 }
 
 /// Altura da tag (relatorio 9).
-const TAG_HEIGHT: f32 = 20.0;
+pub(super) const TAG_HEIGHT: f32 = 20.0;
 
 /// Tom da tag. Neutra (`text_soft` sobre `neutral_800`) para estado que nao conta ("Oculto",
 /// "Transferência"); acento (`accent_300` sobre `accent_900`) para o que e do mes ("hoje",

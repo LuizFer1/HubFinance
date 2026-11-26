@@ -117,6 +117,25 @@ pub fn money<'a, M: 'a>(
     )
 }
 
+/// Altura da linha do rotulo de `stat_label`: a da tag (20), para o card que leva uma tag ao lado
+/// do rotulo ("Emergência coberta" com "hoje") ter o topo na mesma altura dos vizinhos sem tag.
+const STAT_LABEL_HEIGHT: f32 = super::marks::TAG_HEIGHT;
+
+/// Rotulo de bloco: 13 Regular `text_muted`, como o de `stat`, mas numa linha da altura da tag,
+/// para cards lado a lado com e sem tag no rotulo (os KPIs de Reservas). O `stat` fica com o
+/// texto solto: o Resumo do dono usa ele, e a linha de 20 o desceria 3 px.
+pub fn stat_label<'a, M: 'a>(t: &'static Tokens, label: &str) -> Element<'a, M> {
+    container(
+        text(label.to_string())
+            .size(type_scale::LABEL)
+            .wrapping(Wrapping::None)
+            .color(t.text_muted),
+    )
+    .height(STAT_LABEL_HEIGHT)
+    .align_y(Alignment::Center)
+    .into()
+}
+
 /// Bloco de numero: rotulo 13 `text_muted` em cima, o valor e uma nota 12 opcional. Devolve a
 /// `Column` (espaco 8) para a tela trocar o espaco ou acrescentar linhas embaixo.
 pub fn stat<'a, M: 'a>(
@@ -204,6 +223,7 @@ mod tests {
                 let _: Element<'_, ()> = stat(t, "Saldo", value, None).into();
             }
             let _: Element<'_, ()> = figure(t, "Receitas", "+R$ 6.500,00", t.income_fg);
+            let _: Element<'_, ()> = stat_label(t, "Últimos 12 meses");
             let _: Element<'_, ()> = value_line(
                 vec![
                     ("3,5".into(), 36.0, fonts::INTER_LIGHT, t.text),
@@ -226,5 +246,13 @@ mod tests {
                 ("•••".to_string(), 17.0, fonts::INTER, t.text),
             ]
         );
+    }
+
+    #[test]
+    fn rotulo_do_bloco_tem_a_altura_da_tag() {
+        // O topo dos tres cards de Reservas so casa se o rotulo e a tag tiverem a mesma altura
+        // (relatorio 9: tag de 20 px).
+        assert_eq!(STAT_LABEL_HEIGHT, 20.0);
+        let _: Element<'_, ()> = stat_label(&DARK, "Total separado");
     }
 }

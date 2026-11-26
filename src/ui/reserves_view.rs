@@ -6,8 +6,9 @@
 //! numero por cima do botao de ocultar. Os textos seguem o bloco `isRes` do prototipo e o
 //! trecho de `renderVals()` a partir de `RD`.
 
+use iced::widget::text::Text;
 use iced::widget::text::Wrapping;
-use iced::widget::{Space, canvas, column, container, row, text};
+use iced::widget::{Column, Space, canvas, column, container, row, text};
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{App, Message};
@@ -15,8 +16,8 @@ use super::charts::{
     EMPTY_RESERVES_HEIGHT, EMPTY_RESERVES_WIDTH, EmptyReservesProgram, StackedBarsProgram,
     series_color,
 };
-use super::rows::{author_cell_of, hover_row, kicker_with_icon};
-use super::theme::{self, Tokens, type_scale};
+use super::rows::{author_cell_of, hover_row};
+use super::theme::{self, Tokens, space, type_scale};
 use super::widgets::{Bar, RowEdge, StatSize, TagTone};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::contract::MovementKind;
@@ -26,7 +27,10 @@ use crate::dashboard::reserves::{
     ReserveColor,
 };
 
-const GAP: f32 = 14.0;
+/// Entre os blocos da tela: o espaco entre cards de toda tela (7.4).
+const GAP: f32 = space::BETWEEN_CARDS;
+/// Entre rotulo, valor, nota e barra dos cards de numero.
+const KPI_SPACING: f32 = space::S;
 /// `minmax(240px, 1fr)` dos KPIs e `minmax(440px, 1fr)` dos dois cards da linha 2.
 const KPI_MIN: f32 = 240.0;
 const CARD_MIN: f32 = 440.0;
@@ -94,24 +98,36 @@ fn kpi_row(app: &App) -> Element<'_, Message> {
     )
 }
 
-fn kpi_card<'a>(
-    t: &'static Tokens,
-    content: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    widgets::card(t, content)
-        .padding(pad(18.0, 20.0, 18.0))
+/// Card de numero: o padding de todo card (20) e espaco 8 entre rotulo, valor, nota e barra.
+fn kpi_card<'a>(t: &'static Tokens, content: Column<'a, Message>) -> Element<'a, Message> {
+    widgets::card(t, content.spacing(KPI_SPACING)).into()
+}
+
+/// Barra de 6 px com 8 de respiro acima, no pe dos cards Total e Emergencia.
+fn kpi_bar<'a>(spec: Bar<'_>) -> Element<'a, Message> {
+    container(widgets::bar(spec, 6.0))
+        .padding(Padding {
+            top: space::S,
+            ..Padding::ZERO
+        })
         .into()
+}
+
+/// Nota 12 `text_muted` sob o valor de um card de numero.
+fn kpi_note<'a>(t: &'static Tokens, note: &str) -> Text<'a> {
+    text(note.to_string())
+        .size(type_scale::META)
+        .color(t.text_muted)
 }
 
 fn total_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.reserves;
-    let muted = t.text_muted;
     let note = row![
-        icons::icon(icons::ARROW_DOWN, 12.0, muted),
-        text(v.saved_note.clone()).size(12).color(muted),
+        icons::icon(icons::ARROW_DOWN, type_scale::META, t.text_muted),
+        kpi_note(t, &v.saved_note),
     ]
-    .spacing(5)
+    .spacing(space::XS)
     .align_y(Alignment::Center);
     let shares: Vec<(f64, Color)> = v
         .shares
@@ -121,33 +137,34 @@ fn total_card(app: &App) -> Element<'_, Message> {
     kpi_card(
         t,
         column![
-            widgets::kicker(t, "Total separado"),
+            widgets::stat_label(t, "Total separado"),
             widgets::money(t, &v.total, StatSize::L, t.text),
             note,
-            container(widgets::bar(
-                Bar::Parts {
-                    parts: &shares,
-                    track: t.neutral_800
-                },
-                6.0,
-            ))
-            .padding(Padding {
-                top: 8.0,
-                ..Padding::ZERO
+            kpi_bar(Bar::Parts {
+                parts: &shares,
+                track: t.neutral_800
             }),
-        ]
-        .spacing(6),
+        ],
     )
 }
 
 /// O que o KPI "Emergência coberta" mostra no lugar do numero.
 #[derive(Debug, PartialEq, Eq)]
 enum CoverageFigure<'a> {
-    /// "3,5" de "6 meses".
-    Months { value: &'a str, multiple: u8 },
+    /// "3,5" e "de 6 meses" (o complemento, em 16 ao lado do numero de 36).
+    Months { value: &'a str, suffix: String },
     /// Sem numero honesto para mostrar: um "—" grande parecia dado faltando, e "0 de 6 meses"
     /// seria mentira com saldo guardado. A linha de baixo explica o motivo.
     Missing(&'static str),
+}
+
+/// "de 6 meses"; "de 1 mês" quando o app grava meta de um mes so ("de 1 meses" saia antes).
+fn months_suffix(multiple: u8) -> String {
+    if multiple == 1 {
+        "de 1 mês".to_string()
+    } else {
+        format!("de {multiple} meses")
+    }
 }
 
 fn coverage_figure(emergency: Option<&EmergencyView>) -> CoverageFigure<'_> {
@@ -157,7 +174,7 @@ fn coverage_figure(emergency: Option<&EmergencyView>) -> CoverageFigure<'_> {
         Some(e) if e.coverage.is_none() => CoverageFigure::Missing("Sem meta"),
         Some(e) => CoverageFigure::Months {
             value: e.coverage_label.as_str(),
-            multiple: e.multiple,
+            suffix: months_suffix(e.multiple),
         },
     }
 }
@@ -175,15 +192,10 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
     };
     let big = StatSize::L.size();
     let value: Element<'_, Message> = match coverage_figure(v.emergency.as_ref()) {
-        CoverageFigure::Months { value, multiple } => widgets::value_line(
+        CoverageFigure::Months { value, suffix } => widgets::value_line(
             vec![
                 (value.to_string(), big, fonts::INTER_LIGHT, t.text),
-                (
-                    format!("de {multiple} meses"),
-                    type_scale::SECTION,
-                    fonts::INTER,
-                    t.text_muted,
-                ),
+                (suffix, type_scale::SECTION, fonts::INTER, t.text_muted),
             ],
             big,
             6.0,
@@ -200,26 +212,25 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
         .align_y(Alignment::End)
         .into(),
     };
+    // "hoje" em dourado: a cobertura e o estado de agora, e o dourado marca o agora (principio 2).
+    let label = row![
+        container(widgets::stat_label(t, "Emergência coberta")).width(Length::Fill),
+        widgets::tag(t, TagTone::Accent, "hoje"),
+    ]
+    .spacing(space::S)
+    .align_y(Alignment::Center);
     kpi_card(
         t,
         column![
-            kicker_with_icon(t, icons::LIFEBUOY, t.accent_300, "Emergência coberta"),
+            label,
             value,
-            text(remaining.to_string()).size(12).color(t.text_muted),
-            container(widgets::bar(
-                Bar::Segments {
-                    values: segments,
-                    color: t.accent,
-                    track: t.neutral_800
-                },
-                6.0,
-            ))
-            .padding(Padding {
-                top: 8.0,
-                ..Padding::ZERO
+            kpi_note(t, remaining),
+            kpi_bar(Bar::Segments {
+                values: segments,
+                color: t.accent,
+                track: t.neutral_800
             }),
-        ]
-        .spacing(6),
+        ],
     )
 }
 
@@ -229,6 +240,11 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
 fn flow_color(minor: i64, color: Color, muted: Color) -> Color {
     if minor == 0 { muted } else { color }
 }
+
+/// Altura de cada linha de valor do card "Últimos 12 meses". Com 25, rotulo + duas linhas + nota
+/// somam a altura dos vizinhos (rotulo + numero de 36 + nota + barra): a linha de KPIs do iced
+/// nao iguala alturas.
+const YEAR_LINE_HEIGHT: f32 = 25.0;
 
 fn year_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
@@ -244,36 +260,33 @@ fn year_card(app: &App) -> Element<'_, Message> {
         let icon_color = flow_color(minor, icon_color, muted);
         row![
             row![
-                icons::icon(glyph, 13.0, icon_color),
-                text(label).size(13).color(t.text_soft()),
+                icons::icon(glyph, type_scale::LABEL, icon_color),
+                text(label).size(type_scale::LABEL).color(t.text_soft()),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
             .width(Length::Fill),
+            // Valor secundario: 17 Regular (7.4), a direita como todo dinheiro.
             text(value.to_string())
-                .size(20)
-                .font(fonts::INTER_MEDIUM)
+                .size(type_scale::VALUE_S)
                 .line_height(1.0)
                 .wrapping(Wrapping::None)
                 .color(value_color),
         ]
-        .spacing(12)
+        .spacing(space::M)
+        .height(YEAR_LINE_HEIGHT)
         .align_y(Alignment::Center)
     };
     let mut col = column![
-        widgets::kicker(t, "Últimos 12 meses"),
-        container(line(
+        widgets::stat_label(t, "Últimos 12 meses"),
+        line(
             icons::ARROW_DOWN,
             t.accent_300,
             t.text,
             "Guardado",
             &v.deposits,
             v.totals.deposits_minor,
-        ))
-        .padding(Padding {
-            top: 4.0,
-            ..Padding::ZERO
-        }),
+        ),
         line(
             icons::ARROW_UP,
             t.expense_fg,
@@ -282,17 +295,11 @@ fn year_card(app: &App) -> Element<'_, Message> {
             &v.withdrawals,
             v.totals.withdrawals_minor,
         ),
-    ]
-    .spacing(6);
+    ];
     // "Nenhuma retirada" repetiria a linha de cima, que ja mostra R$ 0,00 em cinza. O vao fica
-    // na altura da nota (12 x 1,3) para o card nao ficar mais baixo que os vizinhos: a linha de
-    // KPIs do iced nao iguala alturas.
+    // na altura da nota (12 x 1,3) para o card nao ficar mais baixo que os vizinhos.
     col = if v.totals.withdrawal_count > 0 {
-        col.push(
-            text(v.withdrawals_note.clone())
-                .size(12)
-                .color(t.text_muted),
-        )
+        col.push(kpi_note(t, &v.withdrawals_note))
     } else {
         col.push(Space::new().height(16))
     };
@@ -942,7 +949,19 @@ mod tests {
             coverage_figure(Some(&covered)),
             CoverageFigure::Months {
                 value: "3,5",
-                multiple: 6
+                suffix: "de 6 meses".to_string()
+            }
+        );
+        // Meta de um mes so: o complemento concorda com o numero.
+        let one = EmergencyView {
+            multiple: 1,
+            ..emergency(Some(0.5), "0,5")
+        };
+        assert_eq!(
+            coverage_figure(Some(&one)),
+            CoverageFigure::Months {
+                value: "0,5",
+                suffix: "de 1 mês".to_string()
             }
         );
     }

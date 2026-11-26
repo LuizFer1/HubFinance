@@ -422,8 +422,11 @@ fn table(app: &App) -> Element<'_, Message> {
             col = col.push(widgets::hdivider(t)).push(table_row(app, r));
         }
     }
+    // `padding(1)`: as faixas de dia sao opacas e de largura cheia, e o iced desenha a borda por
+    // dentro; sem o respiro elas, os divisores e o hover da ultima linha cobrem a borda do card.
     container(col)
         .width(Length::Fill)
+        .padding(1)
         .clip(true)
         .style(theme::card(t))
         .into()

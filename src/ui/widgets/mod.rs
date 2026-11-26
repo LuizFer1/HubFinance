@@ -12,7 +12,7 @@ use super::theme::{self, Tokens};
 
 mod surface;
 
-pub use surface::{card, divider, inset, vdivider};
+pub use surface::{card, divider, inset, section_heading, vdivider};
 
 /// Controle segmentado de duas opcoes (o "toggle" do hub): `(glifo opcional, rotulo, ativo,
 /// mensagem)` para cada lado.

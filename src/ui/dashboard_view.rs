@@ -313,39 +313,6 @@ fn tone_color(t: &'static Tokens, tone: Tone, neutral: Color) -> Color {
     }
 }
 
-/// Titulo de secao (16 Medium) + pergunta (13 apoio) e um aparte a direita.
-fn heading<'a>(
-    t: &'static Tokens,
-    title: &str,
-    question: &str,
-    aside: Option<&str>,
-    top: f32,
-) -> Element<'a, Message> {
-    let mut line = row![
-        txt(title.to_string(), 16.0, t.text)
-            .font(fonts::INTER_MEDIUM)
-            .wrapping(Wrapping::None)
-    ]
-    .spacing(12)
-    .align_y(Alignment::End);
-    if !question.is_empty() {
-        line = line.push(txt(question.to_string(), 13.0, t.text_muted));
-    }
-    if let Some(aside) = aside {
-        line = line.push(
-            container(txt(aside.to_string(), 12.0, t.text_muted).wrapping(Wrapping::None))
-                .width(Length::Fill)
-                .align_x(Alignment::End),
-        );
-    }
-    container(line)
-        .padding(Padding {
-            top,
-            ..Padding::ZERO
-        })
-        .into()
-}
-
 /// Botao de informacao (icone 16) com o texto em tooltip embaixo, largura max. 280 (o `title`
 /// do design; o iced so mostra no hover).
 fn info<'a>(t: &'static Tokens, tip: &str) -> Element<'a, Message> {
@@ -501,7 +468,7 @@ fn business(app: &App, width: f32) -> Element<'_, Message> {
     let left = business_result(t, b);
     let right = business_capital(t, b);
     column![
-        heading(t, &b.title, &b.question, None, 8.0),
+        widgets::section_heading(t, &b.title, &b.question, None, 8.0),
         widgets::card(
             t,
             column![
@@ -622,7 +589,7 @@ fn how_am_i(app: &App, width: f32) -> Element<'_, Message> {
         ],
     );
     column![
-        heading(t, &h.title, &h.question, None, 8.0),
+        widgets::section_heading(t, &h.title, &h.question, None, 8.0),
         widgets::card(t, body).padding(Padding::new(6.0)),
     ]
     .spacing(GAP)
@@ -1254,7 +1221,7 @@ fn where_it_went(app: &App, width: f32) -> Element<'_, Message> {
         }),
     ];
     column![
-        heading(t, &w.title, &w.question, Some(&w.summary), 20.0),
+        widgets::section_heading(t, &w.title, &w.question, Some(&w.summary), 20.0),
         widgets::card(t, body).padding(Padding {
             top: 20.0,
             right: 20.0,
@@ -1324,7 +1291,7 @@ fn whats_next(app: &App, width: f32) -> Element<'_, Message> {
     };
     let surface = Some((t.surface, 8.0));
     column![
-        heading(t, &w.title, &w.question, None, 0.0),
+        widgets::section_heading(t, &w.title, &w.question, None, 0.0),
         tiles(
             width,
             GAP,
@@ -1585,7 +1552,7 @@ fn recent(app: &App) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
     column![
-        heading(t, &r.title, "", Some(&r.count), 0.0),
+        widgets::section_heading(t, &r.title, "", Some(&r.count), 0.0),
         widgets::card(t, column![list, widgets::divider(t), foot]).padding(Padding {
             top: 10.0,
             right: 20.0,

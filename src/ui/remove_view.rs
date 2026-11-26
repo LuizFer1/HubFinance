@@ -259,7 +259,6 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
         }
     };
 
-    let width = (app.window_size.width - 48.0).clamp(240.0, 460.0);
     Some(widgets::dialog(
         t,
         column![
@@ -270,9 +269,9 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
             buttons
         ]
         .width(Length::Fill),
-        width,
+        app.window_size.width,
+        460.0,
         None,
-        Message::Noop,
         Message::CancelRemove,
     ))
 }

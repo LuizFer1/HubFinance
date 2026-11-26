@@ -172,26 +172,34 @@ pub fn empty_state<'a, M: 'a>(
     col.into()
 }
 
+/// Margem minima do dialogo para a borda da janela (24 de cada lado).
+const DIALOG_MARGIN: f32 = 48.0;
+
+/// Largura do dialogo numa janela de `window_width`: ate `max_width`, deixando a margem, e
+/// nunca abaixo de 240.
+fn dialog_width(window_width: f32, max_width: f32) -> f32 {
+    (window_width - DIALOG_MARGIN).clamp(240.0, max_width.max(240.0))
+}
+
 /// Dialogo sobre o scrim (nivel 2): caixa `surface` de raio 12 com `shadow_lg` e padding 24,
-/// `width` de largura e, com `height`, altura fixa. A caixa engole o clique com `noop` (sem
-/// isso, clicar dentro dela chegaria ao fundo e fecharia); o scrim a 55 % fecha com `dismiss`.
+/// ate `max_width` de largura (menos a margem na janela estreita) e, com `height`, altura fixa.
+/// A caixa e `opaque`: o clique dentro dela nao chega ao scrim, que fecha com `dismiss`.
 pub fn dialog<'a, M: Clone + 'a>(
     t: &'static Tokens,
     content: impl Into<Element<'a, M>>,
-    width: f32,
+    window_width: f32,
+    max_width: f32,
     height: Option<f32>,
-    noop: M,
     dismiss: M,
 ) -> Element<'a, M> {
     let dialog_box = container(content)
-        .width(width)
+        .width(dialog_width(window_width, max_width))
         .padding(space::DIALOG)
         .style(theme::dialog(t));
     let dialog_box = match height {
         Some(h) => dialog_box.height(h),
         None => dialog_box,
     };
-    let dialog_box = opaque(mouse_area(dialog_box).on_press(noop));
     let scrim = opaque(
         mouse_area(
             container(Space::new())
@@ -201,7 +209,7 @@ pub fn dialog<'a, M: Clone + 'a>(
         )
         .on_press(dismiss),
     );
-    stack![scrim, container(dialog_box).center(Length::Fill)]
+    stack![scrim, container(opaque(dialog_box)).center(Length::Fill)]
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -285,8 +293,8 @@ mod tests {
                 Some(text("Ação").into()),
             );
             let _: Element<'_, ()> = empty_copy(t, "Nada", "Corpo", false).into();
-            let _: Element<'_, u8> = dialog(t, text("Corpo"), 460.0, None, 0, 1);
-            let _: Element<'_, u8> = dialog(t, text("Corpo"), 720.0, Some(640.0), 0, 1);
+            let _: Element<'_, u8> = dialog(t, text("Corpo"), 1280.0, 460.0, None, 1);
+            let _: Element<'_, u8> = dialog(t, text("Corpo"), 1280.0, 720.0, Some(640.0), 1);
             let _: Element<'_, ()> = banner(
                 t,
                 Tone::Warning,
@@ -321,5 +329,12 @@ mod tests {
             assert_eq!(s.border.radius, radius::DIALOG.into());
             assert_eq!(s.shadow, t.shadow_lg().1);
         }
+    }
+
+    #[test]
+    fn largura_do_dialogo_deixa_margem_e_tem_piso() {
+        assert_eq!(dialog_width(1280.0, 460.0), 460.0);
+        assert_eq!(dialog_width(500.0, 720.0), 452.0);
+        assert_eq!(dialog_width(200.0, 460.0), 240.0);
     }
 }

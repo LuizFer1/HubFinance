@@ -597,7 +597,6 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
     .padding(4);
     let close = widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Regular, "Fechar")
         .on_press(Message::CloseEnvelope);
-    let width = (app.window_size.width - 48.0).clamp(280.0, 720.0);
     let height = (app.window_size.height - 96.0).clamp(240.0, 640.0);
     Some(widgets::dialog(
         t,
@@ -609,9 +608,9 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
         ]
         .spacing(12)
         .height(Length::Fill),
-        width,
+        app.window_size.width,
+        720.0,
         Some(height),
-        Message::Noop,
         Message::CloseEnvelope,
     ))
 }

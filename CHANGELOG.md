@@ -6,6 +6,8 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [1.5.0] - 2026-11-26
+
 Nenhuma mudança no protocolo `/v1`, no banco de sync nem no `assistant.db`. O `ui.json` ganha
 `follow_system` e `reduce_motion`, que um hub 1.4.0 ignora.
 
@@ -415,7 +417,8 @@ campo da 0.0.2 acontece.
 - Scripts `scripts/e2e.sh` (roteiro curl de pareamento e sync) e `scripts/seed-dashboard.sh`
   (carga de exemplo do dashboard).
 
-[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.4.0...HEAD
+[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/LuizFer1/HubFinance/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/LuizFer1/HubFinance/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/LuizFer1/HubFinance/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/LuizFer1/HubFinance/compare/v1.2.0...v1.3.0

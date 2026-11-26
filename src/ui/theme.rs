@@ -1598,13 +1598,19 @@ mod tests {
         }
     }
 
-    /// Spec 9: a serie da emergencia (Reservas) usa `accent`, que ficou quase igual ao
-    /// `tag-amber`. Medido aqui para o roteiro do `[Validação]` conferir a olho: caixinha ambar ao
-    /// lado da emergencia fica com a mesma cor no grafico.
+    /// Spec 9: a serie da emergencia (Reservas) usava `accent`, quase igual ao `tag-amber`, e a
+    /// caixinha ambar ao lado dela virava a mesma pilha no grafico. O dono decidiu (relatorio
+    /// 14.7) que a serie vai para `neutral_300` (`charts::series_color`), que se separa mais do
+    /// ambar nos dois temas. Nao resolve tudo: um neutro fica perto de `tag-slate` (relatorio 10),
+    /// o que fica para o roteiro do `[Validação]` conferir a olho.
     #[test]
-    fn acento_e_tag_amber_quase_iguais() {
+    fn acento_e_tag_amber_quase_iguais_e_a_emergencia_saiu_do_acento() {
         assert!(contrast(DARK.accent, DARK.token("amber")) < 1.2);
         assert!(contrast(LIGHT.accent, LIGHT.token("amber")) < 1.6);
+        for t in [&DARK, &LIGHT] {
+            let amber = t.token("amber");
+            assert!(contrast(t.neutral_300, amber) > contrast(t.accent, amber));
+        }
     }
 
     /// B3: o que saiu do piso de 4,5 e o que entrou no lugar. Rodape do Dashboard (era o texto

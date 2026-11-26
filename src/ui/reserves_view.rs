@@ -13,6 +13,7 @@ use iced::{Alignment, Color, Element, Length, Padding};
 use super::app::{App, Message};
 use super::charts::{
     EMPTY_RESERVES_HEIGHT, EMPTY_RESERVES_WIDTH, EmptyReservesProgram, StackedBarsProgram,
+    series_color,
 };
 use super::rows::{author_cell_of, hover_row, kicker_with_icon};
 use super::theme::{self, Tokens, type_scale};
@@ -687,7 +688,7 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
                 container(Space::new())
                     .width(8)
                     .height(8)
-                    .style(theme::fill(reserve_color(t, &s.color), 2.0)),
+                    .style(theme::fill(series_color(t, &s.color), 2.0)),
                 text(s.name.clone()).size(12).color(muted),
             ]
             .spacing(6)

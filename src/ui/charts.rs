@@ -257,9 +257,13 @@ impl StackedBarsProgram<'_> {
     }
 }
 
-fn series_color(t: &'static Tokens, c: &ReserveColor) -> Color {
+/// Cor de uma serie da evolucao das reservas: barras, tooltip e legenda (a tela le daqui, para
+/// as tres nunca discordarem). A emergencia vai em `neutral_300`, e nao no acento como no resto
+/// da tela: o acento ficava a 1,08:1 da caixinha `amber` e as duas pilhas viravam uma so
+/// (decisao do dono, relatorio 14.7). Ela e a primeira serie, entao fica na base da pilha.
+pub(super) fn series_color(t: &'static Tokens, c: &ReserveColor) -> Color {
     match c {
-        ReserveColor::Accent => t.accent,
+        ReserveColor::Accent => t.neutral_300,
         ReserveColor::Token(k) => t.token(k),
     }
 }
@@ -1591,6 +1595,38 @@ mod tests {
         // O eixo tambem: no cache do canvas, entao o toggle limpa o cache.
         assert_eq!(hidden.y_labels, ["•••", "•••", "•••"]);
         assert_eq!(shown.y_labels[0], "R$ 12 mil");
+    }
+
+    #[test]
+    fn emergencia_em_neutral_300_na_base_da_pilha() {
+        use crate::dashboard::fixtures_with_reserves;
+        use crate::dashboard::view::build_reserves;
+        use crate::ui::theme::LIGHT;
+        for t in [&DARK, &LIGHT] {
+            assert_eq!(series_color(t, &ReserveColor::Accent), t.neutral_300);
+            assert_ne!(series_color(t, &ReserveColor::Accent), t.accent);
+            assert_eq!(
+                series_color(t, &ReserveColor::Token("amber".into())),
+                t.token("amber")
+            );
+        }
+        // A emergencia e a primeira serie: `stack_segments` empilha da primeira para cima.
+        let v = build_reserves(&fixtures_with_reserves(), "2026-09-24", false);
+        assert_eq!(
+            v.series.first().map(|s| &s.color),
+            Some(&ReserveColor::Accent)
+        );
+        assert!(
+            v.series
+                .iter()
+                .skip(1)
+                .all(|s| s.color != ReserveColor::Accent)
+        );
+        // O tooltip leva a mesma cor das barras.
+        let last = v.months.len() - 1;
+        let tip = stack_tooltip(&v.series, &v.month_totals, last);
+        let first = tip.rows.first().map(|(_, _, c)| series_color(&DARK, c));
+        assert_eq!(first, Some(DARK.neutral_300));
     }
 
     #[test]

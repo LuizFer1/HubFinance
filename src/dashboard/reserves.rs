@@ -18,9 +18,9 @@ pub const DEFAULT_MULTIPLE: u8 = 6;
 /// Meses completos da media do custo essencial.
 pub const ESSENTIAL_MONTHS: usize = 6;
 
-/// Cor de uma reserva na tela: a emergencia usa sempre o acento do tema (menos no grafico de
-/// evolucao, onde a UI troca por um neutro para nao colidir com a caixinha ambar); caixinha usa
-/// o token da linha (desconhecido vira neutro na UI).
+/// Cor de uma reserva: a emergencia e marcada como acento (o Resumo a pinta assim; na tela
+/// Reservas a UI troca por um neutro, para nao colidir com a caixinha ambar); caixinha usa o
+/// token da linha (desconhecido vira neutro na UI).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReserveColor {
     Accent,

@@ -257,9 +257,10 @@ impl StackedBarsProgram<'_> {
     }
 }
 
-/// Cor de uma serie da evolucao das reservas: barras, tooltip e legenda (a tela le daqui, para
-/// as tres nunca discordarem). A emergencia vai em `neutral_300`, e nao no acento como no resto
-/// da tela: o acento ficava a 1,08:1 da caixinha `amber` e as duas pilhas viravam uma so
+/// Cor de uma serie da evolucao das reservas, e a cor de identidade de cada reserva em toda a
+/// tela Reservas (barras, tooltip, legenda, barra do Total, tile, ponto das movimentacoes:
+/// `reserves_view::reserve_color` delega aqui). A emergencia vai em `neutral_300`, e nao no
+/// acento: o acento ficava a 1,08:1 da caixinha `amber` e as duas pilhas viravam uma so
 /// (decisao do dono, relatorio 14.7). Ela e a primeira serie, entao fica na base da pilha.
 pub(super) fn series_color(t: &'static Tokens, c: &ReserveColor) -> Color {
     match c {

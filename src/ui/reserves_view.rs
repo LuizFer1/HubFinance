@@ -24,7 +24,7 @@ use crate::dashboard::contract::MovementKind;
 use crate::dashboard::periods::short_date;
 use crate::dashboard::reserves::{
     DEFAULT_MULTIPLE, EmergencyView, EssentialCost, EssentialPart, MovementRow, Pace, PotRow,
-    ReserveColor,
+    ReserveColor, ReserveShare,
 };
 use crate::dashboard::view::ReservesView;
 
@@ -71,12 +71,22 @@ fn pad(top: f32, x: f32, bottom: f32) -> Padding {
     }
 }
 
-/// Emergencia no acento do tema; caixinha no token da linha.
+/// Cor de identidade de uma reserva em toda a tela: a mesma das series do grafico
+/// (`charts::series_color`), para a barra do Total, o tile da caixinha, o ponto das
+/// movimentacoes e a pilha nunca discordarem. A emergencia sai em neutro; o `accent` fica so
+/// onde marca o agora (medidores de cobertura, contorno da boia, tag da % da meta), que usam o
+/// token direto. Duas reservas de emergencia (a extra vira linha de caixinha) ficam na mesma cor:
+/// o app so cria uma, e a segunda vem de dado torto; nao vale uma cor a mais por isso.
 fn reserve_color(t: &'static Tokens, c: &ReserveColor) -> Color {
-    match c {
-        ReserveColor::Accent => t.accent,
-        ReserveColor::Token(k) => t.token(k),
-    }
+    series_color(t, c)
+}
+
+/// Partes da barra do card Total: saldo e cor de identidade de cada reserva.
+fn share_parts(t: &'static Tokens, shares: &[ReserveShare]) -> Vec<(f64, Color)> {
+    shares
+        .iter()
+        .map(|s| (s.balance_minor as f64, reserve_color(t, &s.color)))
+        .collect()
 }
 
 /// `lifebuoy` e chave interna (a emergencia); o resto e chave do app.
@@ -130,11 +140,7 @@ fn total_card(app: &App) -> Element<'_, Message> {
     ]
     .spacing(space::XS)
     .align_y(Alignment::Center);
-    let shares: Vec<(f64, Color)> = v
-        .shares
-        .iter()
-        .map(|s| (s.balance_minor as f64, reserve_color(t, &s.color)))
-        .collect();
+    let shares = share_parts(t, &v.shares);
     kpi_card(
         t,
         column![
@@ -1077,6 +1083,30 @@ mod tests {
         app.reserves.pots.clear();
         assert_eq!(pots_question(&app.reserves), "");
         let _ = view(&app);
+    }
+
+    #[test]
+    fn emergencia_com_a_mesma_cor_na_barra_do_total_no_ponto_e_no_grafico() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, _rx, _tx) = app_with_reserves(dir.path());
+        for t in [&theme::DARK, &theme::LIGHT] {
+            let v = &app.reserves;
+            let parts = share_parts(t, &v.shares);
+            let emergency: Vec<_> = v
+                .shares
+                .iter()
+                .zip(&parts)
+                .filter(|(s, _)| s.color == ReserveColor::Accent)
+                .map(|(_, (_, c))| *c)
+                .collect();
+            assert!(!emergency.is_empty(), "a fixture tem emergencia com saldo");
+            assert!(emergency.iter().all(|c| *c == t.neutral_300));
+            assert_eq!(reserve_color(t, &ReserveColor::Accent), t.neutral_300);
+            assert_eq!(
+                reserve_color(t, &ReserveColor::Token("sky".into())),
+                t.token("sky")
+            );
+        }
     }
 
     #[test]

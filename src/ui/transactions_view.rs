@@ -1,5 +1,6 @@
-//! Tela Lancamentos: filtros (categoria, autor, tipo), linha de totais e a tabela do mes
-//! agrupada por dia, com os tres vazios do design.
+//! Tela Lancamentos: filtros (categoria, autor, tipo), resumo do mes e a tabela do mes
+//! agrupada por dia, com os tres vazios do design. E a unica tela com rolagem propria: filtros,
+//! resumo e cabecalho da tabela ficam fixos e so as linhas rolam (`shell::owns_scroll`).
 //!
 //! Tudo vem de `app.transactions` (calculado em `App::rebuild`); aqui so se monta a arvore.
 

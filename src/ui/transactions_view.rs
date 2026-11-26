@@ -319,19 +319,49 @@ fn count_word(count: usize) -> &'static str {
 
 // ---- tabela ----
 
-/// Celulas nas colunas da tabela (gap 16, padding horizontal 20).
-fn columns<'a>(cells: [Element<'a, Message>; 5]) -> iced::widget::Row<'a, Message> {
+/// Largura util a partir da qual cada coluna opcional aparece. Pagamento sai primeiro, depois
+/// Autor (8.3); na janela minima (728 de largura util) as duas ja sairam e a descricao, a
+/// categoria e o valor ficam com o espaco. Com as quatro, a 880 cada coluna de texto curta
+/// ainda tem ~120 px, o bastante para "Cartão de crédito"; abaixo disso o nome sairia cortado.
+const PAYMENT_MIN_WIDTH: f32 = 880.0;
+const AUTHOR_MIN_WIDTH: f32 = 780.0;
+
+/// Quais colunas opcionais a tabela mostra. Cabecalho e linhas leem a mesma resposta, para os
+/// rotulos nunca ficarem sobre a coluna errada.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Visible {
+    author: bool,
+    payment: bool,
+}
+
+fn visible_columns(width: f32) -> Visible {
+    Visible {
+        author: width >= AUTHOR_MIN_WIDTH,
+        payment: width >= PAYMENT_MIN_WIDTH,
+    }
+}
+
+/// Celulas nas colunas da tabela (gap 16, padding horizontal 20), sem as que a largura tirou.
+/// O valor fica alinhado a direita numa coluna fixa, como toda coluna de dinheiro.
+fn columns<'a>(
+    visible: Visible,
+    cells: [Element<'a, Message>; 5],
+) -> iced::widget::Row<'a, Message> {
     let [desc, cat, author, pay, value] = cells;
     let [w0, w1, w2, w3] = COLUMNS;
-    row![
+    let mut line = row![
         container(desc).width(Length::FillPortion(w0)).clip(true),
         container(cat).width(Length::FillPortion(w1)).clip(true),
-        container(author).width(Length::FillPortion(w2)).clip(true),
-        container(pay).width(Length::FillPortion(w3)).clip(true),
-        container(value).width(VALUE_WIDTH).align_x(Alignment::End),
-    ]
-    .spacing(16)
-    .align_y(Alignment::Center)
+    ];
+    if visible.author {
+        line = line.push(container(author).width(Length::FillPortion(w2)).clip(true));
+    }
+    if visible.payment {
+        line = line.push(container(pay).width(Length::FillPortion(w3)).clip(true));
+    }
+    line.push(container(value).width(VALUE_WIDTH).align_x(Alignment::End))
+        .spacing(16)
+        .align_y(Alignment::Center)
 }
 
 fn table(app: &App) -> Element<'_, Message> {
@@ -344,13 +374,17 @@ fn table(app: &App) -> Element<'_, Message> {
             .color(t.text_muted)
             .into()
     };
-    let header = container(columns([
-        head("Descrição"),
-        head("Categoria"),
-        head("Autor"),
-        head("Pagamento"),
-        head("Valor"),
-    ]))
+    let visible = visible_columns(shell::content_width(app));
+    let header = container(columns(
+        visible,
+        [
+            head("Descrição"),
+            head("Categoria"),
+            head("Autor"),
+            head("Pagamento"),
+            head("Valor"),
+        ],
+    ))
     .height(40)
     .padding([0, 20])
     .align_y(Alignment::Center);
@@ -382,7 +416,9 @@ fn table(app: &App) -> Element<'_, Message> {
             .style(theme::fill(day_bg, 0.0)),
         );
         for r in &group.rows {
-            rows = rows.push(widgets::divider(t)).push(table_row(app, r));
+            rows = rows
+                .push(widgets::divider(t))
+                .push(table_row(app, r, visible));
         }
     }
     // So as linhas rolam (B7). Altura `Shrink`: o iced limita a rolagem ao que sobra abaixo dos
@@ -409,7 +445,7 @@ fn table(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-fn table_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
+fn table_row<'a>(app: &'a App, r: &'a ListRow, visible: Visible) -> Element<'a, Message> {
     let t = app.tokens;
     let mut description = row![
         category_tile(t, r),
@@ -450,13 +486,16 @@ fn table_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
     ]
     .spacing(8)
     .align_y(Alignment::Center);
-    let content = columns([
-        description.into(),
-        category.into(),
-        author_cell(app, r),
-        payment.into(),
-        value_cell(t, r),
-    ]);
+    let content = columns(
+        visible,
+        [
+            description.into(),
+            category.into(),
+            author_cell(app, r),
+            payment.into(),
+            value_cell(t, r),
+        ],
+    );
     hover_row(
         app,
         &r.id,
@@ -568,5 +607,43 @@ mod tests {
         assert_eq!(title, "Nada com esses filtros");
         assert!(body.contains("em setembro"));
         assert!(clear);
+    }
+
+    #[test]
+    fn pagamento_sai_antes_do_autor_e_na_largura_minima_os_dois_sairam() {
+        let both = Visible {
+            author: true,
+            payment: true,
+        };
+        // Janela inicial (1440 - 232 - 64).
+        assert_eq!(visible_columns(1144.0), both);
+        assert_eq!(visible_columns(PAYMENT_MIN_WIDTH), both);
+        // Entre os dois limites: so Pagamento saiu.
+        assert_eq!(
+            visible_columns(820.0),
+            Visible {
+                author: true,
+                payment: false
+            }
+        );
+        // Janela minima (1024 - 232 - 64).
+        assert_eq!(
+            visible_columns(728.0),
+            Visible {
+                author: false,
+                payment: false
+            }
+        );
+    }
+
+    #[test]
+    fn tabela_monta_nas_tres_faixas_de_largura() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = crate::ui::app::tests::app_with_fixtures(dir.path());
+        app.screen = crate::ui::app::Screen::Transactions;
+        for width in [1024.0, 1100.0, 1440.0] {
+            app.window_size.width = width;
+            let _ = view(&app);
+        }
     }
 }

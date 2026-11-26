@@ -2,7 +2,7 @@
 //! propria tela: tela atual, tema, janela (id, maximizada), QR desenhado, se esta fechando.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -83,8 +83,11 @@ pub enum PendingAction {
     /// Aparelho ja removido: so apaga as areas.
     Erase(AreaSet),
     /// "Apagar" de uma conversa da Analise. Se era a aberta, ela so some da tela
-    /// (`analysis_view::open_conversation`): nenhum `Close` sai antes do prazo, porque fechar
-    /// interromperia uma resposta chegando e "Desfazer" nao a traria de volta.
+    /// (`analysis_view::open_conversation`): nenhum `Close` nosso sai antes do prazo, porque
+    /// fechar interromperia uma resposta chegando e "Desfazer" nao a traria de volta. Outras
+    /// acoes da pessoa nesse meio tempo ainda interrompem a resposta escondida, como sempre
+    /// fizeram: `NewConversation` ("Conversar sobre isso"), `Open` de outra conversa e a troca
+    /// de conta (que fecha a conversa da outra conta).
     DeleteConversation,
 }
 
@@ -263,6 +266,11 @@ pub struct App {
     /// "Apagar todas" armado: o segundo clique antes do prazo apaga. Expira no `Tick`, para um
     /// clique esquecido nao deixar o botao perigoso armado para sempre.
     pub(super) confirm_delete_all: Option<Instant>,
+    /// Conversas cujo `Delete` ja saiu para o nucleo e que o snapshot ainda traz: continuam
+    /// escondidas ate um snapshot sem elas (senao reapareceriam por um instante depois do
+    /// prazo do "Desfazer") ou ate um erro novo do assistente, quando o apagar falhou e a
+    /// conversa volta junto com o aviso.
+    pub(super) deleting: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -452,6 +460,7 @@ impl App {
             key_input: String::new(),
             envelope_now: String::new(),
             confirm_delete_all: None,
+            deleting: HashSet::new(),
             desktop,
             tooltip: String::new(),
         };
@@ -714,16 +723,33 @@ impl App {
     /// tela ou fechamento).
     fn commit_pending(&mut self) {
         if let Some(pending) = self.pending_removal.take() {
-            let device_id = pending.target_id;
+            let target_id = pending.target_id;
             let command = match pending.action {
-                PendingAction::Remove(erase) => Command::RemoveDevice { device_id, erase },
-                PendingAction::Erase(areas) => Command::EraseDeviceData { device_id, areas },
+                PendingAction::Remove(erase) => Command::RemoveDevice {
+                    device_id: target_id,
+                    erase,
+                },
+                PendingAction::Erase(areas) => Command::EraseDeviceData {
+                    device_id: target_id,
+                    areas,
+                },
                 PendingAction::DeleteConversation => {
-                    Command::Assistant(AssistantCommand::Delete(device_id))
+                    self.deleting.insert(target_id.clone());
+                    Command::Assistant(AssistantCommand::Delete(target_id))
                 }
             };
             let _ = self.handle.commands.send(command);
         }
+    }
+
+    /// Conversa fora da tela: com "Desfazer" pendente ou com o `Delete` ja enviado e ainda nao
+    /// refletido no snapshot.
+    pub(super) fn conversation_hidden(&self, id: &str) -> bool {
+        self.pending_removal
+            .as_ref()
+            .and_then(PendingRemoval::conversation_id)
+            == Some(id)
+            || self.deleting.contains(id)
     }
 
     /// "Copiado" ainda vale para este campo?
@@ -856,6 +882,18 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             let was_failed = matches!(app.snapshot.status, Status::Failed(_));
             let people_changed = !std::sync::Arc::ptr_eq(&s.dashboard, &app.snapshot.dashboard)
                 || s.devices != app.snapshot.devices;
+            // Apagar que falhou volta com um erro novo: a conversa reaparece junto do aviso.
+            let new_error = s.assistant.last_error.is_some()
+                && s.assistant.last_error != app.snapshot.assistant.last_error;
+            if new_error {
+                app.deleting.clear();
+            } else {
+                let still_there = |id: &String| {
+                    s.assistant.conversations.iter().any(|c| &c.id == id)
+                        || s.assistant.open.as_ref().is_some_and(|o| &o.id == id)
+                };
+                app.deleting.retain(still_there);
+            }
             app.snapshot = *s;
             app.resync_drafts();
             if people_changed {
@@ -1312,7 +1350,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ChatSubmit => {
             let text = app.chat_input.trim().to_string();
+            // Sem conversa visivel (nenhuma, de outra conta ou escondida pelo apagar) a
+            // pergunta iria para uma conversa que a pessoa nao esta vendo.
             if text.is_empty()
+                || super::analysis_view::open_conversation(app).is_none()
                 || app.snapshot.assistant.busy
                 || awaiting_cloud_consent(app).is_some()
             {
@@ -1327,7 +1368,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ChatRetry => {
-            if !app.snapshot.assistant.busy && awaiting_cloud_consent(app).is_none() {
+            if !app.snapshot.assistant.busy
+                && awaiting_cloud_consent(app).is_none()
+                && super::analysis_view::open_conversation(app).is_some()
+            {
                 send_assistant(app, AssistantCommand::Resend);
             }
             Task::none()
@@ -1353,8 +1397,12 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             {
                 return Task::none();
             }
-            // So um "Desfazer" por vez: o anterior vai agora.
+            // So um "Desfazer" por vez: o anterior (de conversa ou de aparelho) vai agora, e o
+            // toast passa a ser desta.
             app.commit_pending();
+            if app.hover_row.as_deref() == Some(id.as_str()) {
+                app.hover_row = None;
+            }
             app.pending_removal = Some(PendingRemoval {
                 target_id: id,
                 toast: "Conversa apagada".to_string(),
@@ -1370,8 +1418,15 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 .is_some_and(|deadline| Instant::now() < deadline);
             if armed {
                 // A conversa com "Desfazer" pendente some junto; o pendente sai antes para nao
-                // chegar depois do `DeleteAll` com um id que ja nao existe.
-                app.commit_pending();
+                // chegar depois do `DeleteAll` com um id que ja nao existe. Remocao de aparelho
+                // pendente nao tem nada com isso e continua com o seu "Desfazer".
+                if app
+                    .pending_removal
+                    .as_ref()
+                    .is_some_and(|p| p.conversation_id().is_some())
+                {
+                    app.commit_pending();
+                }
                 send_assistant(app, AssistantCommand::DeleteAll);
             } else {
                 app.confirm_delete_all = Some(Instant::now() + DELETE_ALL_ARMED_FOR);
@@ -3493,6 +3548,10 @@ pub(super) mod tests {
 
         app.snapshot.assistant.busy = false;
         app.chat_input = "  e agora?  ".into();
+        // Sem conversa visivel nao ha para onde mandar.
+        let _ = update(&mut app, Message::ChatSubmit);
+        assert!(drain(&mut rx).is_empty());
+        app.snapshot.assistant.open = Some(open_conv(Book::Personal, vec![]));
         let _ = update(&mut app, Message::ChatSubmit);
         assert_eq!(
             drain(&mut rx),
@@ -3507,6 +3566,10 @@ pub(super) mod tests {
     fn parar_tentar_de_novo_abrir_fechar_e_apagar_mandam_o_comando_certo() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        // "Tentar de novo" sem conversa visivel nao reenvia nada.
+        let _ = update(&mut app, Message::ChatRetry);
+        assert!(drain(&mut rx).is_empty());
+        app.snapshot.assistant.open = Some(open_conv(Book::Personal, vec![]));
         let _ = update(&mut app, Message::ChatStop);
         let _ = update(&mut app, Message::ChatRetry);
         let _ = update(&mut app, Message::OpenConversation("C9".into()));
@@ -4139,6 +4202,172 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::UndoRemove);
         assert!(super::super::analysis_view::open_conversation(&app).is_some());
         assert!(drain(&mut rx).is_empty());
+    }
+
+    fn deliver(app: &mut App, change: impl FnOnce(&mut Snapshot)) {
+        let mut snap = app.snapshot.clone();
+        change(&mut snap);
+        let _ = update(app, Message::Snapshot(Box::new(snap)));
+    }
+
+    #[test]
+    fn conversa_apagada_continua_escondida_ate_o_snapshot_sem_ela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let open = open_conv(Book::Personal, vec![]);
+        let id = open.id.clone();
+        app.snapshot.assistant.open = Some(open);
+        app.snapshot.assistant.conversations =
+            vec![summary(&id, Book::Personal), summary("P2", Book::Personal)];
+        let _ = update(&mut app, Message::AskDeleteConversation(id.clone()));
+        app.pending_removal.as_mut().unwrap().deadline = Instant::now();
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(
+            drain(&mut rx),
+            [Command::Assistant(AssistantCommand::Delete(id.clone()))]
+        );
+        // O nucleo ainda nao processou: o snapshot traz a conversa, e ela segue fora da tela.
+        assert_eq!(conversation_ids(&app), ["P2"]);
+        assert!(super::super::analysis_view::open_conversation(&app).is_none());
+        deliver(&mut app, |_| {});
+        assert_eq!(conversation_ids(&app), ["P2"]);
+        assert!(super::super::analysis_view::open_conversation(&app).is_none());
+        // Snapshot sem ela: o id sai do conjunto.
+        deliver(&mut app, |s| {
+            s.assistant.open = None;
+            s.assistant.conversations.retain(|c| c.id != id);
+        });
+        assert!(app.deleting.is_empty());
+        assert_eq!(conversation_ids(&app), ["P2"]);
+    }
+
+    #[test]
+    fn apagar_que_falhou_traz_a_conversa_de_volta_com_o_aviso() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        app.snapshot.assistant.conversations = vec![summary("P1", Book::Personal)];
+        let _ = update(&mut app, Message::AskDeleteConversation("P1".into()));
+        app.pending_removal.as_mut().unwrap().deadline = Instant::now();
+        let _ = update(&mut app, Message::Tick);
+        assert!(conversation_ids(&app).is_empty());
+        deliver(&mut app, |s| {
+            s.assistant.last_error = Some("Não foi possível apagar.".into());
+        });
+        assert_eq!(conversation_ids(&app), ["P1"]);
+        assert!(app.deleting.is_empty());
+    }
+
+    #[test]
+    fn apagar_de_novo_a_mesma_conversa_nao_reinicia_o_prazo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let _ = update(&mut app, Message::AskDeleteConversation("C1".into()));
+        let deadline = app.pending_removal.as_ref().unwrap().deadline;
+        let _ = update(&mut app, Message::AskDeleteConversation("C1".into()));
+        assert_eq!(app.pending_removal.as_ref().unwrap().deadline, deadline);
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn conversa_pendente_sobrevive_a_troca_de_conta_e_sai_no_prazo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) =
+            app_with(business_snapshot(true, false), dir.path().to_path_buf());
+        app.snapshot.assistant.conversations = vec![summary("P1", Book::Personal)];
+        let _ = update(&mut app, Message::AskDeleteConversation("P1".into()));
+        let _ = update(&mut app, Message::SelectBook(Book::Business));
+        let _ = update(&mut app, Message::SelectBook(Book::Personal));
+        assert!(conversation_ids(&app).is_empty());
+        assert!(
+            !drain(&mut rx)
+                .iter()
+                .any(|c| matches!(c, Command::Assistant(AssistantCommand::Delete(_))))
+        );
+        app.pending_removal.as_mut().unwrap().deadline = Instant::now();
+        let _ = update(&mut app, Message::Tick);
+        assert!(
+            drain(&mut rx).contains(&Command::Assistant(AssistantCommand::Delete("P1".into())))
+        );
+        assert!(conversation_ids(&app).is_empty());
+    }
+
+    #[test]
+    fn com_bandeja_fechar_e_desligar_mandam_a_conversa_pendente() {
+        let dir = tempfile::tempdir().unwrap();
+        let delete = Command::Assistant(AssistantCommand::Delete("C1".into()));
+        let (mut app, _fake, mut rx) = with_tray(dir.path());
+        let _ = update(&mut app, Message::AskDeleteConversation("C1".into()));
+        let _ = update(&mut app, Message::CloseRequested);
+        assert_eq!(drain(&mut rx), std::slice::from_ref(&delete));
+        assert!(!app.closing);
+        let _ = update(&mut app, Message::AskDeleteConversation("C1".into()));
+        let _ = update(&mut app, Message::Desktop(DesktopEvent::Quit));
+        assert_eq!(drain(&mut rx), [delete, Command::Shutdown]);
+    }
+
+    #[test]
+    fn conversa_depois_de_aparelho_manda_o_aparelho_e_o_toast_e_da_conversa() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_two_people(dir.path());
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ConfirmRemove);
+        let _ = update(&mut app, Message::AskDeleteConversation("C1".into()));
+        assert!(matches!(
+            drain(&mut rx).as_slice(),
+            [Command::RemoveDevice { device_id, .. }] if device_id == "D1"
+        ));
+        let pending = app.pending_removal.clone().unwrap();
+        assert_eq!(pending.conversation_id(), Some("C1"));
+        assert_eq!(pending.toast, "Conversa apagada");
+        // Desfazer vale para a conversa; a remocao ja saiu.
+        let _ = update(&mut app, Message::UndoRemove);
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn aparelho_depois_de_conversa_manda_a_conversa_e_o_toast_e_do_aparelho() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_two_people(dir.path());
+        let _ = update(&mut app, Message::AskDeleteConversation("C1".into()));
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ConfirmRemove);
+        assert_eq!(
+            drain(&mut rx),
+            [Command::Assistant(AssistantCommand::Delete("C1".into()))]
+        );
+        let pending = app.pending_removal.clone().unwrap();
+        assert_eq!(pending.device_id(), Some("D1"));
+        assert_eq!(pending.toast, "Pixel 7 foi removido do hub");
+        let _ = update(&mut app, Message::UndoRemove);
+        assert!(drain(&mut rx).is_empty());
+        assert_eq!(app.pending_removal, None);
+    }
+
+    #[test]
+    fn apagar_todas_nao_manda_a_remocao_de_aparelho_pendente() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_two_people(dir.path());
+        let _ = update(&mut app, Message::AskRemove("D1".into()));
+        let _ = update(&mut app, Message::ConfirmRemove);
+        let _ = update(&mut app, Message::DeleteAllConversations);
+        let _ = update(&mut app, Message::DeleteAllConversations);
+        assert_eq!(
+            drain(&mut rx),
+            [Command::Assistant(AssistantCommand::DeleteAll)]
+        );
+        assert_eq!(
+            app.pending_removal.as_ref().unwrap().device_id(),
+            Some("D1")
+        );
+    }
+
+    #[test]
+    fn esconder_a_conversa_limpa_o_hover_da_linha() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        app.hover_row = Some("C1".into());
+        let _ = update(&mut app, Message::AskDeleteConversation("C1".into()));
+        assert_eq!(app.hover_row, None);
     }
 
     #[test]

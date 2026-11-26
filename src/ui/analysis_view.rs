@@ -100,19 +100,11 @@ const HUB_DOWN: &str = "O hub não iniciou; a análise acima continua valendo.";
 /// A conversa aberta, so se for da conta que a tela mostra: com a outra conta aberta ela falaria
 /// de numeros que nao estao na tela.
 pub(super) fn open_conversation(app: &App) -> Option<&OpenConversation> {
-    let pending = pending_delete(app);
     app.snapshot
         .assistant
         .open
         .as_ref()
-        .filter(|c| c.book == app.book && Some(c.id.as_str()) != pending)
-}
-
-/// Conversa com "Desfazer" pendente: some da tela na hora, antes de o apagar sair.
-fn pending_delete(app: &App) -> Option<&str> {
-    app.pending_removal
-        .as_ref()
-        .and_then(super::app::PendingRemoval::conversation_id)
+        .filter(|c| c.book == app.book && !app.conversation_hidden(&c.id))
 }
 
 /// Os dados da conta mudaram desde que a conversa comecou (spec 3): o envelope guardado nela
@@ -124,12 +116,11 @@ pub(super) fn data_changed(app: &App) -> bool {
 
 /// Conversas da conta que a tela mostra (cada uma e presa a uma conta).
 pub(super) fn conversations_of_book(app: &App) -> Vec<&ConversationSummary> {
-    let pending = pending_delete(app);
     app.snapshot
         .assistant
         .conversations
         .iter()
-        .filter(|c| c.book == app.book && Some(c.id.as_str()) != pending)
+        .filter(|c| c.book == app.book && !app.conversation_hidden(&c.id))
         .collect()
 }
 

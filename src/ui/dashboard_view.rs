@@ -1,5 +1,6 @@
 //! Tela Dashboard "Grafite" (Resumo da casa): Negócio?, Como estou, Reserva + Histórico, Para
-//! onde foi, O que vem, Últimos lançamentos e Quem lançou; ou o estado "Sem dados".
+//! onde foi, O que vem, Últimos lançamentos e Quem lançou; sem lançamento, um dos estados de
+//! `shell::arrival` (abrindo, primeiro uso, aguardando ou "Sem dados").
 //!
 //! Tudo vem de `app.dashboard` (`GrafiteView`, calculado em `App::rebuild`) com os textos ja
 //! prontos: esta tela nao formata dinheiro, so escolhe tamanho, cor e lugar. Formatar aqui
@@ -21,6 +22,7 @@ use super::charts::{
     EMPTY_HEIGHT, EMPTY_WIDTH, EmptyChartProgram, HISTORY_HEIGHT, HistoryProgram, MeterProgram,
     PACE_HEIGHT, PaceProgram, SwatchProgram,
 };
+use super::shell::Arrival;
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
 use super::widgets::{Bar, CompactTone};
 use super::{fonts, icons, shell, time, widgets};
@@ -215,7 +217,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 fn section(app: &App, s: Section, width: f32) -> Element<'_, Message> {
     let t = app.tokens;
     match s {
-        Section::Empty => empty_card(app),
+        Section::Empty => empty_section(app),
         Section::Business => business(app, width),
         Section::HowAmI => how_am_i(app, width),
         Section::Reserve => widgets::card(t, reserve_body(app, width - 40.0))
@@ -1523,6 +1525,98 @@ fn people(app: &App) -> Option<Element<'_, Message>> {
 }
 
 // ---- sem dados ----
+
+/// O lugar das secoes quando a conta nao tem lancamento: abrindo, primeiro uso, aguardando ou
+/// o vazio de sempre (`shell::arrival`). So acrescenta estados; com dados nada aqui roda.
+fn empty_section(app: &App) -> Element<'_, Message> {
+    match shell::screen_arrival(app, !app.dashboard.is_empty) {
+        Arrival::Opening => shell::opening(app),
+        Arrival::FirstUse => first_use_card(app),
+        Arrival::Waiting(line) => waiting_card(app, line),
+        Arrival::Data | Arrival::Empty => empty_card(app),
+    }
+}
+
+/// Texto dos passos do primeiro uso: (titulo, explicacao). Os passos sao uma sequencia real
+/// (parear, confiar no certificado, sincronizar), por isso levam numero.
+const FIRST_USE_STEPS: [(&str, &str); 3] = [
+    ("Conecte um celular", "Pareie pelo QR code em Aparelhos."),
+    ("Instale o certificado", "Uma vez por celular."),
+    (
+        "Faça o primeiro sync",
+        "No app: Ajustes > Sincronizar com o hub.",
+    ),
+];
+
+/// Largura da coluna dos titulos dos passos: as explicacoes comecam todas na mesma linha.
+const STEP_TITLE_WIDTH: f32 = 200.0;
+
+/// Um passo: numero, titulo 14 em `fg` e, ao lado, a explicacao e a acao opcional.
+fn first_use_step<'a>(
+    t: &'static Tokens,
+    n: u8,
+    action: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let (title, body) = FIRST_USE_STEPS
+        .get(usize::from(n).saturating_sub(1))
+        .copied()
+        .unwrap_or_default();
+    let mut detail = column![widgets::step_text(t, body)].spacing(12);
+    if let Some(action) = action {
+        detail = detail.push(action);
+    }
+    widgets::step(
+        t,
+        n,
+        row![
+            txt(title, 14.0, t.text)
+                .line_height(1.45)
+                .width(STEP_TITLE_WIDTH),
+            detail.width(Length::Fill),
+        ]
+        .spacing(16)
+        .into(),
+    )
+}
+
+/// Titulo 18 Medium dos cards do primeiro uso e da espera.
+fn lead<'a>(t: &'static Tokens, content: impl IntoFragment<'a>) -> text::Text<'a> {
+    txt(content, 18.0, t.text).font(fonts::INTER_MEDIUM)
+}
+
+/// Rodape dos dois cards: a promessa de que nada sai de casa.
+fn lan_note<'a>(t: &'static Tokens) -> text::Text<'a> {
+    txt("Os dados viajam só pela rede de casa.", 12.0, t.text_muted)
+}
+
+/// "Comece por aqui" (spec 8.2): nucleo no ar, hub vazio e nenhum aparelho pareado. Substitui o
+/// vazio com "Conectar um celular" da issue 02, que nao dizia o que vem depois de parear.
+fn first_use_card(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let col = column![
+        lead(t, "Comece por aqui"),
+        first_use_step(t, 1, shell::connect_phone_button(app)),
+        first_use_step(t, 2, None),
+        first_use_step(t, 3, None),
+        lan_note(t),
+    ]
+    .spacing(20);
+    widgets::card(t, col).padding(Padding::new(24.0)).into()
+}
+
+/// Ha aparelho pareado mas nada chegou: quem o hub espera e o passo que falta (o 3, o sync).
+fn waiting_card(app: &App, line: String) -> Element<'_, Message> {
+    let t = app.tokens;
+    let col = column![
+        row![swatch(t.warning, 7.0, 3.5), lead(t, line)]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        first_use_step(t, 3, None),
+        lan_note(t),
+    ]
+    .spacing(20);
+    widgets::card(t, col).padding(Padding::new(24.0)).into()
+}
 
 fn empty_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;

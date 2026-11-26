@@ -349,7 +349,10 @@ pub(super) fn active_devices(app: &App) -> usize {
 /// primeiro uso caia no Dashboard sem caminho para a Conexao. So navega; o hub nunca cria dado.
 /// Com aparelho pareado o vazio e "aguardando sync" (ou filtro), e o botao nao ajudaria.
 pub(super) fn connect_phone_button(app: &App) -> Option<Element<'_, Message>> {
-    (active_devices(app) == 0).then(|| {
+    // So com o nucleo no ar: no `Starting` a lista de aparelhos ainda vem vazia do snapshot
+    // inicial, e o botao piscaria no boot de quem ja tem celular pareado.
+    let up = matches!(app.snapshot.status, Status::Running | Status::NoNetwork);
+    (up && active_devices(app) == 0).then(|| {
         button(
             container(
                 text("Conectar um celular")
@@ -1041,13 +1044,20 @@ mod tests {
     fn conectar_um_celular_so_sem_aparelho_pareado() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        // Boot: sem aparelho no snapshot inicial, mas ainda nao se sabe.
+        assert_eq!(app.snapshot.status, Status::Starting);
+        assert!(connect_phone_button(&app).is_none());
+        app.snapshot.status = Status::NoNetwork;
+        assert!(connect_phone_button(&app).is_some());
+        app.snapshot.status = Status::Running;
         assert!(connect_phone_button(&app).is_some());
         // Os vazios montam com o botao nas tres telas.
         for screen in [Screen::Dashboard, Screen::Transactions, Screen::Reserves] {
             app.screen = screen;
             let _ = root(&app);
         }
-        let (app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        app.snapshot.status = Status::Running;
         assert!(connect_phone_button(&app).is_none());
     }
 

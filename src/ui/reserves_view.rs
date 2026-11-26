@@ -3,7 +3,8 @@
 //!
 //! Tudo vem de `app.reserves` (calculado em `App::rebuild`); aqui so se monta a arvore. Todo
 //! valor em R$ ja chega formatado (e mascarado com "Ocultar valores"): formatar aqui vazaria o
-//! numero por cima do botao de ocultar. Os textos seguem o bloco `isRes` do prototipo e o trecho de `renderVals()` a partir de `RD`.
+//! numero por cima do botao de ocultar. Os textos seguem o bloco `isRes` do prototipo e o
+//! trecho de `renderVals()` a partir de `RD`.
 
 use iced::widget::text::Wrapping;
 use iced::widget::{Space, canvas, column, container, row, text};
@@ -221,6 +222,13 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
     )
 }
 
+/// Cor do valor e do icone de uma linha do card "Últimos 12 meses". Zero na cor secundaria:
+/// "−R$ 0,00" no vermelho de despesa apontava uma retirada que nao houve (o texto do zero, sem
+/// sinal, vem do modelo).
+fn flow_color(minor: i64, color: Color, muted: Color) -> Color {
+    if minor == 0 { muted } else { color }
+}
+
 fn year_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.reserves;
@@ -231,13 +239,8 @@ fn year_card(app: &App) -> Element<'_, Message> {
                 label: &'static str,
                 value: &str,
                 minor: i64| {
-        // Zero na cor secundaria: "−R$ 0,00" no vermelho de despesa apontava uma retirada que
-        // nao houve (o texto do zero, sem sinal, vem do modelo).
-        let (value_color, icon_color) = if minor == 0 {
-            (muted, muted)
-        } else {
-            (color, icon_color)
-        };
+        let value_color = flow_color(minor, color, muted);
+        let icon_color = flow_color(minor, icon_color, muted);
         row![
             row![
                 icons::icon(glyph, 13.0, icon_color),
@@ -893,6 +896,14 @@ mod tests {
     use super::super::app::tests::{app_with, app_with_reserves};
     use super::*;
     use crate::hub::snapshot::Snapshot;
+
+    #[test]
+    fn zero_dos_ultimos_12_meses_na_cor_secundaria() {
+        let t = &theme::DARK;
+        assert_eq!(flow_color(0, t.expense_fg, t.text_muted), t.text_muted);
+        assert_eq!(flow_color(12_345, t.expense_fg, t.text_muted), t.expense_fg);
+        assert_eq!(flow_color(920_000, t.text, t.text_muted), t.text);
+    }
 
     fn emergency(coverage: Option<f64>, label: &str) -> EmergencyView {
         EmergencyView {

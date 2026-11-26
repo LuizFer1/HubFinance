@@ -281,10 +281,12 @@ pub static LIGHT: Tokens = Tokens {
 };
 
 impl Tokens {
-    pub fn for_mode(mode: ThemeMode) -> &'static Tokens {
-        match mode {
-            ThemeMode::Dark => &DARK,
-            ThemeMode::Light => &LIGHT,
+    /// Tokens da preferencia `mode`; `system_dark` so pesa com `ThemeMode::System`.
+    pub fn for_mode(mode: ThemeMode, system_dark: bool) -> &'static Tokens {
+        if mode.is_dark(system_dark) {
+            &DARK
+        } else {
+            &LIGHT
         }
     }
 
@@ -1217,8 +1219,10 @@ mod tests {
             (0x3d3d3d, 0xe4e4e4),
             (0x2a2a2a, 0xeeeeee),
         ];
-        assert_eq!(Tokens::for_mode(ThemeMode::Dark).bg, hex(0x131313));
-        assert_eq!(Tokens::for_mode(ThemeMode::Light).bg, hex(0xf5f5f5));
+        assert_eq!(Tokens::for_mode(ThemeMode::Dark, false).bg, hex(0x131313));
+        assert_eq!(Tokens::for_mode(ThemeMode::Light, true).bg, hex(0xf5f5f5));
+        assert_eq!(Tokens::for_mode(ThemeMode::System, true).bg, hex(0x131313));
+        assert_eq!(Tokens::for_mode(ThemeMode::System, false).bg, hex(0xf5f5f5));
         for (((name, dark), (_, light)), (want_dark, want_light)) in grafite(&DARK)
             .into_iter()
             .zip(grafite(&LIGHT))

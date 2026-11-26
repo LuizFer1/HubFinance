@@ -4,6 +4,7 @@
 //! toca o sistema fica atras de `cfg(windows)` e do trait `Desktop`, para teste nenhum criar
 //! bandeja, mutex nem chave de registro.
 
+pub mod appearance;
 pub mod args;
 pub mod autostart;
 pub mod instance;
@@ -42,6 +43,11 @@ pub trait Desktop {
     /// `None` = sistema sem a opcao (a linha nao aparece no card).
     fn autostart(&self) -> Option<bool>;
     fn set_autostart(&self, enabled: bool) -> Result<(), String>;
+    /// Tema do sistema agora (`true` = escuro), para o tema "Sistema"; `None` = nao se sabe.
+    /// Leitura, sem efeito: vale com ou sem bandeja, por isso o padrao serve aos dois.
+    fn system_dark(&self) -> Option<bool> {
+        appearance::system_dark()
+    }
 }
 
 /// Linux, macOS, e Windows quando a bandeja nao subiu.
@@ -114,6 +120,8 @@ pub(crate) struct Fake {
     pub tooltip: std::cell::RefCell<String>,
     pub autostart: std::cell::Cell<Option<bool>>,
     pub fail_autostart: std::cell::Cell<bool>,
+    /// O tema do sistema que o teste escolhe; nunca le o registro da maquina.
+    pub system_dark: std::cell::Cell<Option<bool>>,
 }
 
 #[cfg(test)]
@@ -124,6 +132,7 @@ impl Fake {
             tooltip: Default::default(),
             autostart: std::cell::Cell::new(Some(false)),
             fail_autostart: Default::default(),
+            system_dark: Default::default(),
         }
     }
 }
@@ -145,6 +154,9 @@ impl Desktop for Fake {
         }
         self.autostart.set(Some(enabled));
         Ok(())
+    }
+    fn system_dark(&self) -> Option<bool> {
+        self.system_dark.get()
     }
 }
 

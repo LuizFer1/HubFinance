@@ -154,7 +154,11 @@ pub struct App {
     /// mouse anda, para o duplo clique (maximizar) nao ser engolido pelo laco de movimento do
     /// Windows.
     pub(super) title_pressed: bool,
+    /// A preferencia (Escuro, Claro ou Sistema); o que se desenha e `tokens`.
     pub(super) theme: ThemeMode,
+    /// O sistema esta no escuro? So pesa com `ThemeMode::System`. Nasce do registro (ou escuro,
+    /// o padrao do design, quando o sistema nao diz) e segue as trocas avisadas.
+    pub(super) system_dark: bool,
     pub(super) tokens: &'static Tokens,
     /// `Theme::custom` gera a paleta estendida a cada chamada; guardado para nao refazer isso
     /// a cada quadro.
@@ -320,6 +324,9 @@ pub enum Message {
     Resize(window::Direction),
     SelectScreen(Screen),
     SetTheme(ThemeMode),
+    /// O sistema trocou entre escuro e claro (`system::theme_changes`), ou respondeu a
+    /// consulta do boot (`system::theme`).
+    SystemTheme(iced::theme::Mode),
     /// "Iniciar com o Windows" do card "Sobre o hub".
     SetAutostart(bool),
     Copy(CopyTarget),
@@ -404,7 +411,8 @@ impl App {
             snapshot.assistant.settings.local.port,
             snapshot_model.clone(),
         );
-        let tokens = Tokens::for_mode(prefs.theme);
+        let system_dark = desktop.system_dark().unwrap_or(true);
+        let tokens = Tokens::for_mode(prefs.theme, system_dark);
         let mut app = App {
             handle,
             snapshot,
@@ -416,6 +424,7 @@ impl App {
             maximized: false,
             title_pressed: false,
             theme: prefs.theme,
+            system_dark,
             tokens,
             iced_theme: tokens.iced_theme(),
             screen: Screen::default(),
@@ -654,6 +663,25 @@ impl App {
         self.user_avatars = avatars;
     }
 
+    /// Refaz os tokens a partir da preferencia e do sistema. So mexe no que se desenha (nunca
+    /// grava o `ui.json`): a troca do sistema nao e escolha da pessoa.
+    fn apply_theme(&mut self) {
+        let tokens = Tokens::for_mode(self.theme, self.system_dark);
+        if std::ptr::eq(tokens, self.tokens) {
+            return;
+        }
+        self.tokens = tokens;
+        self.iced_theme = tokens.iced_theme();
+        // As cores dos graficos estao gravadas na geometria em cache.
+        self.clear_charts();
+    }
+
+    /// O sistema trocou (ou disse pela primeira vez) entre escuro e claro.
+    fn set_system_dark(&mut self, dark: bool) {
+        self.system_dark = dark;
+        self.apply_theme();
+    }
+
     fn clear_charts(&self) {
         self.pace_cache.clear();
         self.history_cache.clear();
@@ -800,6 +828,8 @@ pub fn boot(
         if let Some(events) = events.borrow_mut().take() {
             tasks.push(Task::run(events, Message::Desktop));
         }
+        // Fora do Windows o registro nao responde: o tema do sistema vem do iced.
+        tasks.push(iced::system::theme().map(Message::SystemTheme));
         // Nucleo que ja falhou antes do boot (porta ocupada responde em milissegundos): o
         // primeiro `Snapshot` nao seria uma transicao para `Failed`, e um boot so com o icone
         // esconderia o erro.
@@ -932,6 +962,14 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 app.confirm_delete_all = None;
             }
             app.set_today(local_today(app.offset));
+            // No Windows a troca do tema do sistema nao chega pelo iced (ver
+            // `desktop::appearance`): com "Sistema" ativo, o tique confere.
+            if app.theme == ThemeMode::System
+                && let Some(dark) = app.desktop.system_dark()
+                && dark != app.system_dark
+            {
+                app.set_system_dark(dark);
+            }
             Task::none()
         }
         Message::PrevMonth => {
@@ -1095,13 +1133,26 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 return Task::none();
             }
             app.theme = mode;
-            app.tokens = Tokens::for_mode(mode);
-            app.iced_theme = app.tokens.iced_theme();
-            // As cores dos graficos estao gravadas na geometria em cache.
-            app.clear_charts();
+            // Ao escolher "Sistema" o valor guardado pode ser velho (o tique so consulta com
+            // "Sistema" ativo): le de novo antes de desenhar.
+            if mode == ThemeMode::System
+                && let Some(dark) = app.desktop.system_dark()
+            {
+                app.system_dark = dark;
+            }
+            app.apply_theme();
             Task::perform(save_prefs(app.prefs(), app.prefs_dir.clone()), |_| {
                 Message::Noop
             })
+        }
+        Message::SystemTheme(mode) => {
+            // `None` = o sistema nao tem preferencia: fica o ultimo valor conhecido.
+            match mode {
+                iced::theme::Mode::Dark => app.set_system_dark(true),
+                iced::theme::Mode::Light => app.set_system_dark(false),
+                iced::theme::Mode::None => {}
+            }
+            Task::none()
         }
         Message::SetAutostart(enabled) => {
             if app.autostart == Some(enabled) {
@@ -1676,6 +1727,7 @@ pub fn subscription(_app: &App) -> Subscription<Message> {
         window::resize_events().map(|(_, size)| Message::Resized(size)),
         Subscription::run(ticks).map(|()| Message::Tick),
         super::keys::subscription(),
+        iced::system::theme_changes().map(Message::SystemTheme),
     ])
 }
 
@@ -1852,6 +1904,49 @@ pub(super) mod tests {
             assert!(std::time::Instant::now() < deadline, "ui.json nao gravado");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    #[test]
+    fn tema_sistema_segue_o_sistema_sem_gravar_a_troca() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        fake.system_dark.set(Some(false));
+        let _ = update(&mut app, Message::SetTheme(ThemeMode::System));
+        assert_eq!(app.theme, ThemeMode::System);
+        // Escolher "Sistema" le o sistema na hora: claro, sem esperar o tique.
+        assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while UiPrefs::load(dir.path()).theme != ThemeMode::System {
+            assert!(std::time::Instant::now() < deadline, "ui.json nao gravado");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // O sistema vai para o escuro: o tique percebe (caminho do Windows).
+        fake.system_dark.set(Some(true));
+        let _ = update(&mut app, Message::Tick);
+        assert!(std::ptr::eq(app.tokens, &super::super::theme::DARK));
+        // O aviso do iced tambem troca (caminho do Linux); `None` nao mexe.
+        let _ = update(&mut app, Message::SystemTheme(iced::theme::Mode::Light));
+        assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
+        fake.system_dark.set(None);
+        let _ = update(&mut app, Message::SystemTheme(iced::theme::Mode::None));
+        let _ = update(&mut app, Message::Tick);
+        assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
+        assert_eq!(UiPrefs::load(dir.path()).theme, ThemeMode::System);
+    }
+
+    #[test]
+    fn tema_fixo_ignora_o_sistema() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        fake.system_dark.set(Some(false));
+        assert_eq!(app.theme, ThemeMode::Dark);
+        let _ = update(&mut app, Message::Tick);
+        let _ = update(&mut app, Message::SystemTheme(iced::theme::Mode::Light));
+        assert!(std::ptr::eq(app.tokens, &super::super::theme::DARK));
+        // Voltar a "Sistema" usa o que o sistema disse por ultimo.
+        let _ = update(&mut app, Message::SetTheme(ThemeMode::System));
+        assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
     }
 
     #[test]

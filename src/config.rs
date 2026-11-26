@@ -73,12 +73,29 @@ impl Config {
 }
 
 /// Tema da janela. Escuro e o padrao do design.
+///
+/// `System` e so a preferencia gravada: quem decide escuro ou claro e o sistema, lido pela UI.
+/// Valor novo, e nao um campo a parte: o `ui.json` antigo ("dark"/"light") continua lendo
+/// igual, e um arquivo com "system" aberto por um hub antigo cai no padrao (o `load` trata
+/// valor desconhecido como arquivo ilegivel), sem impedir a janela de abrir.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
     #[default]
     Dark,
     Light,
+    System,
+}
+
+impl ThemeMode {
+    /// Escuro de fato, com o que o sistema diz agora (`system_dark`). So `System` consulta.
+    pub fn is_dark(self, system_dark: bool) -> bool {
+        match self {
+            ThemeMode::Dark => true,
+            ThemeMode::Light => false,
+            ThemeMode::System => system_dark,
+        }
+    }
 }
 
 /// Preferencias da janela, em `<data_dir>/ui.json`.
@@ -245,6 +262,45 @@ mod tests {
         assert_eq!(UiPrefs::load(dir.path()), prefs);
         let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
         assert!(raw.contains("\"hide_values\": true"), "{raw}");
+    }
+
+    #[test]
+    fn tema_sistema_grava_e_le_de_volta() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefs = UiPrefs {
+            theme: ThemeMode::System,
+            ..UiPrefs::default()
+        };
+        prefs.save(dir.path()).unwrap();
+        assert_eq!(UiPrefs::load(dir.path()), prefs);
+        let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
+        assert!(raw.contains("\"system\""), "{raw}");
+    }
+
+    #[test]
+    fn ui_json_antigo_continua_lendo_igual() {
+        let dir = tempfile::tempdir().unwrap();
+        for (raw, theme) in [
+            (r#"{"theme":"dark"}"#, ThemeMode::Dark),
+            (r#"{"theme":"light","autostart":true}"#, ThemeMode::Light),
+            (r#"{"autostart":false}"#, ThemeMode::Dark),
+        ] {
+            std::fs::write(dir.path().join("ui.json"), raw).unwrap();
+            assert_eq!(UiPrefs::load(dir.path()).theme, theme, "{raw}");
+        }
+        // Gravar de novo sem mexer no tema nao troca o valor por "system".
+        let prefs = UiPrefs::load(dir.path());
+        prefs.save(dir.path()).unwrap();
+        let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
+        assert!(raw.contains("\"dark\""), "{raw}");
+    }
+
+    #[test]
+    fn so_o_tema_sistema_segue_o_sistema() {
+        assert!(ThemeMode::Dark.is_dark(false));
+        assert!(!ThemeMode::Light.is_dark(true));
+        assert!(ThemeMode::System.is_dark(true));
+        assert!(!ThemeMode::System.is_dark(false));
     }
 
     #[test]

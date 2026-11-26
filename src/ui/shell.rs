@@ -4,7 +4,7 @@
 use std::net::Ipv4Addr;
 
 use iced::widget::{
-    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text,
+    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text, tooltip,
 };
 use iced::{Alignment, Element, Length, Padding, mouse, window};
 
@@ -15,6 +15,7 @@ use super::{
     analysis_view, connection_view, dashboard_view, fonts, icons, remove_view, reserves_view,
     settings_view, time, transactions_view, widgets,
 };
+use crate::advisor::Severity;
 use crate::dashboard::contract::Book;
 use crate::dashboard::money::group_thousands;
 use crate::hub::snapshot::Status;
@@ -232,7 +233,7 @@ fn sidebar(app: &App) -> Element<'_, Message> {
     .padding([0, 10]);
 
     let mut nav = column![].spacing(2);
-    for entry in nav_entries(app) {
+    for (i, entry) in nav_entries(app).into_iter().enumerate() {
         if entry.screen == Screen::Connection {
             nav = nav.push(
                 container(text("Hub").size(12).color(t.text_muted)).padding(Padding {
@@ -243,7 +244,7 @@ fn sidebar(app: &App) -> Element<'_, Message> {
                 }),
             );
         }
-        nav = nav.push(nav_item(app, entry));
+        nav = nav.push(nav_item(app, entry, i + 1));
     }
 
     let col = column![
@@ -260,7 +261,7 @@ fn sidebar(app: &App) -> Element<'_, Message> {
     container(col).height(Length::Fill).into()
 }
 
-/// Uma linha da navegacao: tela, glifo, rotulo e a contagem a direita (Dashboard nao tem).
+/// Uma linha da navegacao: tela, glifo, rotulo e, so na Analise, o numero de alertas.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct NavEntry {
     pub screen: Screen,
@@ -269,38 +270,42 @@ pub(super) struct NavEntry {
     pub count: Option<usize>,
 }
 
-/// As seis linhas na ordem do design; "Conexão" e "Ajustes" ficam sob a secao "Hub".
+/// As seis linhas na ordem do design; "Aparelhos" e "Ajustes" ficam sob a secao "Hub". A
+/// ordem e tambem a do Ctrl+1..6 (`keys::shortcut` le daqui) e a do tooltip de cada item.
+///
+/// Sem contagens (decisao do dono, 25/11): o total de lancamentos ou de aparelhos nao pede
+/// nada a ninguem. A excecao e a Analise, com o numero de alertas, que e o que pede acao.
 pub(super) fn nav_entries(app: &App) -> [NavEntry; 6] {
     [
         NavEntry {
             screen: Screen::Dashboard,
             glyph: icons::CHART_PIE_SLICE,
-            label: "Dashboard",
+            label: "Resumo",
             count: None,
         },
         NavEntry {
             screen: Screen::Transactions,
             glyph: icons::LIST_BULLETS,
             label: "Lançamentos",
-            count: Some(transactions_count(app)),
+            count: None,
         },
         NavEntry {
             screen: Screen::Reserves,
             glyph: icons::VAULT,
             label: "Reservas",
-            count: Some(reserves_count(app)),
+            count: None,
         },
         NavEntry {
             screen: Screen::Analysis,
             glyph: icons::LIGHTBULB,
             label: "Análise",
-            count: None,
+            count: alert_count(app),
         },
         NavEntry {
             screen: Screen::Connection,
-            glyph: icons::QR_CODE,
-            label: "Conexão",
-            count: Some(active_devices(app)),
+            glyph: icons::DEVICE_MOBILE,
+            label: "Aparelhos",
+            count: None,
         },
         NavEntry {
             screen: Screen::Settings,
@@ -311,14 +316,21 @@ pub(super) fn nav_entries(app: &App) -> [NavEntry; 6] {
     ]
 }
 
+/// Achados de severidade "alerta" da conta aberta, do mesmo modelo que a Analise desenha.
+/// Zero nao aparece: um "0" na lateral seria ruido.
+pub(super) fn alert_count(app: &App) -> Option<usize> {
+    let n = app
+        .analysis
+        .findings
+        .iter()
+        .filter(|f| f.severity == Severity::Alert)
+        .count();
+    (n > 0).then_some(n)
+}
+
 /// Lancamentos vivos da conta escolhida (do modelo do Dashboard, que ja os contou).
 pub(super) fn transactions_count(app: &App) -> usize {
     app.dashboard.sidebar.transactions
-}
-
-/// Reservas vivas da conta escolhida.
-pub(super) fn reserves_count(app: &App) -> usize {
-    app.dashboard.sidebar.reserves
 }
 
 /// Aparelhos ativos: e o numero de linhas da lista "Usuarios conectados" (sem a remocao
@@ -354,9 +366,17 @@ pub(super) fn connect_phone_button(app: &App) -> Option<Element<'_, Message>> {
     })
 }
 
-/// Item de 44 px, raio 8, icone 18 e rotulo 14 (Medium quando ativo). O icone ativo e o
-/// dourado `accent_400` do design; o inativo herda o texto de apoio do botao.
-fn nav_item(app: &App, entry: NavEntry) -> Element<'_, Message> {
+/// Texto do tooltip do item: o atalho da posicao `n` (1 a 6). Sai do mesmo indice que
+/// `keys::shortcut` usa, entao nao tem como dizer um numero e a tecla fazer outro.
+pub(super) fn nav_shortcut(n: usize) -> String {
+    format!("Ctrl+{n}")
+}
+
+/// Item de 44 px, raio 8, icone 18 e rotulo 14. Ativo: fundo `surface`, barra dourada de 3x20
+/// encostada a esquerda, icone `accent_400` e rotulo Medium; o inativo herda o texto de apoio
+/// do botao. A barra tem lugar reservado nos dois estados, para o icone nao pular ao trocar.
+/// O tooltip mostra o atalho (`n` e a posicao na navegacao).
+fn nav_item(app: &App, entry: NavEntry, n: usize) -> Element<'_, Message> {
     let t = app.tokens;
     let active = app.screen == entry.screen;
     let icon = if active {
@@ -364,6 +384,17 @@ fn nav_item(app: &App, entry: NavEntry) -> Element<'_, Message> {
     } else {
         icons::icon_inherit(entry.glyph, 18.0)
     };
+    let marker = container(Space::new())
+        .width(3)
+        .height(20)
+        .style(theme::fill(
+            if active {
+                t.accent
+            } else {
+                iced::Color::TRANSPARENT
+            },
+            1.5,
+        ));
     let mut line = row![
         icon,
         text(entry.label)
@@ -380,12 +411,33 @@ fn nav_item(app: &App, entry: NavEntry) -> Element<'_, Message> {
     if let Some(n) = entry.count {
         line = line.push(text(thousands(n)).size(12).color(t.text_muted));
     }
-    button(container(line).height(44).align_y(Alignment::Center))
-        .padding([0, 12])
+    let content = row![
+        marker,
+        container(line)
+            .padding(Padding {
+                left: 9.0,
+                right: 12.0,
+                ..Padding::ZERO
+            })
+            .width(Length::Fill),
+    ]
+    .height(44)
+    .align_y(Alignment::Center);
+    let item = button(content)
+        .padding(0)
         .width(Length::Fill)
         .style(theme::nav_item(t, active))
-        .on_press(Message::SelectScreen(entry.screen))
-        .into()
+        .on_press(Message::SelectScreen(entry.screen));
+    tooltip(
+        item,
+        container(text(nav_shortcut(n)).size(12).color(t.text))
+            .padding([6, 10])
+            .style(theme::menu(t)),
+        tooltip::Position::Right,
+    )
+    .gap(8)
+    .delay(theme::TOOLTIP_DELAY)
+    .into()
 }
 
 /// Endereco principal e porta HTTPS; sem rede, so a porta.
@@ -493,6 +545,7 @@ fn halo_dot<'a>(color: iced::Color) -> Element<'a, Message> {
 }
 
 /// Card de status: `surface`, raio 8, 14 de respiro; titulo 13 e as linhas em `text_muted`.
+/// Clicavel: leva a Aparelhos, onde estao o endereco e quem esta conectado.
 fn status_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let lines = status_lines(app);
@@ -511,7 +564,12 @@ fn status_card(app: &App) -> Element<'_, Message> {
     if let Some(detail) = lines.detail {
         col = col.push(text(detail).size(12).line_height(1.45).color(t.text_muted));
     }
-    widgets::card(t, col).padding(14).into()
+    button(col)
+        .padding(14)
+        .width(Length::Fill)
+        .style(theme::status_card(t))
+        .on_press(Message::SelectScreen(Screen::Connection))
+        .into()
 }
 
 // ---- conteudo ----
@@ -668,7 +726,7 @@ pub(super) fn book_switch(app: &App) -> Option<Element<'_, Message>> {
 }
 
 /// Titulo e subtitulo de cada tela. O do Dashboard vem pronto do modelo Grafite ("Resumo da
-/// casa"); a navegacao continua dizendo "Dashboard".
+/// casa"); a navegacao diz so "Resumo".
 pub(super) fn titles(app: &App) -> (&str, String) {
     let empty = !has_transactions(app);
     match app.screen {
@@ -697,7 +755,7 @@ pub(super) fn titles(app: &App) -> (&str, String) {
             "Onde dá para melhorar · calculado no seu PC".into(),
         ),
         Screen::Connection => (
-            "Conexão",
+            "Aparelhos",
             "Abra este endereço no celular para conectar ao hub".into(),
         ),
         Screen::Settings => ("Ajustes", "Preferências deste computador".into()),
@@ -896,7 +954,7 @@ mod tests {
                 "Dinheiro separado do saldo do mês · somente leitura".to_string()
             )
         );
-        assert_eq!(reserves_count(&app), 6);
+        assert_eq!(app.dashboard.sidebar.reserves, 6);
     }
 
     #[test]
@@ -929,7 +987,7 @@ mod tests {
     }
 
     #[test]
-    fn titulo_do_dashboard_e_resumo_da_casa_e_a_nav_continua_dashboard() {
+    fn titulo_do_dashboard_e_resumo_da_casa_e_a_nav_diz_resumo() {
         let dir = tempfile::tempdir().unwrap();
         let (app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
         assert_eq!(
@@ -939,7 +997,7 @@ mod tests {
                 "Somente leitura · dados do último sync".to_string()
             )
         );
-        assert_eq!(nav_entries(&app)[0].label, "Dashboard");
+        assert_eq!(nav_entries(&app)[0].label, "Resumo");
         let (empty, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
         assert_eq!(
             titles(&empty),
@@ -1013,9 +1071,10 @@ mod tests {
     }
 
     #[test]
-    fn contagens_da_nav_vem_do_modelo_e_dos_aparelhos() {
+    fn nav_sem_contagens_exceto_os_alertas_da_analise() {
+        use crate::advisor::{Finding, FindingKind};
         let dir = tempfile::tempdir().unwrap();
-        let (app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
         let entries = nav_entries(&app);
         let screens: Vec<Screen> = entries.iter().map(|e| e.screen).collect();
         assert_eq!(
@@ -1033,22 +1092,59 @@ mod tests {
         assert_eq!(
             labels,
             [
-                "Dashboard",
+                "Resumo",
                 "Lançamentos",
                 "Reservas",
                 "Análise",
-                "Conexão",
+                "Aparelhos",
                 "Ajustes"
             ]
         );
-        assert_eq!(entries[0].count, None);
-        assert_eq!(entries[1].count, Some(app.dashboard.sidebar.transactions));
-        assert_eq!(entries[1].count, Some(13));
-        assert_eq!(entries[2].count, Some(app.dashboard.sidebar.reserves));
-        // Analise nao tem contagem.
-        assert_eq!(entries[3].count, None);
-        // D1 e D2 ativos; D3 revogado.
-        assert_eq!(entries[4].count, Some(2));
+        // Com lancamentos, reservas e dois aparelhos ativos, nenhuma contagem aparece.
+        assert_eq!(app.dashboard.sidebar.transactions, 13);
+        assert_eq!(active_devices(&app), 2);
+        for entry in entries.iter().filter(|e| e.screen != Screen::Analysis) {
+            assert_eq!(entry.count, None, "{}", entry.label);
+        }
+
+        // A Analise conta so os alertas; zero nao mostra nada.
+        let finding = |severity| Finding {
+            kind: FindingKind::Pace,
+            severity,
+            title: "x".into(),
+            detail: String::new(),
+            action: None,
+            figures: Vec::new(),
+            impact_minor: 0,
+        };
+        app.analysis.findings = vec![finding(Severity::Attention), finding(Severity::GoodSign)];
+        assert_eq!(nav_entries(&app)[3].count, None);
+        app.analysis.findings = vec![
+            finding(Severity::Alert),
+            finding(Severity::Attention),
+            finding(Severity::Alert),
+        ];
+        assert_eq!(alert_count(&app), Some(2));
+        assert_eq!(nav_entries(&app)[3].count, Some(2));
+    }
+
+    #[test]
+    fn tooltip_da_nav_mostra_o_atalho_da_posicao() {
+        assert_eq!(nav_shortcut(1), "Ctrl+1");
+        assert_eq!(nav_shortcut(6), "Ctrl+6");
+    }
+
+    #[test]
+    fn card_de_status_leva_a_aparelhos_e_a_lateral_monta_em_toda_tela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        for screen in nav_entries(&app).map(|e| e.screen) {
+            app.screen = screen;
+            let _ = root(&app);
+        }
+        app.screen = Screen::Dashboard;
+        let _ = super::super::app::update(&mut app, Message::SelectScreen(Screen::Connection));
+        assert_eq!(titles(&app).0, "Aparelhos");
     }
 
     #[test]
@@ -1067,7 +1163,7 @@ mod tests {
         assert_eq!(
             titles(&app),
             (
-                "Conexão",
+                "Aparelhos",
                 "Abra este endereço no celular para conectar ao hub".to_string()
             )
         );

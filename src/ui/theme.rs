@@ -753,6 +753,25 @@ pub fn nav_item(
     })
 }
 
+/// Card de status da lateral, clicavel (leva a Aparelhos): a cara do `card` em repouso, com a
+/// camada `state` misturada ao `surface` sob o mouse e pressionado. Misturada, e nao por cima:
+/// o fundo do botao e um so, e a camada translucida sobre nada sumiria no gradiente da pagina.
+pub fn status_card(t: &'static Tokens) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let amount = match status {
+            button::Status::Hovered => 0.04,
+            button::Status::Pressed => 0.08,
+            button::Status::Active | button::Status::Disabled => 0.0,
+        };
+        button::Style {
+            background: bg(mix(t.surface, t.text, amount)),
+            text_color: t.text,
+            border: outline(t.card_border(), radius::CARD),
+            ..button::Style::default()
+        }
+    }
+}
+
 /// Opcao do segmentado Grafite (tema, Pessoal | Comercial): raio 6, ativo no #333333 do
 /// design (a divisoria opaca) com texto `fg`, inativo transparente com texto de apoio e a
 /// camada `state` sob o mouse e pressionado.

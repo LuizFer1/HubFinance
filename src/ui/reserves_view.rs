@@ -13,8 +13,8 @@ use super::charts::{
     EMPTY_RESERVES_HEIGHT, EMPTY_RESERVES_WIDTH, EmptyReservesProgram, StackedBarsProgram,
 };
 use super::rows::{author_cell_of, hover_row, kicker_with_icon};
-use super::theme::{self, Tokens};
-use super::widgets::{Bar, TagTone};
+use super::theme::{self, Tokens, type_scale};
+use super::widgets::{Bar, StatSize, TagTone};
 use super::{fonts, icons, shell, widgets};
 use crate::dashboard::contract::MovementKind;
 use crate::dashboard::money::{format_brl, money_parts, whole_brl};
@@ -127,12 +127,13 @@ fn total_card(app: &App) -> Element<'_, Message> {
         t,
         column![
             widgets::kicker(t, "Total separado"),
-            widgets::money_big(
+            widgets::money(
+                t,
                 &format!("{}R$", parts.sign),
                 &parts.whole,
                 &parts.cents,
-                t.text,
-                t.text_muted
+                StatSize::L,
+                t.text
             ),
             note,
             container(widgets::bar(
@@ -184,37 +185,30 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
             empty_segments.as_slice(),
         ),
     };
+    let big = StatSize::L.size();
     let value: Element<'_, Message> = match coverage_figure(v.emergency.as_ref()) {
-        CoverageFigure::Months { value, multiple } => row![
-            text(value)
-                .size(32)
-                .font(fonts::INTER_MEDIUM)
-                .line_height(1.0)
-                .color(t.text),
-            container(
-                text(format!("de {multiple} meses"))
-                    .size(16)
-                    .line_height(1.0)
-                    .color(t.text_muted)
-            )
-            .padding(Padding {
-                bottom: 2.0,
-                ..Padding::ZERO
-            }),
-        ]
-        .spacing(6)
-        .align_y(Alignment::End)
-        .into(),
-        // Um degrau abaixo do valor e na cor secundaria, na mesma altura de 32 para o card nao
-        // encolher: e um estado, nao um numero.
+        CoverageFigure::Months { value, multiple } => widgets::value_line(
+            vec![
+                (value.to_string(), big, fonts::INTER_LIGHT, t.text),
+                (
+                    format!("de {multiple} meses"),
+                    type_scale::SECTION,
+                    fonts::INTER,
+                    t.text_muted,
+                ),
+            ],
+            big,
+            6.0,
+        ),
+        // Um degrau abaixo do valor e na cor secundaria, na mesma altura do valor para o card
+        // nao encolher: e um estado, nao um numero.
         CoverageFigure::Missing(label) => container(
             text(label)
-                .size(24)
-                .font(fonts::INTER_MEDIUM)
+                .size(type_scale::VALUE_M)
                 .line_height(1.0)
                 .color(t.text_muted),
         )
-        .height(32)
+        .height(big)
         .align_y(Alignment::End)
         .into(),
     };
@@ -394,12 +388,13 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
     .spacing(12)
     .align_y(Alignment::Center);
     let parts = money_parts(e.balance_minor);
-    let mut balance = row![widgets::money_big(
+    let mut balance = row![widgets::money(
+        t,
         &format!("{}R$", parts.sign),
         &parts.whole,
         &parts.cents,
-        t.text,
-        t.text_muted
+        StatSize::L,
+        t.text
     )]
     .spacing(10)
     .align_y(Alignment::End);

@@ -4,7 +4,7 @@
 //! Tudo recebe `&'static Tokens`: o estilo e decidido aqui, a tela so monta.
 
 use iced::widget::{Space, button, container, image, row, text};
-use iced::{Alignment, Border, Color, Element, Length, Padding, Theme};
+use iced::{Alignment, Border, Color, Element, Length, Theme};
 
 use super::fonts;
 use super::icons;
@@ -13,6 +13,7 @@ use super::theme::{self, Tokens};
 mod controls;
 mod marks;
 mod surface;
+mod values;
 
 pub use controls::{
     ChipShape, SegmentedVariant, action_button, action_button_icon, action_button_with, chip,
@@ -22,6 +23,7 @@ pub use marks::{
     Bar, TagTone, bar, color_tag, neutral_tile, partial_tag, tag, tag_icon, tile, token_tile,
 };
 pub use surface::{card, divider, inset, section_heading, vdivider};
+pub use values::{StatSize, baseline_pad, money, stat, value_line};
 
 /// Rotulo em frase normal ("Saldo do mês"), 12 Medium em `text_muted`. Desvio do handoff, que pede
 /// caixa alta com `letter-spacing`: sem o espacamento (o iced nao tem) a caixa alta ficava
@@ -174,36 +176,6 @@ pub fn step_text<'a>(t: &'static Tokens, content: impl text::IntoFragment<'a>) -
         .size(13)
         .line_height(1.45)
         .color(t.text_soft())
-}
-
-/// Valor grande dos cards: prefixo ("R$", "+R$", "−R$") e centavos em 16 Regular, inteiro em
-/// 32 Medium. O iced nao alinha por linha de base; com altura de linha 1,0 a base da Inter fica
-/// a 0,136 em do fundo da caixa, entao os pedacos de 16 sobem 2 px para casar com o de 32.
-pub fn money_big<'a, M: 'a>(
-    prefix: &str,
-    whole: &str,
-    cents: &str,
-    main: Color,
-    small: Color,
-) -> Element<'a, M> {
-    let piece = |content: String| {
-        container(text(content).size(16).line_height(1.0).color(small)).padding(Padding {
-            bottom: 2.0,
-            ..Padding::ZERO
-        })
-    };
-    row![
-        piece(prefix.to_string()),
-        text(whole.to_string())
-            .size(32)
-            .font(fonts::INTER_MEDIUM)
-            .line_height(1.0)
-            .color(main),
-        piece(format!(",{cents}")),
-    ]
-    .spacing(4)
-    .align_y(Alignment::End)
-    .into()
 }
 
 /// Largura do rotulo do seletor de mes ("Nov 2026" em 14 Medium mais os 4 px de cada lado).

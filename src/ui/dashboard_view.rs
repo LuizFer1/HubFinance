@@ -187,13 +187,6 @@ fn tiles<'a>(total: f32, gap: f32, row_gap: f32, items: Vec<Tile<'a>>) -> Elemen
     out.into()
 }
 
-/// Respiro que o pedaco menor precisa embaixo para a linha de base casar com a do maior, com
-/// altura de linha 1,0 (o iced nao alinha por linha de base). Na Inter a base fica a 0,1367 em
-/// do fundo da caixa (ascendente 0,96875 e descendente 0,2421875 centrados em 1 em).
-pub(super) fn baseline_pad(big: f32, small: f32) -> f32 {
-    0.1367 * (big - small).max(0.0)
-}
-
 // ---- tela ----
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -345,36 +338,6 @@ fn swatch<'a>(color: Color, size: f32, radius: f32) -> Element<'a, Message> {
 fn meter<'a>(program: MeterProgram) -> Element<'a, Message> {
     let h = program.height();
     canvas(program).width(Length::Fill).height(h).into()
-}
-
-/// Valor partido em linha de base: pedacos menores (`R$`, centavos, sufixo) com respiro embaixo
-/// para casar com o numero grande.
-fn big_value<'a>(
-    pieces: Vec<(String, f32, Font, Color)>,
-    big: f32,
-    spacing: f32,
-) -> Element<'a, Message> {
-    let mut line = row![].spacing(spacing).align_y(Alignment::End);
-    for (content, size, font, color) in pieces {
-        if content.is_empty() {
-            continue;
-        }
-        line = line.push(
-            container(
-                text(content)
-                    .size(size)
-                    .font(font)
-                    .line_height(1.0)
-                    .wrapping(Wrapping::None)
-                    .color(color),
-            )
-            .padding(Padding {
-                bottom: baseline_pad(big, size),
-                ..Padding::ZERO
-            }),
-        );
-    }
-    line.into()
 }
 
 fn link_button<'a>(t: &'static Tokens, label: &str, message: Message) -> Element<'a, Message> {
@@ -569,15 +532,16 @@ fn balance_column(app: &App) -> Element<'_, Message> {
     } else {
         t.text
     };
-    let mut col = column![
-        txt(h.balance_label.clone(), 13.0, t.text_muted),
-        big_value(
+    let mut col = widgets::stat(
+        t,
+        &h.balance_label,
+        widgets::value_line(
             vec![
                 (
                     format!("{}{}", b.sign, b.currency),
                     16.0,
                     fonts::INTER,
-                    t.text_muted
+                    t.text_muted,
                 ),
                 (b.whole.clone(), 44.0, fonts::INTER_LIGHT, whole_color),
                 (b.cents.clone(), 18.0, fonts::INTER, t.text_muted),
@@ -585,7 +549,8 @@ fn balance_column(app: &App) -> Element<'_, Message> {
             44.0,
             8.0,
         ),
-    ]
+        None,
+    )
     .spacing(14);
     if let Some(line) = &h.outlook {
         col = col.push(outlook_line(t, line));
@@ -673,7 +638,7 @@ fn balance_column(app: &App) -> Element<'_, Message> {
                     .line_height(1.0),
                 )
                 .padding(Padding {
-                    bottom: baseline_pad(24.0, 13.0),
+                    bottom: widgets::baseline_pad(24.0, 13.0),
                     ..Padding::ZERO
                 }),
             );
@@ -801,7 +766,7 @@ fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
                     widgets::tag(t, TagTone::Accent, &e.chip),
                 ]
                 .align_y(Alignment::Center),
-                big_value(
+                widgets::value_line(
                     vec![
                         (e.coverage.clone(), 36.0, fonts::INTER_LIGHT, t.text),
                         (e.coverage_suffix.clone(), 14.0, fonts::INTER, t.text_muted),
@@ -1323,7 +1288,7 @@ fn free_card(app: &App) -> Element<'_, Message> {
         if let Some(of) = &f.of_income {
             pieces.push((format!(" {of}"), 13.0, fonts::INTER, t.text_muted));
         }
-        col = col.push(big_value(pieces, 36.0, 6.0));
+        col = col.push(widgets::value_line(pieces, 36.0, 6.0));
         col = col.push(
             container(meter(MeterProgram {
                 fill: f.committed_fill,
@@ -1771,11 +1736,5 @@ mod tests {
         assert_eq!(band_top(&Band::Split(vec![Recent], vec![People])), 20.0);
         assert_eq!(band_top(&Band::Split(vec![Reserve], vec![History])), 0.0);
         assert_eq!(band_top(&Band::Full(People)), 0.0);
-    }
-
-    #[test]
-    fn linha_de_base_do_valor_partido() {
-        assert!((baseline_pad(44.0, 16.0) - 3.8276).abs() < 1e-3);
-        assert_eq!(baseline_pad(16.0, 44.0), 0.0);
     }
 }

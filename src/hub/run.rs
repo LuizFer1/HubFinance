@@ -266,6 +266,7 @@ impl Hub {
                     // UI caiu sem mandar Shutdown: desliga do mesmo jeito.
                     None | Some(Command::Shutdown) => break,
                     Some(Command::IssuePairingToken) => self.issue_token(),
+                    Some(Command::CancelPairingToken) => self.cancel_token(),
                     Some(Command::RemoveDevice { device_id, erase }) => {
                         self.remove_device(device_id, erase).await;
                     }
@@ -319,6 +320,16 @@ impl Hub {
             token: token.value,
             expires_at: token.expires_at,
         });
+    }
+
+    /// Fechar o fluxo de pareamento na janela: o livro esquece o token (o servidor passa a
+    /// responder `Missing`) e o snapshot tira o QR.
+    fn cancel_token(&mut self) {
+        self.tokens
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .revoke();
+        self.snap.pairing = None;
     }
 
     fn on_assistant(&mut self, c: AssistantCommand) {

@@ -17,6 +17,16 @@ use snapshot::{Snapshot, Status};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     IssuePairingToken,
+    /// O "Conectar um celular" fechou: o codigo pendente deixa de valer no `TokenBook` (que e
+    /// o que o servidor confere), nao so some da tela. Sem codigo, nada.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "a janela passa a mandar no fluxo Conectar um celular"
+        )
+    )]
+    CancelPairingToken,
     /// Remove (revoga) o aparelho e apaga as `erase` areas na mesma transacao. `erase` vazio e
     /// "Manter tudo": remove e grava a decisao de manter os dados.
     RemoveDevice {
@@ -200,6 +210,12 @@ mod tests {
             "{}",
             pairing.qr_url
         );
+
+        handle.commands.send(Command::CancelPairingToken).unwrap();
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
+            s.pairing.is_none()
+        });
+        assert!(up(&snap));
 
         handle
             .commands

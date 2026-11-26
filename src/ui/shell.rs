@@ -203,8 +203,9 @@ fn resize_frame<'a>() -> Element<'a, Message> {
 
 // ---- barra lateral ----
 
-/// "Somente leitura" ja esta no subtitulo do Resumo; a versao precisa de um
-/// lugar permanente, e o subtitulo curto deixa de quebrar em duas linhas.
+/// A versao precisa de um lugar sempre a vista (Ajustes > Sobre so aparece a quem abre a
+/// tela), e o subtitulo curto nao quebra em duas linhas. "Somente leitura" ficou fora dela de
+/// proposito: e o subtitulo do Resumo, que no mes corrente da lugar a linha "Parcial".
 pub(super) fn brand_subtitle() -> String {
     format!("Hub de casa · v{}", crate::config::VERSION)
 }
@@ -691,14 +692,22 @@ fn header(app: &App) -> Element<'_, Message> {
 
 /// Titulo e a linha de baixo do cabecalho. Onde ha "Parcial" (mes corrente com dados, nas
 /// telas com seletor de mes), a linha e o "Parcial · até 24 set" do modelo, no lugar do
-/// subtitulo: o chip ao lado dos controles virou essa linha (8.1). Nas outras telas, ou em
-/// mes fechado, o subtitulo de `titles`.
+/// subtitulo: o chip ao lado dos controles virou essa linha (8.1). Em Lancamentos ela leva
+/// tambem quantos aparelhos enviaram ("· 2 aparelhos"), o que sobra do subtitulo trocado; a
+/// contagem de lancamentos volta com o resumo do mes da issue 07. Nas outras telas, ou em mes
+/// fechado, o subtitulo de `titles`.
 pub(super) fn header_line(app: &App) -> (&str, String) {
     let (title, subtitle) = titles(app);
-    match partial_chip(app) {
-        Some(partial) => (title, partial.to_string()),
-        None => (title, subtitle),
-    }
+    let Some(partial) = partial_chip(app) else {
+        return (title, subtitle);
+    };
+    let devices = app.transactions.synced_devices;
+    let line = if app.screen == Screen::Transactions && devices > 0 {
+        format!("{partial} · {}", plural(devices, "aparelho", "aparelhos"))
+    } else {
+        partial.to_string()
+    };
+    (title, line)
 }
 
 /// "Parcial · até 19 nov": so nas telas com seletor de mes, no mes corrente e com dados (o
@@ -1207,8 +1216,16 @@ mod tests {
         app.screen = Screen::Transactions;
         assert_eq!(
             header_line(&app),
-            ("Lançamentos", "Parcial · até 24 set".to_string())
+            (
+                "Lançamentos",
+                "Parcial · até 24 set · 1 aparelho".to_string()
+            )
         );
+        app.transactions.synced_devices = 2;
+        assert_eq!(header_line(&app).1, "Parcial · até 24 set · 2 aparelhos");
+        // Nenhum aparelho conhecido: sem o "· 0 aparelhos".
+        app.transactions.synced_devices = 0;
+        assert_eq!(header_line(&app).1, "Parcial · até 24 set");
         // Mes fechado: volta o subtitulo.
         let _ = super::super::app::update(&mut app, Message::PrevMonth);
         assert_eq!(header_line(&app), titles(&app));

@@ -260,6 +260,16 @@ mod tests {
                 &format!("Some(SelectScreen({:?}))", entry.screen)
             ));
         }
+        // A ordem nova: Aparelhos no 5 e Ajustes no 6.
+        app.screen = Screen::Dashboard;
+        assert!(is(
+            shortcut(&app, &ctrl_digit('5', Code::Digit5)),
+            "Some(SelectScreen(Connection))"
+        ));
+        assert!(is(
+            shortcut(&app, &ctrl_digit('6', Code::Digit6)),
+            "Some(SelectScreen(Settings))"
+        ));
         // Teclado numerico, alem da fileira de cima.
         app.screen = Screen::Dashboard;
         assert!(is(
@@ -296,7 +306,12 @@ mod tests {
             assert!(is(shortcut(&app, &left), "Some(PrevMonth)"));
             assert!(is(shortcut(&app, &right), "Some(NextMonth)"));
         }
-        for screen in [Screen::Reserves, Screen::Analysis, Screen::Connection] {
+        for screen in [
+            Screen::Reserves,
+            Screen::Analysis,
+            Screen::Connection,
+            Screen::Settings,
+        ] {
             app.screen = screen;
             assert!(shortcut(&app, &left).is_none());
         }
@@ -309,7 +324,12 @@ mod tests {
             app.screen = screen;
             assert!(is(shortcut(&app, &ctrl_h()), "Some(ToggleHideValues)"));
         }
-        for screen in [Screen::Transactions, Screen::Reserves, Screen::Connection] {
+        for screen in [
+            Screen::Transactions,
+            Screen::Reserves,
+            Screen::Connection,
+            Screen::Settings,
+        ] {
             app.screen = screen;
             assert!(shortcut(&app, &ctrl_h()).is_none());
         }

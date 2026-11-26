@@ -1901,8 +1901,14 @@ pub(super) mod tests {
     fn trocar_de_tela() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
-        let _ = update(&mut app, Message::SelectScreen(Screen::Connection));
-        assert_eq!(app.screen, Screen::Connection);
+        // Toda tela da navegacao, Ajustes inclusive; cada troca volta a rolagem ao topo (a
+        // tarefa do `snap_to`), porque o cabecalho fixo nao rola e so o conteudo tem posicao.
+        for screen in super::super::shell::nav_entries(&app).map(|e| e.screen) {
+            let task = update(&mut app, Message::SelectScreen(screen));
+            assert_eq!(app.screen, screen);
+            assert_eq!(task.units(), 1, "{screen:?}");
+        }
+        assert_eq!(app.screen, Screen::Settings);
     }
 
     #[test]

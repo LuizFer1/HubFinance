@@ -335,12 +335,12 @@ impl Hub {
     fn on_assistant(&mut self, c: AssistantCommand) {
         use AssistantCommand as A;
         match c {
-            A::SaveSettings(s) => self.assistant.save_settings(s),
+            A::Configure { settings, key } => self
+                .assistant
+                .configure(settings, key.as_ref().map(|k| k.expose())),
             A::SaveKey(k) => self.assistant.save_key(k.expose()),
-            A::ListModels => {
-                if let (Some(p), Some(d)) =
-                    (self.assistant.provider(), self.assistant.destination())
-                {
+            A::ListModels(port) => {
+                if let Some((p, d)) = self.assistant.begin_listing(port) {
                     let tx = self.assistant_tx.clone();
                     tokio::task::spawn_blocking(move || {
                         let r = guarded(|| p.list_models());

@@ -11,7 +11,7 @@ use iced::keyboard::{self, Key, Modifiers};
 use iced::{Subscription, Task};
 
 use super::app::{App, Message, Screen};
-use super::{connection_view, shell};
+use super::{analysis_view, connection_view, shell};
 
 /// Tecla pressionada que sobrou para a janela, com o que o atalho precisa saber.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,10 +42,10 @@ pub fn subscription() -> Subscription<Message> {
 
 /// O que a tecla faz agora, ou `None`.
 ///
-/// - Esc fecha o que estiver por cima: dialogo de remocao, "Conectar um celular", previa do
-///   assistente, menu de categoria, painel do assistente (nessa ordem). Menu e painel so na
-///   tela deles: o painel continua "aberto" ao trocar de tela, e Esc em outra tela o fecharia
-///   sem ninguem ver.
+/// - Esc fecha o que estiver por cima: dialogo de remocao, "Conectar um celular", "O que o
+///   assistente vê" (que abre por cima da configuracao, pelo link dela), previa de envio a
+///   nuvem (pelo caminho do "Cancelar"), "Configurar assistente" e menu de categoria (nessa
+///   ordem). O menu so na tela dele.
 /// - Com dialogo aberto, so o Esc: atalho por baixo do scrim mexeria numa tela escondida.
 /// - Tab e Shift+Tab andam entre os campos.
 /// - Ctrl+1..N troca de tela na ordem da navegacao.
@@ -62,6 +62,8 @@ pub fn shortcut(app: &App, press: &KeyPress) -> Option<Message> {
     if app.confirm_remove.is_some()
         || app.envelope_preview.is_some()
         || connection_view::dialog_open(app)
+        || app.assistant_setup.is_some()
+        || analysis_view::shown_consent(app).is_some()
     {
         return None;
     }
@@ -102,11 +104,14 @@ fn escape(app: &App) -> Option<Message> {
         Some(Message::ConnectClose)
     } else if app.envelope_preview.is_some() {
         Some(Message::CloseEnvelope)
+    } else if analysis_view::shown_consent(app).is_some() {
+        // Como o "Cancelar": a conversa que nunca foi respondida some (nada saiu).
+        Some(Message::CancelPreview)
+    } else if app.assistant_setup.is_some() {
+        // Como o "x": nada e gravado e a chave digitada e esquecida.
+        Some(Message::CloseAssistantSetup)
     } else if app.screen == Screen::Transactions && app.cat_menu_open {
         Some(Message::CloseCategoryMenu)
-    } else if app.screen == Screen::Analysis && app.assistant_settings_open {
-        // Pelo mesmo caminho do botao: grava os rascunhos validos e esquece a chave digitada.
-        Some(Message::ToggleAssistantSettings)
     } else {
         None
     }
@@ -213,15 +218,15 @@ mod tests {
     fn esc_fecha_o_que_esta_por_cima_na_ordem() {
         let (mut app, _dir) = app();
         assert!(shortcut(&app, &esc()).is_none());
-        app.screen = Screen::Analysis;
-        app.assistant_settings_open = true;
-        assert!(is(shortcut(&app, &esc()), "Some(ToggleAssistantSettings)"));
-        // Painel "aberto" em outra tela: Esc nao o fecha as cegas.
-        app.screen = Screen::Dashboard;
-        assert!(shortcut(&app, &esc()).is_none());
         app.screen = Screen::Transactions;
         app.cat_menu_open = true;
         assert!(is(shortcut(&app, &esc()), "Some(CloseCategoryMenu)"));
+        // O dialogo de configuracao fica por cima do menu, e vale em qualquer tela.
+        app.assistant_setup = Some(crate::ui::assistant_settings_view::AssistantSetup::open(
+            &Default::default(),
+        ));
+        assert!(is(shortcut(&app, &esc()), "Some(CloseAssistantSetup)"));
+        // O envelope abre por cima da configuracao (pelo link dela).
         app.envelope_preview = Some("ENV".into());
         assert!(is(shortcut(&app, &esc()), "Some(CloseEnvelope)"));
         app.confirm_remove = Some(RemoveDialog {
@@ -240,6 +245,50 @@ mod tests {
         assert!(shortcut(&app, &ctrl_h()).is_none());
         assert!(shortcut(&app, &tab(false)).is_none());
         assert!(shortcut(&app, &alt(Named::ArrowLeft, Code::ArrowLeft)).is_none());
+        // O mesmo com "Configurar assistente" aberto.
+        app.envelope_preview = None;
+        app.assistant_setup = Some(crate::ui::assistant_settings_view::AssistantSetup::open(
+            &Default::default(),
+        ));
+        assert!(shortcut(&app, &ctrl_digit('2', Code::Digit2)).is_none());
+        assert!(shortcut(&app, &ctrl_h()).is_none());
+        assert!(shortcut(&app, &tab(false)).is_none());
+    }
+
+    #[test]
+    fn esc_na_previa_de_envio_cancela_como_o_botao() {
+        use crate::assistant::settings::{ProviderChoice, Settings};
+        use crate::assistant::view::{MessageRole, MessageView, OpenConversation};
+        let (mut app, _dir) = app();
+        let mut settings = Settings {
+            provider: ProviderChoice::Cloud,
+            ..Settings::default()
+        };
+        settings.cloud.enabled = true;
+        app.snapshot.assistant.settings = settings;
+        app.snapshot.assistant.open = Some(OpenConversation {
+            id: "C1".into(),
+            book: app.book,
+            envelope: "ENV".into(),
+            messages: vec![MessageView {
+                id: "m".into(),
+                role: MessageRole::User,
+                content: "Resuma".into(),
+                sent_to_cloud: false,
+                deny_data_collection: None,
+                provider: None,
+                model: None,
+                tokens_in: None,
+                tokens_out: None,
+                interrupted: false,
+            }],
+            needs_cloud_consent: true,
+        });
+        // Sem a previa aberta, Esc nao faz nada com a conversa.
+        assert!(shortcut(&app, &esc()).is_none());
+        app.consent_preview = Some("C1".into());
+        assert!(is(shortcut(&app, &esc()), "Some(CancelPreview)"));
+        assert!(shortcut(&app, &ctrl_digit('2', Code::Digit2)).is_none());
     }
 
     #[test]

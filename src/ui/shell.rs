@@ -12,8 +12,8 @@ use super::app::{App, Message, Screen};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, space};
 use super::widgets::{SegmentedSize, SegmentedVariant};
 use super::{
-    analysis_view, connection_view, dashboard_view, fonts, icons, remove_view, reserves_view,
-    settings_view, time, transactions_view, widgets,
+    analysis_view, assistant_settings_view, connection_view, dashboard_view, fonts, icons,
+    remove_view, reserves_view, settings_view, time, transactions_view, widgets,
 };
 use crate::advisor::Severity;
 use crate::dashboard::contract::Book;
@@ -42,6 +42,13 @@ pub fn root(app: &App) -> Element<'_, Message> {
     if let Some(dialog) = connection_view::connect_dialog(app) {
         layers = layers.push(dialog);
     }
+    if let Some(dialog) = assistant_settings_view::dialog(app) {
+        layers = layers.push(dialog);
+    }
+    if let Some(dialog) = analysis_view::consent_dialog(app) {
+        layers = layers.push(dialog);
+    }
+    // O envelope por ultimo: o dialogo de configuracao tem um link para ele, que abre por cima.
     if let Some(preview) = analysis_view::envelope_dialog(app) {
         layers = layers.push(preview);
     }

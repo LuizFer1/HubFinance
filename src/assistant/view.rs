@@ -92,6 +92,14 @@ pub struct AssistantView {
     pub key_encrypted: bool,
     /// `None` = nunca listado; `Some(Err)` = falhou (mensagem pt-BR).
     pub models: Option<Result<Vec<String>, String>>,
+    /// A porta do Ollama de onde `models` veio: o dialogo so mostra a lista se for a porta que
+    /// esta no campo agora.
+    pub models_port: Option<u16>,
+    /// "Testar conexao" esperando a resposta do Ollama (A7: o botao mostra o carregando).
+    pub listing: bool,
+    /// Quantas gravacoes do dialogo (`AssistantCommand::Configure`) o nucleo ja terminou, com
+    /// sucesso ou nao. O dialogo guarda o numero esperado e fecha quando ele chega sem erro.
+    pub configured: u64,
     pub conversations: Vec<ConversationSummary>,
     pub open: Option<OpenConversation>,
     /// Texto chegando agora; vira `MessageView` no fim.

@@ -11,7 +11,6 @@ use iced::widget::{
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{AnalysisTab, App, CopyTarget, Message, awaiting_cloud_consent};
-use super::assistant_settings_view;
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, radius, size};
 use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
 use super::{fonts, icons, rows, shell, time, widgets};
@@ -66,6 +65,22 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .spacing(GAP)
     .width(Length::Fill)
     .height(Length::Fill);
+    // Erro do assistente (gravar a configuracao, a chave ou o historico) na tela, e nao so
+    // dentro do dialogo: quem fechou o dialogo ou nem o abriu tambem precisa ver (A7).
+    if let Some(err) = &app.snapshot.assistant.last_error {
+        page = page.push(widgets::banner(
+            t,
+            Tone::Expense,
+            t.bg,
+            icons::WARNING_CIRCLE,
+            err.as_str(),
+            vec![
+                widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Configurar")
+                    .on_press(Message::ConfigureAssistant)
+                    .into(),
+            ],
+        ));
+    }
     if two_panels(shell::content_width(app)) {
         page = page.push(
             row![
@@ -317,19 +332,13 @@ fn assistant_panel(app: &App) -> Element<'_, Message> {
         icons::GEAR,
         ButtonSize::Compact,
         "Configurar assistente",
-        Some(Message::ToggleAssistantSettings),
+        Some(Message::ConfigureAssistant),
     ));
     let body: Element<'_, Message> = if matches!(app.snapshot.status, Status::Failed(_)) {
         // Sem o nucleo nao ha assistente; os achados (do ultimo snapshot) seguem valendo.
         container(text(HUB_DOWN).size(14).color(t.text_muted))
             .padding([18, 20])
             .into()
-    } else if app.assistant_settings_open {
-        panel_scroll(
-            t,
-            container(assistant_settings_view::view(app)).padding([14, 16]),
-        )
-        .into()
     } else if let Some(open) = open {
         conversation_body(app, open)
     } else {
@@ -437,7 +446,7 @@ fn tokens_total_label(open: &OpenConversation) -> String {
 /// "Cancelar" na previa da nuvem. Sem nenhuma resposta do assistente nada nunca foi enviado e a
 /// conversa so tem a abertura automatica: fecha-la a deixaria no historico como lixo, entao ela
 /// some. Com resposta, ja ha o que guardar e so fecha.
-fn cancel_preview_message(open: &OpenConversation) -> Message {
+pub(super) fn cancel_preview_message(open: &OpenConversation) -> Message {
     if open
         .messages
         .iter()
@@ -514,7 +523,7 @@ fn conversation_body<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a
     }
     col = col.push(scroll).push(widgets::divider(t));
     let foot: Element<'a, Message> = if awaiting {
-        consent_preview(app, open)
+        awaiting_foot(t)
     } else {
         chat_input(app)
     };
@@ -875,7 +884,7 @@ pub(super) fn cloud_badge(deny_data_collection: Option<bool>) -> &'static str {
     }
 }
 
-pub(super) const PREVIEW_TITLE: &str = "Prévia do que vai sair";
+pub(super) const PREVIEW_TITLE: &str = "Enviar para a nuvem?";
 
 /// O botao da previa diz para onde vai: "Enviar" sozinho nao diz que sai do computador.
 pub(super) const PREVIEW_SEND: &str = "Enviar ao OpenRouter";
@@ -886,12 +895,12 @@ pub(super) const PREVIEW_INTRO: &str = "Este é o texto exato que vai para o Ope
 /// para a nuvem): elas vao junto, e a previa diz isso.
 pub(super) const PREVIEW_INTRO_EARLIER: &str = "Este é o texto exato que vai para o OpenRouter: o resumo desta conta e as mensagens anteriores desta conversa (só as últimas que cabem no pedido), além das instruções fixas do assistente. Só depois de você enviar é que algo sai do computador.";
 
-/// "Retencao: ..." da previa, a partir da politica configurada agora (e a que vale no envio).
-pub(super) fn retention_line(deny_data_collection: bool) -> &'static str {
+/// A retencao da previa, a partir da politica configurada agora (e a que vale no envio).
+pub(super) fn retention_value(deny_data_collection: bool) -> &'static str {
     if deny_data_collection {
-        "Retenção: não permitida"
+        "não permitida"
     } else {
-        "Retenção: permitida"
+        "permitida"
     }
 }
 
@@ -931,61 +940,121 @@ fn preview_intro(open: &OpenConversation) -> &'static str {
     }
 }
 
-/// A previa que toma o lugar do campo de pergunta enquanto a conversa de nuvem espera
-/// aprovacao: o envelope **desta conversa** (o que de fato vai; o `Resend` do nucleo le o mesmo
-/// texto), o modelo, a politica, e "Enviar"/"Cancelar". Na tela o texto segue o "Ocultar
-/// valores"; o que sai nunca e mascarado.
-fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, Message> {
+/// Pe da conversa de nuvem que espera aprovacao: nada saiu, e o campo de pergunta da lugar ao
+/// caminho para a previa (que tambem abre sozinha ao comecar a conversa).
+fn awaiting_foot(t: &'static Tokens) -> Element<'static, Message> {
+    column![
+        text("Nada saiu ainda. Veja o que vai para o OpenRouter antes de enviar.")
+            .size(13)
+            .line_height(1.4)
+            .color(t.text_muted),
+        row![
+            Space::new().width(Length::Fill),
+            widgets::action_button(
+                t,
+                ButtonKind::Primary,
+                ButtonSize::Regular,
+                "Ver prévia e enviar"
+            )
+            .on_press(Message::ShowCloudPreview),
+        ],
+    ]
+    .spacing(10)
+    .into()
+}
+
+/// A conversa da previa aberta: so enquanto ela for a aberta e esperar aprovacao. A previa e
+/// presa ao id, entao nunca mostra (nem aprova) outra conversa.
+pub(super) fn shown_consent(app: &App) -> Option<&OpenConversation> {
+    let id = app.consent_preview.as_deref()?;
+    awaiting_cloud_consent(app).filter(|o| o.id == id)
+}
+
+/// Dialogo "Enviar para a nuvem?" (8.5): o envelope **desta conversa** e as mensagens que vao
+/// no pedido (o que de fato sai; o `Resend` do nucleo le o mesmo texto), modelo, retencao e o
+/// aviso de valores ocultos. Na tela o texto segue o "Ocultar valores"; o que sai nunca e
+/// mascarado. Esc, o scrim e "Cancelar" cancelam do mesmo jeito.
+pub(super) fn consent_dialog(app: &App) -> Option<Element<'_, Message>> {
+    let open = shown_consent(app)?;
     let t = app.tokens;
     let cloud = &app.snapshot.assistant.settings.cloud;
-    let mut body = column![].spacing(8);
-    if let Some(note) = hidden_values_note(app) {
-        body = body.push(text(note).size(12).color(t.text_muted));
-    }
-    body = body.push(
-        text(preview_shown(app, open))
-            .size(12)
-            .font(fonts::INTER)
-            .color(t.text),
-    );
-    // O `padding(4)` mantem o cursor da rolagem longe do canto arredondado (o texto continua a
-    // 12 px: 4 + 8).
+    // O `padding(4)` mantem o cursor da rolagem longe do canto arredondado (o texto fica a 12
+    // px da borda: 4 + 8).
     let envelope = widgets::inset(
         t,
-        scrollable(container(body).padding(8).width(Length::Fill)).style(theme::scrollbar(t)),
+        scrollable(
+            container(
+                text(preview_shown(app, open))
+                    .size(12)
+                    .font(fonts::INTER)
+                    .color(t.text),
+            )
+            .padding(8)
+            .width(Length::Fill),
+        )
+        .style(theme::scrollbar(t)),
     )
-    .height(180)
+    .height(Length::Fill)
     .padding(4);
-    let actions = row![
-        Space::new().width(Length::Fill),
-        widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Cancelar")
-            .on_press(cancel_preview_message(open)),
-        widgets::action_button(t, ButtonKind::Primary, ButtonSize::Compact, PREVIEW_SEND)
-            .on_press(Message::ApproveCloudSend),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
-    column![
+    let fact = |label: &'static str, value: String| {
+        row![
+            text(label).size(13).color(t.text_muted),
+            text(value).size(13).color(t.text),
+        ]
+        .spacing(8)
+    };
+    let mut col = column![
         text(PREVIEW_TITLE)
-            .size(15)
+            .size(18)
             .font(fonts::INTER_MEDIUM)
             .color(t.text),
         text(preview_intro(open))
             .size(13)
-            .line_height(1.4)
-            .color(t.text_muted),
+            .line_height(1.45)
+            .color(t.text_soft()),
         envelope,
-        text(format!("Modelo: {}", cloud.model.trim()))
-            .size(13)
-            .color(t.text_soft()),
-        text(retention_line(cloud.deny_data_collection))
-            .size(13)
-            .color(t.text_soft()),
-        actions,
+        row![
+            fact("Modelo", cloud.model.trim().to_string()),
+            Space::new().width(24),
+            fact(
+                "Retenção",
+                retention_value(cloud.deny_data_collection).to_string()
+            ),
+        ]
+        .align_y(Alignment::Center),
     ]
-    .spacing(10)
-    .width(Length::Fill)
-    .into()
+    .spacing(12)
+    .height(Length::Fill);
+    if let Some(note) = hidden_values_note(app) {
+        col = col.push(
+            row![
+                icons::icon(icons::INFO, 14.0, t.text_soft()),
+                text(note).size(12).color(t.text_soft()),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        );
+    }
+    col = col.push(
+        row![
+            Space::new().width(Length::Fill),
+            widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Regular, "Cancelar")
+                .on_press(Message::CancelPreview),
+            widgets::action_button(t, ButtonKind::Primary, ButtonSize::Regular, PREVIEW_SEND)
+                .on_press(Message::ApproveCloudSend),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    );
+    let height = (app.window_size.height - 96.0).clamp(240.0, 600.0);
+    Some(widgets::dialog(
+        t,
+        col,
+        app.window_size.width,
+        640.0,
+        Some(height),
+        Message::CancelPreview,
+    ))
 }
 
 /// Secundario, e nao de perigo: tentar de novo nao apaga nem envia nada novo.
@@ -1232,6 +1301,7 @@ fn strip_sign(before: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::assistant_settings_view;
 
     #[test]
     fn mascara_troca_valores_e_mantem_o_resto() {
@@ -1466,6 +1536,35 @@ mod tests {
             cancel_preview_message(&answered),
             Message::CloseConversation
         ));
+
+        // Pela tela: o "Cancelar" do dialogo (o mesmo do Esc e do scrim) segue a regra acima e
+        // fecha a previa; o pe da conversa deixa de ser o campo de pergunta enquanto espera.
+        use crate::assistant::settings::{ProviderChoice, Settings};
+        use crate::hub::{AssistantCommand, Command};
+        use crate::ui::app::tests::app_with_fixtures;
+        use crate::ui::app::{Screen, update};
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        let mut cloud = Settings {
+            provider: ProviderChoice::Cloud,
+            ..Settings::default()
+        };
+        cloud.cloud.enabled = true;
+        app.snapshot.assistant.settings = cloud;
+        let mut answered = answered;
+        answered.book = app.book;
+        app.snapshot.assistant.open = Some(answered);
+        app.consent_preview = Some("C1".into());
+        assert!(consent_dialog(&app).is_some());
+        let _ = shell::root(&app);
+        while rx.try_recv().is_ok() {}
+        let _ = update(&mut app, Message::CancelPreview);
+        assert!(app.consent_preview.is_none());
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Command::Assistant(AssistantCommand::Close))
+        ));
     }
 
     #[test]
@@ -1484,8 +1583,8 @@ mod tests {
 
     #[test]
     fn linha_de_retencao_da_previa() {
-        assert_eq!(retention_line(true), "Retenção: não permitida");
-        assert_eq!(retention_line(false), "Retenção: permitida");
+        assert_eq!(retention_value(true), "não permitida");
+        assert_eq!(retention_value(false), "permitida");
     }
 
     #[test]
@@ -1507,23 +1606,17 @@ mod tests {
         );
     }
 
-    /// Lista "Baixo" do relatorio de 25/11: programa de mesa, painel acima dos achados, comando
-    /// sem crase literal e o destino no botao de envio.
+    /// Lista "Baixo" do relatorio de 25/11: programa de mesa, comando sem crase literal e o
+    /// destino no botao de envio.
     #[test]
     fn textos_do_assistente_falam_de_programa_de_mesa() {
-        use assistant_settings_view::{ASSISTANT_OFF, MODELS_NOT_LISTED, NO_MODELS_HINT};
-        for text in [
-            ASSISTANT_OFF,
-            MODELS_NOT_LISTED,
-            NO_MODELS_HINT,
-            PREVIEW_SEND,
-        ] {
+        use assistant_settings_view::{MODELS_NOT_LISTED, NO_MODELS_HINT};
+        for text in [MODELS_NOT_LISTED, NO_MODELS_HINT, PREVIEW_SEND] {
             assert!(!text.contains("  "), "{text:?}");
             assert!(!text.contains('`'), "{text:?}");
             assert!(!text.contains("Toque"), "{text:?}");
         }
-        assert!(MODELS_NOT_LISTED.starts_with("Clique em Atualizar modelos"));
-        assert!(ASSISTANT_OFF.contains("achados ao lado"));
+        assert!(MODELS_NOT_LISTED.starts_with("Clique em Testar conexão"));
         assert!(NO_MODELS_HINT.contains("ollama pull llama3.1:8b no terminal"));
         assert_eq!(PREVIEW_SEND, "Enviar ao OpenRouter");
     }

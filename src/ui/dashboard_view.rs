@@ -583,12 +583,7 @@ fn balance_column(app: &App) -> Element<'_, Message> {
             if let Some(a) = average {
                 inner = inner.push(a);
             }
-            col = col.push(
-                container(inner)
-                    .padding([14, 16])
-                    .width(Length::Fill)
-                    .style(theme::fill(t.surface_2, 6.0)),
-            );
+            col = col.push(widgets::inset(t, inner).padding([14, 16]));
         }
         (None, Some(a)) => col = col.push(a),
         (None, None) => {}
@@ -1318,16 +1313,15 @@ fn free_card(app: &App) -> Element<'_, Message> {
     }
     let v = &w.variable;
     col = col.push(
-        container(
+        widgets::inset(
+            t,
             column![
                 txt(v.title.clone(), 12.0, t.text_muted),
                 txt(v.text.clone(), 14.0, t.text).line_height(1.5),
             ]
             .spacing(6),
         )
-        .padding([14, 16])
-        .width(Length::Fill)
-        .style(theme::fill(t.surface_2, 6.0)),
+        .padding([14, 16]),
     );
     if let Some(n) = &f.estimate_note {
         col = col.push(txt(n.clone(), 12.0, t.text_muted).line_height(1.5));
@@ -1390,7 +1384,8 @@ fn upcoming_card(app: &App) -> Element<'_, Message> {
         }
         note.push(sp(inv.note.clone(), t.neutral_300));
         col = col.push(
-            container(
+            widgets::inset(
+                t,
                 column![
                     row![
                         container(icons::icon(icons::glyph(&inv.icon), 16.0, t.accent_400))
@@ -1410,9 +1405,7 @@ fn upcoming_card(app: &App) -> Element<'_, Message> {
                 ]
                 .spacing(10),
             )
-            .padding(14)
-            .width(Length::Fill)
-            .style(theme::fill(t.surface_2, 6.0)),
+            .padding(14),
         );
     }
     let shown = if app.upcoming_expanded {

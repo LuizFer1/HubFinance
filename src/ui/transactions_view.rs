@@ -21,7 +21,8 @@ use crate::dashboard::money::group_thousands;
 use crate::dashboard::periods::month_long;
 use crate::dashboard::view::TransactionsView;
 
-const GAP: f32 = 14.0;
+/// Entre filtros, resumo e tabela: o espaco entre blocos de toda tela (7.4).
+const GAP: f32 = space::BETWEEN_CARDS;
 /// O menu abre 42 px abaixo do topo da barra de filtros (botao de 36 + 6), como o `top: 42px`
 /// do prototipo: sem coordenada absoluta, um `Space` empurra o menu para baixo do botao.
 const MENU_OFFSET: f32 = 42.0;

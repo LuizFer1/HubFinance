@@ -109,10 +109,6 @@ pub mod space {
     #[cfg_attr(not(test), expect(dead_code, reason = "sem uso ainda"))]
     pub const GIANT: f32 = 56.0;
     /// Entre cards de uma tela.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "espaco entre blocos, issue de cada tela")
-    )]
     pub const BETWEEN_CARDS: f32 = L;
     /// Padding de card.
     pub const CARD: f32 = XL;

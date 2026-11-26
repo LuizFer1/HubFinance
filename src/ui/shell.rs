@@ -600,7 +600,9 @@ fn content(app: &App) -> Element<'_, Message> {
     };
     // O aviso vale para qualquer tela: na primeira abertura quem esta no dashboard tambem ve.
     // Fica no topo da rolagem, e nao no cabecalho fixo: e um aviso de uma vez, e preso em cima
-    // ele comeria a altura de toda tela ate a pessoa decidir.
+    // ele comeria a altura de toda tela ate a pessoa decidir. Excecao: em Lancamentos, que rola
+    // so as linhas (`owns_scroll`), ele fica fixo acima dos filtros e tira altura das linhas ate
+    // a pessoa decidir.
     let mut page = column![].spacing(14);
     if let Some(banner) = remove_view::orphan_banner(app) {
         page = page.push(banner);
@@ -609,7 +611,10 @@ fn content(app: &App) -> Element<'_, Message> {
     let scroll: Element<'_, Message> = if owns_scroll(app) {
         // A tela tem rolagem propria (Lancamentos: filtros, resumo e cabecalho da tabela fixos,
         // so as linhas rolam). Aqui ela so ganha o respiro e a altura que sobra; a rolagem dela
-        // usa o mesmo `CONTENT_SCROLL`, entao o `snap_to` da troca de tela continua valendo.
+        // usa o mesmo `CONTENT_SCROLL`, entao o `snap_to` da troca de tela continua valendo. A
+        // roda do mouse so rola sobre as linhas (nao mais sobre as margens), e o respiro de baixo
+        // e 32 (a margem da pagina) e nao os 40 da rolagem geral: aqui ele nao e fim de rolagem,
+        // e o espaco entre o card e a borda da janela.
         container(page)
             .width(Length::Fill)
             .height(Length::Fill)

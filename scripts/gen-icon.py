@@ -11,6 +11,12 @@ O desenho e o tile de 32px da barra lateral (raio 8, borda de 1px no acento, gli
 house-line de 17px no acento-300) escalado: cada tamanho e desenhado de novo em vez de
 reduzido de um so mestre, para a borda continuar com 1px exato no tamanho 32 e nao virar um
 borrao nos tamanhos pequenos do Windows.
+
+Tambem gera as variantes da bandeja (`tray-attention.png`, `tray-error.png`, 32px): o mesmo
+tile com um ponto no canto inferior direito, laranja de atencao (`warning` do escuro) ou
+vermelho de erro (`expense` do claro, o mais fechado dos dois, que ainda se ve em 16px). O
+ponto tem um anel no fundo do tile para nao se misturar com a borda. A bandeja troca entre
+elas por estado (`desktop::tray::icon_for`).
 """
 
 from pathlib import Path
@@ -40,6 +46,16 @@ GLYPH = 17
 SUPERSAMPLE = 8
 MAX_CANVAS = 4096
 
+# Cores do ponto das variantes: hex da paleta (`theme.rs`), nenhum novo.
+WARNING = (0xF2, 0x99, 0x4A, 255)
+EXPENSE = (0xCA, 0x55, 0x56, 255)
+# Em px de um tile de 32: o ponto ocupa o quarto inferior direito, com anel de 2px.
+BADGE = 14
+BADGE_RING = 2
+
+TRAY_SIZE = 32
+TRAY_VARIANTS = {"tray-attention.png": WARNING, "tray-error.png": EXPENSE}
+
 PNG_SIZES = [32, 64, 128, 256, 512, 1024]
 ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 
@@ -67,6 +83,21 @@ def render(size: int) -> Image.Image:
     return img.resize((size, size), Image.Resampling.LANCZOS)
 
 
+def render_badged(size: int, color: tuple[int, int, int, int]) -> Image.Image:
+    """O tile com o ponto de estado, desenhado na mesma escala ampliada antes de reduzir."""
+    big = size * SUPERSAMPLE
+    unit = big / TILE
+    img = render(big).copy()
+    draw = ImageDraw.Draw(img)
+    outer = BADGE * unit
+    ring = BADGE_RING * unit
+    x1 = y1 = big - 1
+    x0 = y0 = big - outer
+    draw.ellipse((x0, y0, x1, y1), fill=BG)
+    draw.ellipse((x0 + ring, y0 + ring, x1 - ring, y1 - ring), fill=color)
+    return img.resize((size, size), Image.Resampling.LANCZOS)
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     rendered = {size: render(size) for size in sorted(set(PNG_SIZES + ICO_SIZES))}
@@ -83,6 +114,8 @@ def main() -> None:
     # O Pillow monta o .icns a partir do maior e reduz os demais; acima de 32px a borda ja
     # tem mais de um pixel, entao a reducao nao perde nada visivel.
     rendered[1024].save(OUT / "icon.icns")
+    for name, color in TRAY_VARIANTS.items():
+        render_badged(TRAY_SIZE, color).save(OUT / name, optimize=True)
     for path in sorted(OUT.iterdir()):
         print(f"{path.relative_to(ROOT)}  {path.stat().st_size} bytes")
 

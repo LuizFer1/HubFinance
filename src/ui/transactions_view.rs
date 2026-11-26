@@ -1,27 +1,30 @@
-//! Tela Lancamentos: filtros (categoria, autor, tipo), linha de totais e a tabela do mes
-//! agrupada por dia, com os tres vazios do design.
+//! Tela Lancamentos: filtros (categoria, autor, tipo), resumo do mes e a tabela do mes
+//! agrupada por dia, com os tres vazios do design. E a unica tela com rolagem propria: filtros,
+//! resumo e cabecalho da tabela ficam fixos e so as linhas rolam (`shell::owns_scroll`).
 //!
 //! Tudo vem de `app.transactions` (calculado em `App::rebuild`); aqui so se monta a arvore.
 
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Space, button, column, container, mouse_area, opaque, rich_text, row, scrollable, span, stack,
-    text,
+    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text,
 };
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{App, Message};
 use super::rows::{author_cell, category_tile, hover_row, value_cell};
-use super::theme::{self, Tokens, alpha, mix};
-use super::{fonts, icons, widgets};
+use super::shell::Arrival;
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, alpha, mix, size, space, type_scale};
+use super::widgets::{ChipShape, RowEdge, SegmentedSize, SegmentedVariant, TagTone};
+use super::{fonts, icons, shell, widgets};
 use crate::dashboard::list::{
     ALL_CATEGORIES_COLOR, CategoryOption, Filters, ListRow, NONE_KEY, TypeFilter,
 };
-use crate::dashboard::money::{format_brl, group_thousands, signed_brl, signed_brl_plus};
+use crate::dashboard::money::group_thousands;
 use crate::dashboard::periods::month_long;
 use crate::dashboard::view::TransactionsView;
 
-const GAP: f32 = 14.0;
+/// Entre filtros, resumo e tabela: o espaco entre blocos de toda tela (7.4).
+const GAP: f32 = space::BETWEEN_CARDS;
 /// O menu abre 42 px abaixo do topo da barra de filtros (botao de 36 + 6), como o `top: 42px`
 /// do prototipo: sem coordenada absoluta, um `Space` empurra o menu para baixo do botao.
 const MENU_OFFSET: f32 = 42.0;
@@ -33,34 +36,49 @@ const COLUMNS: [u16; 4] = [22, 13, 10, 10];
 const VALUE_WIDTH: f32 = 128.0;
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let mut base = column![filter_bar(app), totals_line(app), table(app)]
+    // No boot o "Nenhum lançamento sincronizado" seria um vazio falso: o esqueleto comum das
+    // telas de dados entra antes de filtros e tabela (que nem tem o que filtrar ainda).
+    if shell::screen_arrival(app, !app.transactions.is_empty_hub) == Arrival::Opening {
+        return shell::opening(app);
+    }
+    // Altura cheia: a casca nao rola esta tela (`shell::owns_scroll`). Filtros, resumo e o
+    // cabecalho da tabela ficam parados; so as linhas rolam, dentro do card (`table`). A roda do
+    // mouse so rola sobre as linhas: sobre os filtros e as margens nao ha o que rolar.
+    let mut base = column![filter_bar(app)];
+    if shows_summary(&app.transactions) {
+        base = base.push(summary_line(app));
+    }
+    let base = base
+        .push(table(app))
         .spacing(GAP)
-        .width(Length::Fill);
-    if !app.cat_menu_open {
-        return base.into();
+        .width(Length::Fill)
+        .height(Length::Fill);
+    // Sempre um `stack` com a tela no indice 0, aberto ou fechado o menu: o iced casa o estado
+    // dos widgets pela posicao na arvore, e trocar `Column` por `Stack` ao abrir o menu jogava
+    // fora o estado da rolagem das linhas (voltava ao topo a cada abertura e fechamento).
+    // Sem teste: a arvore de estado (`Tree`) so e publica com a feature `advanced` do iced, que
+    // o hub nao liga; ligar so para um teste nao compensa. Conferir na tela.
+    let mut layers = stack![base].width(Length::Fill).height(Length::Fill);
+    if app.cat_menu_open {
+        // Camada que fecha o menu ao clicar fora (dentro da area da tela) e, por cima, o menu.
+        // A tela ocupa a altura toda da regiao de conteudo (720 de janela minima deixa perto de
+        // 500 px), e o menu tem no maximo 42 + 360: cabe sem empurrar nada. Se a janela ficar
+        // mais baixa que isso, o menu passa da borda de baixo e e cortado.
+        let catcher = opaque(
+            mouse_area(
+                container(Space::new())
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_press(Message::CloseCategoryMenu),
+        );
+        let menu = column![
+            Space::new().height(MENU_OFFSET),
+            row![opaque(category_menu(app)), Space::new().width(Length::Fill)],
+        ];
+        layers = layers.push(catcher).push(menu);
     }
-    // Camada que fecha o menu ao clicar fora (dentro da area da tela) e, por cima, o menu.
-    let catcher = opaque(
-        mouse_area(
-            container(Space::new())
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .on_press(Message::CloseCategoryMenu),
-    );
-    // O `stack` tem o tamanho da primeira camada: com poucas linhas ela e mais baixa que o
-    // menu, que sairia cortado. Um espaco no fim da tela completa a altura que falta (o iced
-    // nao tem altura minima, e um espacador ao lado numa `row` nao estica a linha).
-    let needed = MENU_OFFSET + menu_height(app.transactions.categories.len()) + 12.0 + 8.0;
-    let missing = needed - estimated_height(&app.transactions);
-    if missing > 0.0 {
-        base = base.push(Space::new().height(missing));
-    }
-    let menu = column![
-        Space::new().height(MENU_OFFSET),
-        row![opaque(category_menu(app)), Space::new().width(Length::Fill)],
-    ];
-    stack![base, catcher, menu].width(Length::Fill).into()
+    layers.into()
 }
 
 /// Cor de um token de categoria, com o marcador "neutral" de "Todas as categorias".
@@ -85,21 +103,13 @@ fn filter_bar(app: &App) -> Element<'_, Message> {
     }
     bar = bar.push(widgets::vdivider(t)).push(type_segment(app));
     if app.filters.is_active() {
-        let clear = button(
-            container(
-                row![
-                    icons::icon_inherit(icons::X, 13.0),
-                    text("Limpar filtros").size(13),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .height(Length::Fill)
-            .align_y(Alignment::Center),
+        let clear = widgets::action_button_icon(
+            t,
+            ButtonKind::Link,
+            ButtonSize::Regular,
+            icons::X,
+            "Limpar filtros",
         )
-        .height(36)
-        .padding([0, 10])
-        .style(theme::link(t))
         .on_press(Message::ClearFilters);
         bar = bar.push(clear);
     }
@@ -115,38 +125,21 @@ fn category_button(app: &App) -> Element<'_, Message> {
     };
     let active = v.selected_category.is_some();
     let text_color = if active { t.accent_200 } else { t.text };
-    button(
-        container(
-            row![
-                widgets::dot(dot, 8.0),
-                text(label).size(13),
-                // Seta a 70 % da cor do texto do botao (`opacity: .7` do prototipo).
-                icons::icon(icons::CARET_DOWN, 13.0, alpha(text_color, 0.7)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        )
-        .height(Length::Fill)
+    widgets::chip(
+        t,
+        row![
+            widgets::dot(dot, 8.0),
+            text(label).size(13),
+            // Seta a 70 % da cor do texto do botao (`opacity: .7` do prototipo).
+            icons::icon(icons::CARET_DOWN, 13.0, alpha(text_color, 0.7)),
+        ]
+        .spacing(8)
         .align_y(Alignment::Center),
+        active,
+        ChipShape::Rounded,
     )
-    .height(36)
-    .padding([0, 12])
-    .style(theme::filter_button(t, active))
     .on_press(Message::ToggleCategoryMenu)
     .into()
-}
-
-/// Altura aproximada da tela sem o menu: barra de filtros (36), totais (~25), cabecalho da
-/// tabela (41), grupos (35) e linhas (53), ou o vazio (~250). So decide se falta espaco para o
-/// menu; errar para cima so deixa um pouco de rolagem a mais.
-fn estimated_height(v: &TransactionsView) -> f32 {
-    let table = 41.0
-        + if v.list.count == 0 {
-            250.0
-        } else {
-            v.list.groups.len() as f32 * 35.0 + v.list.count as f32 * 53.0
-        };
-    36.0 + GAP + 25.0 + GAP + table
 }
 
 /// Altura da lista do menu: um item de 34 por opcao, ate 360 com o padding de 6.
@@ -206,7 +199,7 @@ fn menu_item<'a>(
                     .color(t.text_muted),
                 container(check).width(14),
             ]
-            .spacing(10)
+            .spacing(space::M)
             .align_y(Alignment::Center),
         )
         .height(Length::Fill)
@@ -226,21 +219,15 @@ fn author_chips(app: &App) -> Vec<Element<'_, Message>> {
     let v = &app.transactions;
     let authors = &app.filters.authors;
     let chip = |content: Element<'static, Message>, padding_left: f32, active: bool, msg| {
-        button(
-            container(content)
-                .height(Length::Fill)
-                .align_y(Alignment::Center),
-        )
-        .height(36)
-        .padding(Padding {
-            top: 0.0,
-            right: 12.0,
-            bottom: 0.0,
-            left: padding_left,
-        })
-        .style(theme::chip(t, active))
-        .on_press(msg)
-        .into()
+        widgets::chip(t, content, active, ChipShape::Pill)
+            .padding(Padding {
+                top: 0.0,
+                right: 12.0,
+                bottom: 0.0,
+                left: padding_left,
+            })
+            .on_press(msg)
+            .into()
     };
     let mut chips: Vec<Element<'_, Message>> = vec![chip(
         text("Todos").size(13).into(),
@@ -283,90 +270,124 @@ fn author_chips(app: &App) -> Vec<Element<'_, Message>> {
 }
 
 fn type_segment(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
     let option = |kind: TypeFilter, label: &'static str| {
-        button(
-            container(text(label).size(12).font(fonts::INTER_MEDIUM))
-                .height(Length::Fill)
-                .align_y(Alignment::Center),
-        )
-        .height(28)
-        .padding([0, 12])
-        .style(theme::seg_option(t, app.filters.kind == kind))
-        .on_press(Message::SetType(kind))
+        (label, app.filters.kind == kind, Message::SetType(kind))
     };
-    container(row![
-        option(TypeFilter::All, "Todos"),
-        option(TypeFilter::Income, "Receitas"),
-        option(TypeFilter::Expense, "Despesas"),
-    ])
-    .padding(3)
-    .style(theme::outlined(t.divider(), 8.0))
+    widgets::segmented(
+        app.tokens,
+        SegmentedVariant::Bordered,
+        SegmentedSize::Compact,
+        false,
+        [
+            option(TypeFilter::All, "Todos"),
+            option(TypeFilter::Income, "Receitas"),
+            option(TypeFilter::Expense, "Despesas"),
+        ],
+    )
+}
+
+// ---- resumo do mes ----
+
+/// "128 lançamentos   Receitas +R$ …   Despesas −R$ …   Saldo R$ …": a contagem e os totais do
+/// que a tabela mostra (com filtro, so o filtrado), em 17 Regular com o rotulo em 12
+/// `text_muted` (8.3). Os valores vem prontos do modelo, ja mascarados com "Ocultar valores".
+/// Quebra em duas linhas quando nao cabe (728 de largura util).
+fn summary_line(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let list = &app.transactions.list;
+    let count = widgets::value_line(
+        vec![
+            (
+                group_thousands(list.count as u64),
+                type_scale::VALUE_S,
+                fonts::INTER,
+                t.text,
+            ),
+            (
+                count_word(list.count).to_string(),
+                type_scale::META,
+                fonts::INTER,
+                t.text_muted,
+            ),
+        ],
+        type_scale::VALUE_S,
+        6.0,
+    );
+    row![
+        count,
+        widgets::figure(t, "Receitas", &list.income_label, t.income_fg),
+        widgets::figure(t, "Despesas", &list.expense_label, t.expense_fg),
+        widgets::figure(t, "Saldo", &list.balance_label, t.text),
+    ]
+    .spacing(space::XXL)
+    .align_y(Alignment::End)
+    .wrap()
+    .vertical_spacing(space::S)
     .into()
 }
 
-// ---- totais ----
+/// O resumo do mes aparece em todo vazio menos o do hub sem nada sincronizado: la, "0
+/// lançamentos" e tres R$ 0,00 so repetiriam o vazio da tabela. No vazio por filtro e no mes
+/// sem lancamento ele fica, e diz que o zero e do filtro ou do mes.
+fn shows_summary(v: &TransactionsView) -> bool {
+    !v.is_empty_hub
+}
 
-/// "**N** lançamentos · Receitas +R$ … · Despesas −R$ … · Saldo R$ …" (13, rotulos no texto de apoio).
-fn totals_line(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
-    let list = &app.transactions.list;
-    let muted = t.text_soft();
-    let count = list.count;
-    let pair = |label: &'static str, value: String, color: Color| {
-        rich_text::<(), _, _, _>([
-            span(label).color(muted),
-            span(" "),
-            span(value).color(color),
-        ])
-        .size(13)
-    };
-    let line = row![
-        rich_text::<(), _, _, _>([
-            span(group_thousands(count as u64))
-                .font(fonts::INTER_MEDIUM)
-                .color(t.text),
-            span(if count == 1 {
-                " lançamento"
-            } else {
-                " lançamentos"
-            })
-            .color(muted),
-        ])
-        .size(13),
-        pair(
-            "Receitas",
-            format!("+{}", format_brl(list.totals.income_minor)),
-            t.income_fg
-        ),
-        pair(
-            "Despesas",
-            format!("\u{2212}{}", format_brl(list.totals.expense_minor)),
-            t.expense_fg
-        ),
-        pair("Saldo", signed_brl(list.totals.balance_minor), t.text),
-    ]
-    .spacing(24)
-    .wrap()
-    .vertical_spacing(6);
-    container(line).padding([4, 2]).into()
+/// "lançamento" / "lançamentos", depois do numero da contagem.
+fn count_word(count: usize) -> &'static str {
+    if count == 1 {
+        "lançamento"
+    } else {
+        "lançamentos"
+    }
 }
 
 // ---- tabela ----
 
-/// Celulas nas colunas da tabela (gap 16, padding horizontal 20).
-fn columns<'a>(cells: [Element<'a, Message>; 5]) -> iced::widget::Row<'a, Message> {
+/// Largura util a partir da qual cada coluna opcional aparece. Pagamento sai primeiro, depois
+/// Autor (8.3); na janela minima (728 de largura util) as duas ja sairam e a descricao, a
+/// categoria e o valor ficam com o espaco. Com as quatro colunas, a 930 a de Pagamento tem ~126
+/// px (fracao de (930 - 234) / 55); abaixo disso "Cartão de crédito" com o icone saia cortado.
+/// A largura do texto e estimada (o iced nao mede antes do layout): conferir na tela.
+const PAYMENT_MIN_WIDTH: f32 = 930.0;
+const AUTHOR_MIN_WIDTH: f32 = 780.0;
+
+/// Quais colunas opcionais a tabela mostra. Cabecalho e linhas leem a mesma resposta, para os
+/// rotulos nunca ficarem sobre a coluna errada.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Visible {
+    author: bool,
+    payment: bool,
+}
+
+fn visible_columns(width: f32) -> Visible {
+    Visible {
+        author: width >= AUTHOR_MIN_WIDTH,
+        payment: width >= PAYMENT_MIN_WIDTH,
+    }
+}
+
+/// Celulas nas colunas da tabela (gap 16, padding horizontal 20), sem as que a largura tirou.
+/// O valor fica alinhado a direita numa coluna fixa, como toda coluna de dinheiro.
+fn columns<'a>(
+    visible: Visible,
+    cells: [Element<'a, Message>; 5],
+) -> iced::widget::Row<'a, Message> {
     let [desc, cat, author, pay, value] = cells;
     let [w0, w1, w2, w3] = COLUMNS;
-    row![
+    let mut line = row![
         container(desc).width(Length::FillPortion(w0)).clip(true),
         container(cat).width(Length::FillPortion(w1)).clip(true),
-        container(author).width(Length::FillPortion(w2)).clip(true),
-        container(pay).width(Length::FillPortion(w3)).clip(true),
-        container(value).width(VALUE_WIDTH).align_x(Alignment::End),
-    ]
-    .spacing(16)
-    .align_y(Alignment::Center)
+    ];
+    if visible.author {
+        line = line.push(container(author).width(Length::FillPortion(w2)).clip(true));
+    }
+    if visible.payment {
+        line = line.push(container(pay).width(Length::FillPortion(w3)).clip(true));
+    }
+    line.push(container(value).width(VALUE_WIDTH).align_x(Alignment::End))
+        .spacing(16)
+        .align_y(Alignment::Center)
 }
 
 fn table(app: &App) -> Element<'_, Message> {
@@ -379,26 +400,30 @@ fn table(app: &App) -> Element<'_, Message> {
             .color(t.text_muted)
             .into()
     };
-    let header = container(columns([
-        head("Descrição"),
-        head("Categoria"),
-        head("Autor"),
-        head("Pagamento"),
-        head("Valor"),
-    ]))
+    let visible = visible_columns(shell::content_width(app));
+    let header = container(columns(
+        visible,
+        [
+            head("Descrição"),
+            head("Categoria"),
+            head("Autor"),
+            head("Pagamento"),
+            head("Valor"),
+        ],
+    ))
     .height(40)
     .padding([0, 20])
     .align_y(Alignment::Center);
-    let mut col = column![header, widgets::hdivider(t)];
+    let mut rows = column![];
     if v.list.count == 0 {
-        col = col.push(empty(app));
+        rows = rows.push(empty(app));
     }
     let day_bg = mix(t.surface, t.bg, 0.45);
     for (i, group) in v.list.groups.iter().enumerate() {
         if i > 0 {
-            col = col.push(widgets::hdivider(t));
+            rows = rows.push(widgets::divider(t));
         }
-        col = col.push(
+        rows = rows.push(
             container(
                 row![
                     text(group.heading.clone())
@@ -406,9 +431,7 @@ fn table(app: &App) -> Element<'_, Message> {
                         .font(fonts::INTER_MEDIUM)
                         .color(t.text_soft())
                         .width(Length::Fill),
-                    text(signed_brl_plus(group.net_minor))
-                        .size(12)
-                        .color(t.text_muted),
+                    text(group.net.clone()).size(12).color(t.text_muted),
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center),
@@ -419,53 +442,36 @@ fn table(app: &App) -> Element<'_, Message> {
             .style(theme::fill(day_bg, 0.0)),
         );
         for r in &group.rows {
-            col = col.push(widgets::hdivider(t)).push(table_row(app, r));
+            rows = rows
+                .push(widgets::divider(t))
+                .push(table_row(app, r, visible));
         }
     }
-    container(col)
+    // So as linhas rolam (B7). Altura `Shrink`: o iced limita a rolagem ao que sobra abaixo dos
+    // filtros, do resumo e do cabecalho, e com poucas linhas o card acaba nelas em vez de
+    // esticar ate o pe da janela. A barra flutua sobre o respiro de 20 da direita (sem
+    // `spacing`): reservar a largura dela estreitaria as linhas e a coluna Valor sairia da
+    // linha do cabecalho. O id e o da casca, para a troca de tela voltar ao topo.
+    let scroll = scrollable(rows)
+        .id(shell::CONTENT_SCROLL)
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new()
+                .width(6)
+                .scroller_width(6)
+                .margin(3),
+        ))
+        .style(theme::scrollbar(t))
         .width(Length::Fill)
+        .height(Length::Shrink);
+    // `padding(1)`: as faixas de dia sao opacas e de largura cheia, e o iced desenha a borda por
+    // dentro; sem o respiro elas, os divisores e o hover da ultima linha cobrem a borda do card.
+    widgets::card(t, column![header, widgets::divider(t), scroll])
+        .padding(1)
         .clip(true)
-        .style(theme::card(t))
         .into()
 }
 
-/// Tag de lancamento que nao conta nas somas ("Transferência", "Oculto").
-fn state_tag<'a>(t: &'static Tokens, label: &str) -> Element<'a, Message> {
-    container(
-        text(label.to_string())
-            .size(11)
-            .font(fonts::INTER_MEDIUM)
-            .line_height(1.0)
-            .color(t.text_soft()),
-    )
-    .height(20)
-    .padding([0, 7])
-    .align_y(Alignment::Center)
-    .style(theme::fill(t.neutral_800, 999.0))
-    .into()
-}
-
-fn recurrence_tag<'a>(t: &'static Tokens, label: &str) -> Element<'a, Message> {
-    container(
-        row![
-            icons::icon(icons::REPEAT, 11.0, t.accent_300),
-            text(label.to_string())
-                .size(11)
-                .font(fonts::INTER_MEDIUM)
-                .line_height(1.0)
-                .color(t.accent_300),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center),
-    )
-    .height(20)
-    .padding([0, 7])
-    .align_y(Alignment::Center)
-    .style(theme::fill(t.accent_900, 999.0))
-    .into()
-}
-
-fn table_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
+fn table_row<'a>(app: &'a App, r: &'a ListRow, visible: Visible) -> Element<'a, Message> {
     let t = app.tokens;
     let mut description = row![
         category_tile(t, r),
@@ -478,10 +484,13 @@ fn table_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
     .spacing(12)
     .align_y(Alignment::Center);
     if let Some(label) = &r.recurrence_label {
-        description = description.push(recurrence_tag(t, label));
+        // Neutra: recorrencia e um fato da linha, nao o foco da tela, e o dourado fica para o
+        // que marca o agora (principio 2 da direcao Grafite · Mesa).
+        description =
+            description.push(widgets::tag_icon(t, TagTone::Neutral, icons::REPEAT, label));
     }
     if let Some(state) = r.report_state {
-        description = description.push(state_tag(t, state.label()));
+        description = description.push(widgets::tag(t, TagTone::Neutral, state.label()));
     }
     let category_color = r
         .category_color
@@ -506,14 +515,24 @@ fn table_row<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
     ]
     .spacing(8)
     .align_y(Alignment::Center);
-    let content = columns([
-        description.into(),
-        category.into(),
-        author_cell(app, r),
-        payment.into(),
-        value_cell(t, r),
-    ]);
-    hover_row(app, &r.id, content, [0, 20], 0.0, 52.0)
+    let content = columns(
+        visible,
+        [
+            description.into(),
+            category.into(),
+            author_cell(app, r),
+            payment.into(),
+            value_cell(t, r),
+        ],
+    );
+    hover_row(
+        app,
+        &r.id,
+        content,
+        [0, 20],
+        RowEdge::Flush,
+        Some(size::ROW_RICH),
+    )
 }
 
 // ---- vazio ----
@@ -550,34 +569,32 @@ fn empty(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let v = &app.transactions;
     let (title, body, show_clear) = empty_copy(v, &app.filters);
-    let mut col = column![
-        icons::icon(icons::FUNNEL_X, 28.0, t.accent_300),
-        Space::new().height(4),
-        text(title).size(16).font(fonts::INTER_MEDIUM).color(t.text),
-        container(
-            text(body)
-                .size(13)
-                .line_height(1.5)
-                .color(t.text_muted)
-                .align_x(Alignment::Center),
-        )
-        .max_width(380),
-    ]
-    .spacing(8)
-    .align_x(Alignment::Center);
-    if show_clear {
-        col = col.push(Space::new().height(2)).push(
-            button(
-                container(text("Limpar filtros").size(13).font(fonts::INTER_MEDIUM))
-                    .height(Length::Fill)
-                    .align_y(Alignment::Center),
+    // So no vazio do hub (nada sincronizado) vem "Conectar um celular"; o vazio por filtro tem
+    // "Limpar filtros" e o do mes nenhum. Os dois nunca aparecem juntos.
+    let connect = if v.is_empty_hub {
+        shell::connect_phone_button(app)
+    } else {
+        None
+    };
+    let action = connect.or_else(|| {
+        show_clear.then(|| {
+            widgets::action_button(
+                t,
+                ButtonKind::Primary,
+                ButtonSize::Regular,
+                "Limpar filtros",
             )
-            .height(36)
-            .padding([0, 14])
-            .style(theme::outline_accent(t))
-            .on_press(Message::ClearFilters),
-        );
-    }
+            .on_press(Message::ClearFilters)
+            .into()
+        })
+    });
+    let col = widgets::empty_state(
+        t,
+        widgets::empty_icon(t, icons::FUNNEL_X),
+        &title,
+        &body,
+        action,
+    );
     container(col)
         .padding([56, 24])
         .center_x(Length::Fill)
@@ -594,12 +611,15 @@ mod tests {
     #[test]
     fn tres_vazios() {
         let none = Filters::default();
-        let hub = build_transactions(&Dataset::default(), "2026-09-24", "2026-09", &none);
+        // Hub sem nada: o vazio da issue 02 (com "Conectar um celular"), sem o resumo do mes.
+        let hub = build_transactions(&Dataset::default(), "2026-09-24", "2026-09", &none, false);
         let (title, _, clear) = empty_copy(&hub, &none);
         assert_eq!(title, "Nenhum lançamento sincronizado");
         assert!(!clear);
+        assert!(!shows_summary(&hub));
+        // Mes sem lancamento: o resumo fica e diz "0 lançamentos".
         let ds = fixtures();
-        let may = build_transactions(&ds, "2026-09-24", "2026-05", &none);
+        let may = build_transactions(&ds, "2026-09-24", "2026-05", &none, false);
         assert_eq!(
             empty_copy(&may, &none),
             (
@@ -608,16 +628,62 @@ mod tests {
                 false
             )
         );
+        assert!(shows_summary(&may));
+        assert_eq!(count_word(may.list.count), "lançamentos");
+        // Vazio por filtro: como estava, com "Limpar filtros"; o resumo conta o filtrado (0),
+        // nao os lancamentos do mes.
         let filters = Filters {
             kind: TypeFilter::Income,
             category: Some("C1".into()),
             ..Filters::default()
         };
-        let sep = build_transactions(&ds, "2026-09-24", "2026-09", &filters);
+        let sep = build_transactions(&ds, "2026-09-24", "2026-09", &filters, false);
         assert_eq!(sep.list.count, 0);
         let (title, body, clear) = empty_copy(&sep, &filters);
         assert_eq!(title, "Nada com esses filtros");
         assert!(body.contains("em setembro"));
         assert!(clear);
+        assert!(shows_summary(&sep));
+        let all = build_transactions(&ds, "2026-09-24", "2026-09", &none, false);
+        assert!(all.list.count > 0);
+        assert_eq!(count_word(1), "lançamento");
+    }
+
+    #[test]
+    fn pagamento_sai_antes_do_autor_e_na_largura_minima_os_dois_sairam() {
+        let both = Visible {
+            author: true,
+            payment: true,
+        };
+        // Janela inicial (1440 - 232 - 64).
+        assert_eq!(visible_columns(1144.0), both);
+        assert_eq!(visible_columns(PAYMENT_MIN_WIDTH), both);
+        // Entre os dois limites: so Pagamento saiu (900 cortava "Cartão de crédito").
+        assert_eq!(
+            visible_columns(900.0),
+            Visible {
+                author: true,
+                payment: false
+            }
+        );
+        // Janela minima (1024 - 232 - 64).
+        assert_eq!(
+            visible_columns(728.0),
+            Visible {
+                author: false,
+                payment: false
+            }
+        );
+    }
+
+    #[test]
+    fn tabela_monta_nas_tres_faixas_de_largura() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = crate::ui::app::tests::app_with_fixtures(dir.path());
+        app.screen = crate::ui::app::Screen::Transactions;
+        for width in [1024.0, 1100.0, 1440.0] {
+            app.window_size.width = width;
+            let _ = view(&app);
+        }
     }
 }

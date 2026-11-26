@@ -1,5 +1,6 @@
 //! Tela Dashboard "Grafite" (Resumo da casa): Negócio?, Como estou, Reserva + Histórico, Para
-//! onde foi, O que vem, Últimos lançamentos e Quem lançou; ou o estado "Sem dados".
+//! onde foi, O que vem, Últimos lançamentos e Quem lançou; sem lançamento, um dos estados de
+//! `shell::arrival` (abrindo, primeiro uso, aguardando ou "Sem dados").
 //!
 //! Tudo vem de `app.dashboard` (`GrafiteView`, calculado em `App::rebuild`) com os textos ja
 //! prontos: esta tela nao formata dinheiro, so escolhe tamanho, cor e lugar. Formatar aqui
@@ -21,12 +22,15 @@ use super::charts::{
     EMPTY_HEIGHT, EMPTY_WIDTH, EmptyChartProgram, HISTORY_HEIGHT, HistoryProgram, MeterProgram,
     PACE_HEIGHT, PaceProgram, SwatchProgram,
 };
-use super::theme::{self, Tokens, alpha};
-use super::{fonts, icons, shell, time};
+use super::shell::Arrival;
+use super::theme::{self, ButtonKind, ButtonSize, Tokens};
+use super::widgets::{Bar, CompactTone};
+use super::{fonts, icons, shell, time, widgets};
 use crate::dashboard::grafite::{
     BusinessBlock, EmergencyBlock, HistoryBody, Line, Section, Tone, UpcomingLine,
 };
 use crate::dashboard::money::group_thousands;
+use crate::hub::snapshot::Status;
 
 /// Espaco entre blocos (o `gap: 16px` do `main`).
 const GAP: f32 = 16.0;
@@ -188,13 +192,6 @@ fn tiles<'a>(total: f32, gap: f32, row_gap: f32, items: Vec<Tile<'a>>) -> Elemen
     out.into()
 }
 
-/// Respiro que o pedaco menor precisa embaixo para a linha de base casar com a do maior, com
-/// altura de linha 1,0 (o iced nao alinha por linha de base). Na Inter a base fica a 0,1367 em
-/// do fundo da caixa (ascendente 0,96875 e descendente 0,2421875 centrados em 1 em).
-pub(super) fn baseline_pad(big: f32, small: f32) -> f32 {
-    0.1367 * (big - small).max(0.0)
-}
-
 // ---- tela ----
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -221,11 +218,11 @@ pub fn view(app: &App) -> Element<'_, Message> {
 fn section(app: &App, s: Section, width: f32) -> Element<'_, Message> {
     let t = app.tokens;
     match s {
-        Section::Empty => empty_card(app),
+        Section::Empty => empty_section(app),
         Section::Business => business(app, width),
         Section::HowAmI => how_am_i(app, width),
-        Section::Reserve => card(t, reserve_body(app, width - 40.0), Padding::new(20.0)),
-        Section::History => card(t, history_body(app), Padding::new(20.0)),
+        Section::Reserve => widgets::card(t, reserve_body(app, width - 40.0)).into(),
+        Section::History => widgets::card(t, history_body(app)).into(),
         Section::WhereItWent => where_it_went(app, width),
         Section::WhatsNext => whats_next(app, width),
         Section::Recent => recent(app),
@@ -309,52 +306,6 @@ fn tone_color(t: &'static Tokens, tone: Tone, neutral: Color) -> Color {
     }
 }
 
-/// Card de superficie, raio 8.
-fn card<'a>(
-    t: &'static Tokens,
-    content: impl Into<Element<'a, Message>>,
-    padding: Padding,
-) -> Element<'a, Message> {
-    container(content)
-        .padding(padding)
-        .width(Length::Fill)
-        .style(theme::card(t))
-        .into()
-}
-
-/// Titulo de secao (16 Medium) + pergunta (13 apoio) e um aparte a direita.
-fn heading<'a>(
-    t: &'static Tokens,
-    title: &str,
-    question: &str,
-    aside: Option<&str>,
-    top: f32,
-) -> Element<'a, Message> {
-    let mut line = row![
-        txt(title.to_string(), 16.0, t.text)
-            .font(fonts::INTER_MEDIUM)
-            .wrapping(Wrapping::None)
-    ]
-    .spacing(12)
-    .align_y(Alignment::End);
-    if !question.is_empty() {
-        line = line.push(txt(question.to_string(), 13.0, t.text_muted));
-    }
-    if let Some(aside) = aside {
-        line = line.push(
-            container(txt(aside.to_string(), 12.0, t.text_muted).wrapping(Wrapping::None))
-                .width(Length::Fill)
-                .align_x(Alignment::End),
-        );
-    }
-    container(line)
-        .padding(Padding {
-            top,
-            ..Padding::ZERO
-        })
-        .into()
-}
-
 /// Botao de informacao (icone 16) com o texto em tooltip embaixo, largura max. 280 (o `title`
 /// do design; o iced so mostra no hover).
 fn info<'a>(t: &'static Tokens, tip: &str) -> Element<'a, Message> {
@@ -371,19 +322,8 @@ fn info<'a>(t: &'static Tokens, tip: &str) -> Element<'a, Message> {
         tooltip::Position::Bottom,
     )
     .gap(2)
+    .delay(theme::TOOLTIP_DELAY)
     .into()
-}
-
-/// Pilula de 11 px ("hoje", "Mensal", "↑ 38% do normal").
-fn pill<'a>(label: &str, color: Color, bg: Color, padding: [u16; 2]) -> Element<'a, Message> {
-    container(txt(label.to_string(), 11.0, color).wrapping(Wrapping::None))
-        .padding(padding)
-        .style(theme::fill(bg, 999.0))
-        .into()
-}
-
-fn today_chip<'a>(t: &'static Tokens, label: &str) -> Element<'a, Message> {
-    pill(label, t.accent_300, t.accent_900, [3, 9])
 }
 
 /// Quadrado/circulo de cor da legenda.
@@ -395,114 +335,27 @@ fn swatch<'a>(color: Color, size: f32, radius: f32) -> Element<'a, Message> {
         .into()
 }
 
-fn hline<'a>(t: &'static Tokens) -> Element<'a, Message> {
-    container(Space::new())
-        .width(Length::Fill)
-        .height(1)
-        .style(theme::fill(t.divider(), 0.0))
-        .into()
-}
-
-/// Barra horizontal de `frac` da largura (lista do historico, taxa de poupanca, medidor da
-/// reserva). `FillPortion` e `u16`: a fracao vira milesimos.
-fn ratio_bar<'a>(
-    frac: f32,
-    color: Color,
-    track: Option<Color>,
-    height: f32,
-    outlined: bool,
-) -> Element<'a, Message> {
-    let p = (frac.clamp(0.0, 1.0) * 1000.0).round() as u16;
-    let radius = height / 2.0;
-    let fill: Element<'a, Message> = if p == 0 {
-        Space::new().width(Length::FillPortion(1)).into()
-    } else {
-        let bar = container(Space::new())
-            .width(Length::FillPortion(p))
-            .height(height);
-        if outlined {
-            bar.style(theme::outlined(color, radius)).into()
-        } else {
-            bar.style(theme::fill(color, radius)).into()
-        }
-    };
-    let mut line = row![fill].height(height);
-    if p < 1000 {
-        line = line.push(Space::new().width(Length::FillPortion(1000 - p.max(1))));
-    }
-    let bar = container(line).width(Length::Fill).height(height);
-    match track {
-        Some(track) => bar.style(theme::fill(track, radius)).into(),
-        None => bar.into(),
-    }
-}
-
 /// Medidor em canvas (barra, preenchimento e marcas pontilhadas).
 fn meter<'a>(program: MeterProgram) -> Element<'a, Message> {
     let h = program.height();
     canvas(program).width(Length::Fill).height(h).into()
 }
 
-/// Tile de categoria: `size` px, raio 6, icone 16 na cor e fundo a cor a 15 % sobre a
-/// superficie (#3d3229 para `tag-orange` no design). Sem token: tile neutro com `repeat`.
-fn cat_tile<'a>(
-    t: &'static Tokens,
-    glyph: &'static str,
-    token: Option<&str>,
-    size: f32,
-) -> Element<'a, Message> {
-    let (icon_color, bg) = match token {
-        Some(tk) => (t.token(tk), t.token_tint(tk, 0.15)),
-        None => (t.text_soft(), t.divider()),
-    };
-    container(icons::icon(glyph, 16.0, icon_color))
-        .center(size)
-        .style(theme::fill(bg, 6.0))
-        .into()
-}
-
-/// Valor partido em linha de base: pedacos menores (`R$`, centavos, sufixo) com respiro embaixo
-/// para casar com o numero grande.
-fn big_value<'a>(
-    pieces: Vec<(String, f32, Font, Color)>,
-    big: f32,
-    spacing: f32,
-) -> Element<'a, Message> {
-    let mut line = row![].spacing(spacing).align_y(Alignment::End);
-    for (content, size, font, color) in pieces {
-        if content.is_empty() {
-            continue;
-        }
-        line = line.push(
-            container(
-                text(content)
-                    .size(size)
-                    .font(font)
-                    .line_height(1.0)
-                    .wrapping(Wrapping::None)
-                    .color(color),
-            )
-            .padding(Padding {
-                bottom: baseline_pad(big, size),
-                ..Padding::ZERO
-            }),
-        );
-    }
-    line.into()
-}
-
 fn link_button<'a>(t: &'static Tokens, label: &str, message: Message) -> Element<'a, Message> {
+    // Linha inteira de 44 sem respiro lateral nem centralizacao: o link encosta na borda do
+    // conteudo do card, como no design. Texto e seta herdam a cor do estilo, que muda com o
+    // mouse.
     button(
         row![
-            txt(label.to_string(), 14.0, t.accent_300).width(Length::Fill),
-            icons::icon(icons::CARET_RIGHT, 14.0, t.accent_300),
+            text(label.to_string()).size(14).width(Length::Fill),
+            icons::icon_inherit(icons::CARET_RIGHT, 14.0),
         ]
         .align_y(Alignment::Center),
     )
     .width(Length::Fill)
     .height(44)
     .padding(0)
-    .style(theme::link(t))
+    .style(theme::button(t, ButtonKind::Link, ButtonSize::Regular))
     .on_press(message)
     .into()
 }
@@ -517,8 +370,8 @@ fn business(app: &App, width: f32) -> Element<'_, Message> {
     let left = business_result(t, b);
     let right = business_capital(t, b);
     column![
-        heading(t, &b.title, &b.question, None, 8.0),
-        card(
+        widgets::section_heading(t, &b.title, &b.question, None, 8.0),
+        widgets::card(
             t,
             column![
                 tiles(
@@ -544,8 +397,7 @@ fn business(app: &App, width: f32) -> Element<'_, Message> {
                 ),
                 txt(b.note.clone(), 12.0, t.text_muted),
             ]
-            .spacing(16),
-            Padding::new(20.0),
+            .spacing(16)
         ),
     ]
     .spacing(GAP)
@@ -592,7 +444,7 @@ fn business_capital<'a>(t: &'static Tokens, b: &BusinessBlock) -> Element<'a, Me
     let mut col = column![
         row![
             txt(b.capital_title.clone(), 13.0, t.text_muted).width(Length::Fill),
-            today_chip(t, &b.today_chip),
+            widgets::tag_compact(t, CompactTone::Accent, &b.today_chip, [3, 9]),
         ]
         .align_y(Alignment::Center)
     ]
@@ -600,7 +452,7 @@ fn business_capital<'a>(t: &'static Tokens, b: &BusinessBlock) -> Element<'a, Me
     for c in &b.capital {
         col = col.push(value_row(&c.label, &c.value, t.text));
     }
-    col.push(hline(t))
+    col.push(widgets::divider(t))
         .push(txt(b.debt_title.clone(), 13.0, t.text_muted))
         .push(value_row(&b.debt.label, &b.debt.value, t.expense_fg))
         .into()
@@ -638,8 +490,8 @@ fn how_am_i(app: &App, width: f32) -> Element<'_, Message> {
         ],
     );
     column![
-        heading(t, &h.title, &h.question, None, 8.0),
-        card(t, body, Padding::new(6.0)),
+        widgets::section_heading(t, &h.title, &h.question, None, 8.0),
+        widgets::card(t, body).padding(Padding::new(6.0)),
     ]
     .spacing(GAP)
     .into()
@@ -678,15 +530,16 @@ fn balance_column(app: &App) -> Element<'_, Message> {
     } else {
         t.text
     };
-    let mut col = column![
-        txt(h.balance_label.clone(), 13.0, t.text_muted),
-        big_value(
+    let mut col = widgets::stat(
+        t,
+        &h.balance_label,
+        widgets::value_line(
             vec![
                 (
                     format!("{}{}", b.sign, b.currency),
                     16.0,
                     fonts::INTER,
-                    t.text_muted
+                    t.text_muted,
                 ),
                 (b.whole.clone(), 44.0, fonts::INTER_LIGHT, whole_color),
                 (b.cents.clone(), 18.0, fonts::INTER, t.text_muted),
@@ -694,7 +547,8 @@ fn balance_column(app: &App) -> Element<'_, Message> {
             44.0,
             8.0,
         ),
-    ]
+        None,
+    )
     .spacing(14);
     if let Some(line) = &h.outlook {
         col = col.push(outlook_line(t, line));
@@ -727,12 +581,7 @@ fn balance_column(app: &App) -> Element<'_, Message> {
             if let Some(a) = average {
                 inner = inner.push(a);
             }
-            col = col.push(
-                container(inner)
-                    .padding([14, 16])
-                    .width(Length::Fill)
-                    .style(theme::fill(t.surface_2, 6.0)),
-            );
+            col = col.push(widgets::inset(t, inner).padding([14, 16]));
         }
         (None, Some(a)) => col = col.push(a),
         (None, None) => {}
@@ -782,7 +631,7 @@ fn balance_column(app: &App) -> Element<'_, Message> {
                     .line_height(1.0),
                 )
                 .padding(Padding {
-                    bottom: baseline_pad(24.0, 13.0),
+                    bottom: widgets::baseline_pad(24.0, 13.0),
                     ..Padding::ZERO
                 }),
             );
@@ -796,7 +645,15 @@ fn balance_column(app: &App) -> Element<'_, Message> {
             .align_y(Alignment::End),
             rate,
             column![
-                ratio_bar(s.fill, t.neutral_400, Some(t.neutral_800), 6.0, false),
+                widgets::bar(
+                    Bar::Fraction {
+                        value: s.fill,
+                        color: t.neutral_400,
+                        track: Some(t.neutral_800),
+                        outlined: false
+                    },
+                    6.0,
+                ),
                 row![
                     txt(s.scale_start.clone(), 11.0, t.text_muted).width(Length::Fill),
                     txt(s.scale_end.clone(), 11.0, t.text_muted),
@@ -808,7 +665,7 @@ fn balance_column(app: &App) -> Element<'_, Message> {
         if let Some(r) = reserves {
             block = block.push(r);
         }
-        col = col.push(column![hline(t), block].spacing(16));
+        col = col.push(column![widgets::divider(t), block].spacing(16));
     } else if let Some(r) = reserves {
         col = col.push(r);
     }
@@ -899,10 +756,10 @@ fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
             let mut col = column![
                 row![
                     txt(e.title.clone(), 13.0, t.text_muted).width(Length::Fill),
-                    today_chip(t, &e.chip),
+                    widgets::tag_compact(t, CompactTone::Accent, &e.chip, [3, 9]),
                 ]
                 .align_y(Alignment::Center),
-                big_value(
+                widgets::value_line(
                     vec![
                         (e.coverage.clone(), 36.0, fonts::INTER_LIGHT, t.text),
                         (e.coverage_suffix.clone(), 14.0, fonts::INTER, t.text_muted),
@@ -912,13 +769,18 @@ fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
                 ),
             ]
             .spacing(14);
-            let mut segments = row![].spacing(4);
+            // Segmentos de 5 px, vao 4 e raio 2,5 (meia altura); os rotulos embaixo usam o mesmo
+            // vao e a mesma divisao em partes iguais para ficar cada um sob o seu segmento.
+            let segments = widgets::bar(
+                Bar::Segments {
+                    values: &e.segments,
+                    color: t.accent,
+                    track: t.neutral_800,
+                },
+                5.0,
+            );
             let mut labels = row![].spacing(4);
-            for (k, f) in e.segments.iter().enumerate() {
-                segments = segments.push(
-                    container(ratio_bar(*f, t.accent, Some(t.neutral_800), 5.0, false))
-                        .width(Length::FillPortion(1)),
-                );
+            for k in 0..e.segments.len() {
                 let label = e.segment_labels.get(k).cloned().unwrap_or_default();
                 labels = labels.push(
                     container(txt(label, 11.0, t.text_muted))
@@ -1003,10 +865,10 @@ fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
                 .wrapping(Wrapping::None),
             );
         }
-        right = right.push(column![hline(t), line].spacing(12));
+        right = right.push(column![widgets::divider(t), line].spacing(12));
     }
     right = right.push(column![
-        hline(t),
+        widgets::divider(t),
         link_button(t, &r.link, Message::SelectScreen(Screen::Reserves))
     ]);
     tiles(
@@ -1068,8 +930,24 @@ fn history_body(app: &App) -> Element<'_, Message> {
                             txt(l.text.clone(), 13.0, t.neutral_300).wrapping(Wrapping::None),
                         ]
                         .spacing(12),
-                        ratio_bar(l.income, t.income, None, 6.0, l.partial),
-                        ratio_bar(l.expense, t.expense, None, 6.0, l.partial),
+                        widgets::bar(
+                            Bar::Fraction {
+                                value: l.income,
+                                color: t.income,
+                                track: None,
+                                outlined: l.partial
+                            },
+                            6.0,
+                        ),
+                        widgets::bar(
+                            Bar::Fraction {
+                                value: l.expense,
+                                color: t.expense,
+                                track: None,
+                                outlined: l.partial
+                            },
+                            6.0,
+                        ),
                     ]
                     .spacing(7),
                 );
@@ -1100,7 +978,8 @@ fn history_body(app: &App) -> Element<'_, Message> {
     if let Some(note) = footnote.filter(|n| !n.is_empty()) {
         foot = foot.push(txt(note, 12.0, t.text_muted).line_height(1.5));
     }
-    col.push(column![hline(t), foot].spacing(14)).into()
+    col.push(column![widgets::divider(t), foot].spacing(14))
+        .into()
 }
 
 // ---- para onde foi ----
@@ -1128,20 +1007,18 @@ fn where_it_went(app: &App, width: f32) -> Element<'_, Message> {
         None => vec![t.neutral_600],
     };
     if let Some(bar) = plan.bar {
-        let mut segments = row![].spacing(3).height(8);
-        for (f, color) in bar.iter().zip(&colors) {
-            let p = (f.clamp(0.0, 1.0) * 1000.0).round() as u16;
-            if p == 0 {
-                continue;
-            }
-            segments = segments.push(
-                container(Space::new())
-                    .width(Length::FillPortion(p))
-                    .height(8)
-                    .style(theme::fill(*color, 4.0)),
-            );
-        }
-        plan_col = plan_col.push(segments);
+        let parts: Vec<(f64, Color)> = bar
+            .iter()
+            .zip(&colors)
+            .map(|(f, color)| (f64::from(f.clamp(0.0, 1.0)), *color))
+            .collect();
+        plan_col = plan_col.push(widgets::bar(
+            Bar::Parts {
+                parts: &parts,
+                track: t.neutral_800,
+            },
+            8.0,
+        ));
     }
     let mut legend = row![].spacing(28);
     for (label, color) in plan.legend.iter().zip(&colors) {
@@ -1262,24 +1139,20 @@ fn where_it_went(app: &App, width: f32) -> Element<'_, Message> {
             bottom: 18.0,
             ..Padding::ZERO
         }),
-        hline(t),
+        widgets::divider(t),
         container(tiles(width - 40.0, 44.0, 8.0, blocks)).padding(Padding {
             top: 8.0,
             ..Padding::ZERO
         }),
     ];
     column![
-        heading(t, &w.title, &w.question, Some(&w.summary), 20.0),
-        card(
-            t,
-            body,
-            Padding {
-                top: 20.0,
-                right: 20.0,
-                bottom: 12.0,
-                left: 20.0,
-            }
-        ),
+        widgets::section_heading(t, &w.title, &w.question, Some(&w.summary), 20.0),
+        widgets::card(t, body).padding(Padding {
+            top: 20.0,
+            right: 20.0,
+            bottom: 12.0,
+            left: 20.0,
+        }),
     ]
     .spacing(GAP)
     .into()
@@ -1303,12 +1176,15 @@ fn category_row<'a>(t: &'static Tokens, r: CategoryRow<'a, '_>) -> Element<'a, M
         .spacing(10)
         .align_y(Alignment::Center);
     if let Some(chip) = r.above_normal {
-        name = name.push(pill(chip, t.text, t.divider(), [2, 8]));
+        name = name.push(widgets::tag_compact(t, CompactTone::Strong, chip, [2, 8]));
     }
     let token = (!r.color.is_empty()).then_some(r.color);
     container(
         row![
-            cat_tile(t, icons::glyph(r.icon), token, 30.0),
+            match token {
+                Some(tk) => widgets::token_tile(t, icons::glyph(r.icon), tk, 30.0),
+                None => widgets::neutral_tile(t, icons::glyph(r.icon), 30.0),
+            },
             column![
                 row![container(name).width(Length::Fill), r.amount]
                     .spacing(12)
@@ -1343,7 +1219,7 @@ fn whats_next(app: &App, width: f32) -> Element<'_, Message> {
     };
     let surface = Some((t.surface, 8.0));
     column![
-        heading(t, &w.title, &w.question, None, 0.0),
+        widgets::section_heading(t, &w.title, &w.question, None, 0.0),
         tiles(
             width,
             GAP,
@@ -1402,7 +1278,7 @@ fn free_card(app: &App) -> Element<'_, Message> {
         if let Some(of) = &f.of_income {
             pieces.push((format!(" {of}"), 13.0, fonts::INTER, t.text_muted));
         }
-        col = col.push(big_value(pieces, 36.0, 6.0));
+        col = col.push(widgets::value_line(pieces, 36.0, 6.0));
         col = col.push(
             container(meter(MeterProgram {
                 fill: f.committed_fill,
@@ -1432,16 +1308,15 @@ fn free_card(app: &App) -> Element<'_, Message> {
     }
     let v = &w.variable;
     col = col.push(
-        container(
+        widgets::inset(
+            t,
             column![
                 txt(v.title.clone(), 12.0, t.text_muted),
                 txt(v.text.clone(), 14.0, t.text).line_height(1.5),
             ]
             .spacing(6),
         )
-        .padding([14, 16])
-        .width(Length::Fill)
-        .style(theme::fill(t.surface_2, 6.0)),
+        .padding([14, 16]),
     );
     if let Some(n) = &f.estimate_note {
         col = col.push(txt(n.clone(), 12.0, t.text_muted).line_height(1.5));
@@ -1457,7 +1332,10 @@ fn upcoming_row<'a>(t: &'static Tokens, u: &UpcomingLine) -> Element<'a, Message
     let amount_color = if u.income { t.income_fg } else { t.text };
     column![
         row![
-            cat_tile(t, glyph, u.color.as_deref(), 32.0),
+            match u.color.as_deref() {
+                Some(tk) => widgets::token_tile(t, glyph, tk, 32.0),
+                None => widgets::neutral_tile(t, glyph, 32.0),
+            },
             column![
                 txt(u.description.clone(), 14.0, t.text),
                 txt(u.when.clone(), 12.0, t.text_muted),
@@ -1469,7 +1347,7 @@ fn upcoming_row<'a>(t: &'static Tokens, u: &UpcomingLine) -> Element<'a, Message
         .spacing(12)
         .padding([12, 0])
         .align_y(Alignment::Center),
-        hline(t),
+        widgets::divider(t),
     ]
     .into()
 }
@@ -1501,9 +1379,13 @@ fn upcoming_card(app: &App) -> Element<'_, Message> {
         }
         note.push(sp(inv.note.clone(), t.neutral_300));
         col = col.push(
-            container(
+            widgets::inset(
+                t,
                 column![
                     row![
+                        // Fica fora de `widgets::tile`: o tile tinge a cor a 16 % sobre a
+                        // superficie, e este e o degrau `accent_900` com o icone em `accent_400`
+                        // do design do Resumo, sobre a caixa interna e nao sobre o card.
                         container(icons::icon(icons::glyph(&inv.icon), 16.0, t.accent_400))
                             .center(32)
                             .style(theme::fill(t.accent_900, 6.0)),
@@ -1521,9 +1403,7 @@ fn upcoming_card(app: &App) -> Element<'_, Message> {
                 ]
                 .spacing(10),
             )
-            .padding(14)
-            .width(Length::Fill)
-            .style(theme::fill(t.surface_2, 6.0)),
+            .padding(14),
         );
     }
     let shown = if app.upcoming_expanded {
@@ -1556,11 +1436,11 @@ fn recent(app: &App) -> Element<'_, Message> {
             .spacing(8)
             .align_y(Alignment::Center);
         if let Some(chip) = &l.chip {
-            title = title.push(pill(chip, t.accent_300, t.accent_900, [2, 8]));
+            title = title.push(widgets::tag_compact(t, CompactTone::Accent, chip, [2, 8]));
         }
         if let Some(tag) = &l.tag {
             // `text_soft`: o `text_muted` sobre o divisor fica abaixo de 4,5:1 no claro.
-            title = title.push(pill(tag, t.text_soft(), t.divider(), [2, 8]));
+            title = title.push(widgets::tag_compact(t, CompactTone::Neutral, tag, [2, 8]));
         }
         let mut meta = row![].spacing(6).align_y(Alignment::Center);
         if let Some(dot) = &l.dot {
@@ -1575,7 +1455,7 @@ fn recent(app: &App) -> Element<'_, Message> {
             t.text
         };
         if k > 0 {
-            list = list.push(hline(t));
+            list = list.push(widgets::divider(t));
         }
         list = list.push(
             row![
@@ -1604,17 +1484,13 @@ fn recent(app: &App) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
     column![
-        heading(t, &r.title, "", Some(&r.count), 0.0),
-        card(
-            t,
-            column![list, hline(t), foot],
-            Padding {
-                top: 10.0,
-                right: 20.0,
-                bottom: 8.0,
-                left: 20.0,
-            }
-        ),
+        widgets::section_heading(t, &r.title, "", Some(&r.count), 0.0),
+        widgets::card(t, column![list, widgets::divider(t), foot]).padding(Padding {
+            top: 10.0,
+            right: 20.0,
+            bottom: 8.0,
+            left: 20.0,
+        }),
     ]
     .spacing(GAP)
     .into()
@@ -1625,19 +1501,10 @@ fn people(app: &App) -> Option<Element<'_, Message>> {
     let p = app.dashboard.people.as_ref()?;
     let mut col = column![txt(p.title.clone(), 13.0, t.text_muted)].spacing(14);
     for person in &p.rows {
-        let (bg, fg) = match &person.color {
-            Some(tk) => (t.token(tk), t.bg),
-            None => t.avatar_neutral(),
-        };
         col = col.push(
             row![
-                container(
-                    txt(person.initial.clone(), 12.0, fg)
-                        .font(fonts::INTER_SEMIBOLD)
-                        .line_height(1.0)
-                )
-                .center(28)
-                .style(theme::fill(bg, 14.0)),
+                // A inicial ja vem do modelo; o avatar tira a primeira letra dela de novo.
+                widgets::avatar(t, &person.initial, person.color.as_deref(), None, 28.0),
                 column![
                     txt(person.name.clone(), 14.0, t.text),
                     txt(person.line.clone(), 12.0, t.text_muted).line_height(1.45),
@@ -1650,10 +1517,116 @@ fn people(app: &App) -> Option<Element<'_, Message>> {
         );
     }
     col = col.push(txt(p.footnote.clone(), 12.0, t.text_muted).line_height(1.5));
-    Some(card(t, col, Padding::new(20.0)))
+    Some(widgets::card(t, col).into())
 }
 
 // ---- sem dados ----
+
+/// O lugar das secoes quando a conta nao tem lancamento: abrindo, primeiro uso, aguardando ou
+/// o vazio de sempre (`shell::arrival`). So acrescenta estados; com dados nada aqui roda.
+fn empty_section(app: &App) -> Element<'_, Message> {
+    match shell::screen_arrival(app, !app.dashboard.is_empty) {
+        Arrival::Opening => shell::opening(app),
+        Arrival::FirstUse => first_use_card(app),
+        Arrival::Waiting(line) => waiting_card(app, line),
+        Arrival::Data | Arrival::Empty => empty_card(app),
+    }
+}
+
+/// Texto dos passos do primeiro uso: (titulo, explicacao). Os passos sao uma sequencia real
+/// (parear, confiar no certificado, sincronizar), por isso levam numero.
+const FIRST_USE_STEPS: [(&str, &str); 3] = [
+    ("Conecte um celular", "Pareie pelo QR code em Aparelhos."),
+    ("Instale o certificado", "Uma vez por celular."),
+    (
+        "Faça o primeiro sync",
+        "No app: Ajustes > Sincronizar com o hub.",
+    ),
+];
+
+/// Largura da coluna dos titulos dos passos: as explicacoes comecam todas na mesma linha.
+const STEP_TITLE_WIDTH: f32 = 200.0;
+
+/// Um passo: numero, titulo 14 em `fg` e, ao lado, a explicacao e a acao opcional.
+fn first_use_step<'a>(
+    t: &'static Tokens,
+    n: u8,
+    action: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let (title, body) = FIRST_USE_STEPS
+        .get(usize::from(n).saturating_sub(1))
+        .copied()
+        .unwrap_or_default();
+    let mut detail = column![widgets::step_text(t, body)].spacing(12);
+    if let Some(action) = action {
+        detail = detail.push(action);
+    }
+    widgets::step(
+        t,
+        n,
+        row![
+            txt(title, 14.0, t.text)
+                .line_height(1.45)
+                .width(STEP_TITLE_WIDTH),
+            detail.width(Length::Fill),
+        ]
+        .spacing(16)
+        .into(),
+    )
+}
+
+/// Titulo 18 Medium dos cards do primeiro uso e da espera.
+fn lead<'a>(t: &'static Tokens, content: impl IntoFragment<'a>) -> text::Text<'a> {
+    txt(content, 18.0, t.text).font(fonts::INTER_MEDIUM)
+}
+
+/// Rodape dos dois cards: a promessa de que nada sai de casa.
+fn lan_note<'a>(t: &'static Tokens) -> text::Text<'a> {
+    txt("Os dados viajam só pela rede de casa.", 12.0, t.text_muted)
+}
+
+/// "Comece por aqui" (spec 8.2): nucleo no ar, hub vazio e nenhum aparelho pareado. Substitui o
+/// vazio com "Conectar um celular" da issue 02, que nao dizia o que vem depois de parear.
+fn first_use_card(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let mut col = column![lead(t, "Comece por aqui")].spacing(20);
+    if let Some(note) = no_network_note(app) {
+        col = col.push(note);
+    }
+    col = col
+        .push(first_use_step(t, 1, shell::connect_phone_button(app)))
+        .push(first_use_step(t, 2, None))
+        .push(first_use_step(t, 3, None))
+        .push(lan_note(t));
+    widgets::card(t, col).into()
+}
+
+/// Ha aparelho pareado mas nada chegou: quem o hub espera e o passo que falta (o 3, o sync).
+fn waiting_card(app: &App, line: String) -> Element<'_, Message> {
+    let t = app.tokens;
+    let mut col = column![
+        row![swatch(t.warning, 7.0, 3.5), lead(t, line)]
+            .spacing(10)
+            .align_y(Alignment::Center)
+    ]
+    .spacing(20);
+    if let Some(note) = no_network_note(app) {
+        col = col.push(note);
+    }
+    col = col.push(first_use_step(t, 3, None)).push(lan_note(t));
+    widgets::card(t, col).into()
+}
+
+/// Aviso dos cards de primeiro uso e de espera quando o computador esta sem rede local: os
+/// passos continuam valendo (parear abre o QR em Aparelhos), mas nenhum celular alcanca o hub
+/// ate o Wi-Fi voltar, e sem o aviso a espera pareceria culpa do celular.
+const NO_NETWORK_NOTE: &str =
+    "Conecte o computador ao Wi-Fi de casa para o celular encontrar o hub.";
+
+fn no_network_note(app: &App) -> Option<Element<'_, Message>> {
+    (app.snapshot.status == Status::NoNetwork)
+        .then(|| txt(NO_NETWORK_NOTE, 13.0, app.tokens.warning).into())
+}
 
 fn empty_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
@@ -1668,33 +1641,30 @@ fn empty_card(app: &App) -> Element<'_, Message> {
     })
     .width(EMPTY_WIDTH)
     .height(EMPTY_HEIGHT);
-    let copy = column![
-        text("Nenhum dado por aqui ainda")
-            .size(20)
-            .font(fonts::INTER_MEDIUM)
-            .color(t.text),
-        Space::new().height(8),
-        text(
-            "Assim que um celular pareado sincronizar, o dashboard se monta sozinho. Os dados \
-             viajam só pela rede de casa."
-        )
-        .size(14)
-        .line_height(1.55)
-        .color(t.text_muted),
-        Space::new().height(16),
+    let copy = widgets::empty_copy(
+        t,
+        "Nenhum dado por aqui ainda",
+        "Assim que um celular pareado sincronizar, o dashboard se monta sozinho. Os dados viajam \
+         só pela rede de casa.",
+        false,
+    )
+    .push(Space::new().height(16))
+    .push(
         row![
             swatch(t.warning, 7.0, 3.5),
             txt(waiting, 12.0, t.text_muted),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
-    ]
-    .max_width(460);
-    container(row![sketch, copy].spacing(56).align_y(Alignment::Center))
-        .padding([56, 32])
-        .width(Length::Fill)
-        .style(theme::card(t))
-        .into()
+    );
+    widgets::empty_sketch_card(
+        t,
+        sketch.into(),
+        EMPTY_WIDTH,
+        copy,
+        shell::connect_phone_button(app),
+        shell::content_width(app),
+    )
 }
 
 // ---- rodape ----
@@ -1749,7 +1719,7 @@ fn footer(app: &App) -> Option<Element<'_, Message>> {
                     v.ignored_total,
                 ),
                 12.0,
-                alpha(app.tokens.text, 0.50),
+                app.tokens.text_muted,
             )
             .width(Length::Fill),
         )
@@ -1761,6 +1731,26 @@ fn footer(app: &App) -> Option<Element<'_, Message>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aviso_do_wifi_so_sem_rede_e_o_botao_continua() {
+        use crate::hub::snapshot::Snapshot;
+        let dir = tempfile::tempdir().unwrap();
+        let snap = Snapshot {
+            status: Status::Running,
+            ..Snapshot::default()
+        };
+        let (mut app, _rx, _tx) = crate::ui::app::tests::app_with(snap, dir.path().to_path_buf());
+        assert!(no_network_note(&app).is_none());
+        app.snapshot.status = Status::NoNetwork;
+        assert_eq!(
+            shell::screen_arrival(&app, !app.dashboard.is_empty),
+            Arrival::FirstUse
+        );
+        assert!(no_network_note(&app).is_some());
+        assert!(shell::connect_phone_button(&app).is_some());
+        let _ = view(&app);
+    }
 
     #[test]
     fn rodape() {
@@ -1850,11 +1840,5 @@ mod tests {
         assert_eq!(band_top(&Band::Split(vec![Recent], vec![People])), 20.0);
         assert_eq!(band_top(&Band::Split(vec![Reserve], vec![History])), 0.0);
         assert_eq!(band_top(&Band::Full(People)), 0.0);
-    }
-
-    #[test]
-    fn linha_de_base_do_valor_partido() {
-        assert!((baseline_pad(44.0, 16.0) - 3.8276).abs() < 1e-3);
-        assert_eq!(baseline_pad(16.0, 44.0), 0.0);
     }
 }

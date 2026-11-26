@@ -266,6 +266,7 @@ impl Hub {
                     // UI caiu sem mandar Shutdown: desliga do mesmo jeito.
                     None | Some(Command::Shutdown) => break,
                     Some(Command::IssuePairingToken) => self.issue_token(),
+                    Some(Command::CancelPairingToken) => self.cancel_token(),
                     Some(Command::RemoveDevice { device_id, erase }) => {
                         self.remove_device(device_id, erase).await;
                     }
@@ -321,15 +322,25 @@ impl Hub {
         });
     }
 
+    /// Fechar o fluxo de pareamento na janela: o livro esquece o token (o servidor passa a
+    /// responder `Missing`) e o snapshot tira o QR.
+    fn cancel_token(&mut self) {
+        self.tokens
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .revoke();
+        self.snap.pairing = None;
+    }
+
     fn on_assistant(&mut self, c: AssistantCommand) {
         use AssistantCommand as A;
         match c {
-            A::SaveSettings(s) => self.assistant.save_settings(s),
+            A::Configure { settings, key } => self
+                .assistant
+                .configure(settings, key.as_ref().map(|k| k.expose())),
             A::SaveKey(k) => self.assistant.save_key(k.expose()),
-            A::ListModels => {
-                if let (Some(p), Some(d)) =
-                    (self.assistant.provider(), self.assistant.destination())
-                {
+            A::ListModels(port) => {
+                if let Some((p, d)) = self.assistant.begin_listing(port) {
                     let tx = self.assistant_tx.clone();
                     tokio::task::spawn_blocking(move || {
                         let r = guarded(|| p.list_models());

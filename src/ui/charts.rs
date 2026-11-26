@@ -20,7 +20,6 @@ use super::app::Message;
 use super::fonts;
 use super::theme::{Tokens, alpha};
 use crate::dashboard::grafite::{HistoryChart, HistoryColumn, PaceChart};
-use crate::dashboard::money::{axis_label, format_brl};
 use crate::dashboard::periods::{month_label_capitalized, month_short};
 use crate::dashboard::reserves::{ReserveColor, ReserveSeries};
 
@@ -239,6 +238,10 @@ pub struct StackedBarsProgram<'a> {
     pub series: &'a [ReserveSeries],
     pub months: &'a [String],
     pub axis_top: i64,
+    /// Rotulos do eixo (teto, metade, zero) e o "Total" de cada mes, prontos no modelo: com
+    /// "Ocultar valores" ja vem a mascara, e o canvas nunca formata dinheiro.
+    pub y_labels: &'a [String; 3],
+    pub month_totals: &'a [String],
     /// Coluna do mes corrente (a ultima).
     pub current: usize,
     pub tokens: &'static Tokens,
@@ -254,9 +257,14 @@ impl StackedBarsProgram<'_> {
     }
 }
 
-fn series_color(t: &'static Tokens, c: &ReserveColor) -> Color {
+/// Cor de uma serie da evolucao das reservas, e a cor de identidade de cada reserva em toda a
+/// tela Reservas (barras, tooltip, legenda, barra do Total, tile, ponto das movimentacoes:
+/// `reserves_view::reserve_color` delega aqui). A emergencia vai em `neutral_300`, e nao no
+/// acento: o acento ficava a 1,08:1 da caixinha `amber` e as duas pilhas viravam uma so
+/// (decisao do dono, relatorio 14.7). Ela e a primeira serie, entao fica na base da pilha.
+pub(super) fn series_color(t: &'static Tokens, c: &ReserveColor) -> Color {
     match c {
-        ReserveColor::Accent => t.accent,
+        ReserveColor::Accent => t.neutral_300,
         ReserveColor::Token(k) => t.token(k),
     }
 }
@@ -303,10 +311,11 @@ impl canvas::Program<Message> for StackedBarsProgram<'_> {
         let chart = self.cache.draw(renderer, size, |frame| {
             let grid = t.divider();
             let muted = t.text_muted;
+            let [top, half, zero] = self.y_labels;
             let marks = [
-                (plot.y, axis_label(self.axis_top)),
-                (plot.y + plot.height / 2.0, axis_label(self.axis_top / 2)),
-                (plot.y + plot.height, axis_label(0)),
+                (plot.y, top.clone()),
+                (plot.y + plot.height / 2.0, half.clone()),
+                (plot.y + plot.height, zero.clone()),
             ];
             for (y, text) in marks {
                 frame.fill_rectangle(
@@ -375,9 +384,8 @@ impl canvas::Program<Message> for StackedBarsProgram<'_> {
             draw_stack_tooltip(
                 &mut bars,
                 t,
-                self.series,
+                &stack_tooltip(self.series, self.month_totals, i),
                 month,
-                i,
                 (plot.x + i as f32 * col_w, col_w),
                 bar_top,
                 plot,
@@ -411,38 +419,53 @@ fn draw_column_highlight(
     );
 }
 
+/// O que o tooltip do mes `i` mostra: uma linha por reserva com saldo (nome cortado, valor e
+/// cor) e o total. Os textos vem do modelo, ja mascarados com "Ocultar valores".
+#[derive(Debug, PartialEq)]
+struct StackTooltip<'a> {
+    rows: Vec<(String, &'a str, &'a ReserveColor)>,
+    total: &'a str,
+}
+
+fn stack_tooltip<'a>(
+    series: &'a [ReserveSeries],
+    month_totals: &'a [String],
+    i: usize,
+) -> StackTooltip<'a> {
+    StackTooltip {
+        rows: series
+            .iter()
+            .filter(|s| s.balances.get(i).copied().unwrap_or(0) > 0)
+            .map(|s| {
+                (
+                    clip_chars(&s.name, 24),
+                    s.labels.get(i).map_or("", String::as_str),
+                    &s.color,
+                )
+            })
+            .collect(),
+        total: month_totals.get(i).map_or("", String::as_str),
+    }
+}
+
 /// Tooltip do mes: titulo, uma linha por reserva com saldo, divisor e "Total".
 #[allow(clippy::too_many_arguments)]
 fn draw_stack_tooltip(
     frame: &mut Frame,
     t: &'static Tokens,
-    series: &[ReserveSeries],
+    tip: &StackTooltip<'_>,
     month: &str,
-    i: usize,
     (col_x, col_w): (f32, f32),
     bar_top: f32,
     plot: Rectangle,
     size: Size,
 ) {
-    let rows: Vec<(String, String, Color)> = series
+    let rows: Vec<(String, String, Color)> = tip
+        .rows
         .iter()
-        .filter_map(|s| {
-            let v = s.balances.get(i).copied().unwrap_or(0);
-            (v > 0).then(|| {
-                (
-                    clip_chars(&s.name, 24),
-                    format_brl(v),
-                    series_color(t, &s.color),
-                )
-            })
-        })
+        .map(|(name, value, color)| (name.clone(), value.to_string(), series_color(t, color)))
         .collect();
-    let total: i64 = series
-        .iter()
-        .filter_map(|s| s.balances.get(i).copied())
-        .filter(|v| *v > 0)
-        .fold(0i64, i64::saturating_add);
-    let total_label = format_brl(total);
+    let total_label = tip.total.to_string();
     // Largura estimada (o canvas nao mede texto): ~7 px por caractere em 12 px tabular, mais o
     // ponto, os respiros e o padding.
     let longest = rows
@@ -688,10 +711,27 @@ fn dashed<'a>(color: Color, width: f32, segments: &'a [f32]) -> Stroke<'a> {
     }
 }
 
+/// Dia mais proximo do ponto (coordenadas do canvas), de 1 a `days`. Fora da area das linhas
+/// (eixo a esquerda, faixa dos rotulos a direita, abaixo dos dias) ou sem dias -> `None`. O dia
+/// `d` fica em `d / days` da largura (`day_x`), entao o dia 1 nao encosta no eixo: a faixa entre
+/// o eixo e ele conta como dia 1.
+pub fn pace_day_at(point: Point, size: Size, days: usize) -> Option<usize> {
+    let plot = pace_plot(size);
+    if days == 0 || plot.width <= 0.0 {
+        return None;
+    }
+    if point.x < plot.x || point.x > plot.x + plot.width || point.y < 0.0 || point.y > size.height {
+        return None;
+    }
+    let rel = (point.x - plot.x) / plot.width * days as f32;
+    Some((rel.round() as usize).clamp(1, days))
+}
+
 /// "Ritmo de gastos": eixo, grade, renda, area e linha do mes, normal e previsao tracejados,
-/// marcador de hoje, rotulos a direita e dias embaixo. Tudo no `Cache`: o grafico nao tem
-/// hover, e os rotulos em R$ vem prontos (mascarados) do modelo, por isso o cache e limpo
-/// quando "Ocultar valores" muda.
+/// marcador de hoje, rotulos a direita e dias embaixo, no `Cache` (os rotulos em R$ vem prontos,
+/// mascarados, do modelo; por isso o cache e limpo quando "Ocultar valores" muda). O hover e
+/// estado do `Program`, como no historico: regua no dia sob o mouse e o rotulo pronto do modelo
+/// num `Frame` sem cache, para passar o mouse nao refazer o grafico.
 pub struct PaceProgram<'a> {
     pub chart: &'a PaceChart,
     /// Mes corrente: linha vertical, marcador e rotulo "hoje".
@@ -700,12 +740,45 @@ pub struct PaceProgram<'a> {
     pub cache: &'a canvas::Cache,
 }
 
+impl PaceProgram<'_> {
+    /// Dia sob o cursor que tem rotulo (dia sem acumulado nem normal nao tem o que mostrar).
+    fn hovered_day(&self, point: Point, size: Size) -> Option<usize> {
+        pace_day_at(point, size, self.chart.days).filter(|d| {
+            self.chart
+                .tooltips
+                .get(d.saturating_sub(1))
+                .is_some_and(Option::is_some)
+        })
+    }
+}
+
 impl canvas::Program<Message> for PaceProgram<'_> {
-    type State = ();
+    /// Dia sob o cursor.
+    type State = Option<usize>;
+
+    fn update(
+        &self,
+        state: &mut Option<usize>,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<Action<Message>> {
+        if !matches!(event, Event::Mouse(_)) {
+            return None;
+        }
+        let hovered = cursor
+            .position_in(bounds)
+            .and_then(|p| self.hovered_day(p, bounds.size()));
+        if hovered == *state {
+            return None;
+        }
+        *state = hovered;
+        Some(Action::request_redraw())
+    }
 
     fn draw(
         &self,
-        _state: &(),
+        state: &Option<usize>,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
@@ -843,8 +916,36 @@ impl canvas::Program<Message> for PaceProgram<'_> {
                 });
             }
         });
-        vec![geometry]
+        let mut geometries = vec![geometry];
+        if let Some(day) = *state
+            && let Some(Some(tip)) = c.tooltips.get(day.saturating_sub(1))
+        {
+            let mut overlay = Frame::new(renderer, size);
+            let x = day_x(day, c.days, plot).round() + 0.5;
+            frame_rule(&mut overlay, t, x, plot);
+            // Pontos onde a regua cruza as linhas: o acumulado no dourado do mes, o normal no
+            // neutro da linha tracejada.
+            for (values, color) in [(&c.current, t.accent), (&c.normal, t.neutral_500)] {
+                if let Some(v) = values.get(day.saturating_sub(1)) {
+                    let p = Point::new(x, value_y(*v, plot));
+                    overlay.fill(&Path::circle(p, 4.5), t.surface);
+                    overlay.fill(&Path::circle(p, 3.0), color);
+                }
+            }
+            // Sem barra para ficar em cima: o rotulo vai ao lado da regua, no topo da area.
+            draw_text_tooltip(&mut overlay, t, tip, (x, 0.0), plot.y, plot, size);
+            geometries.push(overlay.into_geometry());
+        }
+        geometries
     }
+}
+
+/// Regua vertical de 1 px no dia sob o mouse, da altura da area das linhas.
+fn frame_rule(frame: &mut Frame, t: &'static Tokens, x: f32, plot: Rectangle) {
+    frame.stroke(
+        &polyline(&[Point::new(x, plot.y), Point::new(x, plot.y + plot.height)]),
+        Stroke::default().with_color(t.neutral_500).with_width(1.0),
+    );
 }
 
 // ---- medidor ----
@@ -1264,6 +1365,7 @@ mod tests {
     use iced::widget::canvas::Program;
 
     use super::*;
+    use crate::dashboard::money::axis_label;
     use crate::ui::theme::DARK;
 
     #[test]
@@ -1282,6 +1384,64 @@ mod tests {
         assert_eq!(pts[3].y, 6.0);
         assert_eq!(day_x(30, 30, plot), 364.0);
         assert_eq!(day_x(5, 0, plot), 64.0);
+    }
+
+    #[test]
+    fn hover_do_ritmo_pega_o_dia_mais_proximo_do_x() {
+        // Area de 64 a 364: dia 1 em 74, um dia a cada 10 px.
+        let size = Size::new(64.0 + 300.0 + 108.0, PACE_HEIGHT);
+        let at = |x: f32| pace_day_at(Point::new(x, 100.0), size, 30);
+        assert_eq!(at(74.0), Some(1));
+        assert_eq!(at(78.0), Some(1));
+        assert_eq!(at(80.0), Some(2));
+        // Entre o eixo e o dia 1 ainda e o dia 1.
+        assert_eq!(at(64.0), Some(1));
+        assert_eq!(at(364.0), Some(30));
+        // Eixo a esquerda, faixa dos rotulos a direita e fora do canvas: nada.
+        assert_eq!(at(63.0), None);
+        assert_eq!(at(365.0), None);
+        assert_eq!(pace_day_at(Point::new(200.0, -1.0), size, 30), None);
+        assert_eq!(pace_day_at(Point::new(200.0, 100.0), size, 0), None);
+    }
+
+    #[test]
+    fn hover_do_ritmo_so_em_dia_com_rotulo() {
+        let cache = canvas::Cache::new();
+        let chart = PaceChart {
+            days: 30,
+            cutoff: 2,
+            current: vec![0.1, 0.2],
+            tooltips: (1..=30)
+                .map(|d| (d <= 2).then(|| format!("{d} nov · acumulado R$ •••••")))
+                .collect(),
+            ..PaceChart::default()
+        };
+        let program = PaceProgram {
+            chart: &chart,
+            today: true,
+            tokens: &DARK,
+            cache: &cache,
+        };
+        let bounds = Rectangle::new(Point::new(0.0, 0.0), Size::new(472.0, PACE_HEIGHT));
+        let moved = |x: f32| {
+            (
+                Event::Mouse(mouse::Event::CursorMoved {
+                    position: Point::new(x, 50.0),
+                }),
+                mouse::Cursor::Available(Point::new(x, 50.0)),
+            )
+        };
+        let mut state = None;
+        let (event, cursor) = moved(84.0);
+        assert!(program.update(&mut state, &event, bounds, cursor).is_some());
+        assert_eq!(state, Some(2));
+        // Mesmo dia: nao redesenha.
+        let (event, cursor) = moved(86.0);
+        assert!(program.update(&mut state, &event, bounds, cursor).is_none());
+        // Dia sem rotulo (depois do corte, sem normal): o hover some.
+        let (event, cursor) = moved(200.0);
+        assert!(program.update(&mut state, &event, bounds, cursor).is_some());
+        assert_eq!(state, None);
     }
 
     #[test]
@@ -1514,11 +1674,16 @@ mod tests {
             name: "Reserva".into(),
             color: ReserveColor::Accent,
             balances: vec![100_000; 12],
+            labels: vec!["R$ 1.000,00".into(); 12],
         }];
+        let y_labels = ["R$ 6 mil".to_string(), "R$ 3 mil".into(), "R$ 0".into()];
+        let totals = vec!["R$ 1.000,00".to_string(); 12];
         let program = StackedBarsProgram {
             series: &series,
             months: &months,
             axis_top: 600_000,
+            y_labels: &y_labels,
+            month_totals: &totals,
             current: 11,
             tokens: &DARK,
             cache: &cache,
@@ -1538,6 +1703,67 @@ mod tests {
         assert_eq!(state, Some(1));
         let (event, cursor) = at(136.0);
         assert!(program.update(&mut state, &event, bounds, cursor).is_none());
+    }
+
+    #[test]
+    fn tooltip_das_pilhas_usa_os_textos_do_modelo_e_mascara_com_ocultar() {
+        use crate::dashboard::fixtures_with_reserves;
+        use crate::dashboard::money::{MASK, leaks};
+        use crate::dashboard::view::build_reserves;
+        let ds = fixtures_with_reserves();
+        let shown = build_reserves(&ds, "2026-09-24", false);
+        let hidden = build_reserves(&ds, "2026-09-24", true);
+        let last = shown.months.len() - 1;
+        let tip = stack_tooltip(&shown.series, &shown.month_totals, last);
+        assert!(!tip.rows.is_empty());
+        assert_eq!(tip.total, "R$ 6.030,00");
+        // So reservas com saldo no mes entram, com o valor do modelo.
+        let with_balance = shown.series.iter().filter(|s| s.balances[last] > 0).count();
+        assert_eq!(tip.rows.len(), with_balance);
+        let tip = stack_tooltip(&hidden.series, &hidden.month_totals, last);
+        assert_eq!(
+            tip.rows.len(),
+            with_balance,
+            "ocultar nao some com as linhas"
+        );
+        assert!(tip.rows.iter().all(|(_, v, _)| *v == MASK), "{tip:?}");
+        assert_eq!(tip.total, MASK);
+        assert_eq!(leaks(&format!("{tip:?}")), None);
+        // O eixo tambem: no cache do canvas, entao o toggle limpa o cache.
+        assert_eq!(hidden.y_labels, ["•••", "•••", "•••"]);
+        assert_eq!(shown.y_labels[0], "R$ 12 mil");
+    }
+
+    #[test]
+    fn emergencia_em_neutral_300_na_base_da_pilha() {
+        use crate::dashboard::fixtures_with_reserves;
+        use crate::dashboard::view::build_reserves;
+        use crate::ui::theme::LIGHT;
+        for t in [&DARK, &LIGHT] {
+            assert_eq!(series_color(t, &ReserveColor::Accent), t.neutral_300);
+            assert_ne!(series_color(t, &ReserveColor::Accent), t.accent);
+            assert_eq!(
+                series_color(t, &ReserveColor::Token("amber".into())),
+                t.token("amber")
+            );
+        }
+        // A emergencia e a primeira serie: `stack_segments` empilha da primeira para cima.
+        let v = build_reserves(&fixtures_with_reserves(), "2026-09-24", false);
+        assert_eq!(
+            v.series.first().map(|s| &s.color),
+            Some(&ReserveColor::Accent)
+        );
+        assert!(
+            v.series
+                .iter()
+                .skip(1)
+                .all(|s| s.color != ReserveColor::Accent)
+        );
+        // O tooltip leva a mesma cor das barras.
+        let last = v.months.len() - 1;
+        let tip = stack_tooltip(&v.series, &v.month_totals, last);
+        let first = tip.rows.first().map(|(_, _, c)| series_color(&DARK, c));
+        assert_eq!(first, Some(DARK.neutral_300));
     }
 
     #[test]

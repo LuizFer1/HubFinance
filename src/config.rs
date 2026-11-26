@@ -10,10 +10,6 @@ pub const PROTOCOL: u32 = 1;
 /// Origens que podem chamar a API. A de dev entra sempre: o Bearer é o que autoriza.
 pub const ALLOWED_ORIGINS: [&str; 2] = ["https://luizfer1.github.io", "http://localhost:5173"];
 pub const PWA_URL: &str = "https://luizfer1.github.io/homefinance/";
-/// Prefixo de toda URL do projeto que o hub mostra. Na 0.0.2 so o teste o usa (garante que
-/// `RELEASES_URL` nao saiu do repo); a 0.1.0 monta `.../releases/tag/v<versao>` a partir dele.
-#[cfg_attr(not(test), expect(dead_code, reason = "usado a partir da 0.1.0"))]
-pub const REPO_URL: &str = "https://github.com/LuizFer1/HubFinance";
 /// Fixa no binario: o hub nunca recebe URL de fora (celular, arquivo) para abrir. No Windows o
 /// `open` passa a URL por `cmd /c start`, que interpreta `&` e `^`: uma URL de fora seria uma
 /// injecao. Quando a 0.1.0 montar `.../releases/tag/v<versao>`, a versao tera passado antes
@@ -72,31 +68,114 @@ impl Config {
     }
 }
 
-/// Tema da janela. Escuro e o padrao do design.
+/// Tema da janela, em memoria. Escuro e o padrao do design.
+///
+/// `System` e so a preferencia: quem decide escuro ou claro e o sistema, lido pela UI. No
+/// `ui.json` ele nao vira um terceiro valor de `theme` (ver `PrefsFile`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ThemeMode {
+    #[default]
+    Dark,
+    Light,
+    System,
+}
+
+/// O `theme` como fica no arquivo: so os dois valores que todo hub lancado conhece.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ThemeMode {
+enum StoredTheme {
     #[default]
     Dark,
     Light,
 }
 
+impl ThemeMode {
+    /// Escuro de fato, com o que o sistema diz agora (`system_dark`). So `System` consulta.
+    pub fn is_dark(self, system_dark: bool) -> bool {
+        match self {
+            ThemeMode::Dark => true,
+            ThemeMode::Light => false,
+            ThemeMode::System => system_dark,
+        }
+    }
+}
+
 /// Preferencias da janela, em `<data_dir>/ui.json`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "PrefsFile", into = "PrefsFile")]
 pub struct UiPrefs {
-    #[serde(default)]
     pub theme: ThemeMode,
+    /// Com `ThemeMode::System`, o que o sistema dizia na ultima gravacao (`true` = escuro). E o
+    /// `theme` escrito no arquivo e o palpite do boot quando o sistema nao responde. Fora do
+    /// `System` fica `false` e nao pesa.
+    pub system_dark: bool,
+    pub autostart: Option<bool>,
+    pub hide_values: bool,
+    /// "Reduzir movimento" de Ajustes: desliga as tres animacoes da janela (spec 11).
+    pub reduce_motion: bool,
+}
+
+/// O `ui.json` como esta no disco.
+///
+/// "Sistema" e `follow_system: true` ao lado de um `theme` resolvido ("dark"/"light"), e nao
+/// `"theme": "system"`: um hub 1.4.0 so conhece os dois valores e, com um terceiro, o `load`
+/// dele trataria o arquivo inteiro como ilegivel e perderia `autostart` e `hide_values`. Assim
+/// ele le o tema da ultima vez e ignora o campo que nao conhece.
+#[derive(Serialize, Deserialize)]
+struct PrefsFile {
+    #[serde(default)]
+    theme: StoredTheme,
+    /// Ausente (falso) nao vai para o arquivo, como os campos abaixo.
+    #[serde(default, skip_serializing_if = "is_false")]
+    follow_system: bool,
     /// "Iniciar com o Windows": `None` = nunca decidiu (e o que liga por padrao, uma vez);
     /// `Some(false)` = a pessoa desligou de proposito e o boot nao religa. O estado real da
     /// opcao e o registro; isto e so a memoria da decisao. Ausente nao vai para o arquivo,
     /// para o `ui.json` da 1.0.0 continuar identico ate alguem mexer na opcao.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autostart: Option<bool>,
-    /// "Ocultar valores" do Dashboard (spec 7.4): local a este PC, nunca sincronizado, como o
-    /// tema. Desligado nao vai para o arquivo, pelo mesmo motivo do `autostart`: o `ui.json`
-    /// de quem nunca usou o olho fica igual ao de antes.
+    autostart: Option<bool>,
+    /// "Ocultar valores" de todas as telas de dados (spec 7.4): local a este PC, nunca
+    /// sincronizado, como o tema. Desligado nao vai para o arquivo, pelo mesmo motivo do
+    /// `autostart`: o `ui.json` de quem nunca usou o olho fica igual ao de antes.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub hide_values: bool,
+    hide_values: bool,
+    /// "Reduzir movimento": desligado nao vai para o arquivo, e um hub antigo ignora o campo.
+    #[serde(default, skip_serializing_if = "is_false")]
+    reduce_motion: bool,
+}
+
+impl From<PrefsFile> for UiPrefs {
+    fn from(file: PrefsFile) -> UiPrefs {
+        let (theme, system_dark) = match (file.follow_system, file.theme) {
+            (true, stored) => (ThemeMode::System, stored == StoredTheme::Dark),
+            (false, StoredTheme::Dark) => (ThemeMode::Dark, false),
+            (false, StoredTheme::Light) => (ThemeMode::Light, false),
+        };
+        UiPrefs {
+            theme,
+            system_dark,
+            autostart: file.autostart,
+            hide_values: file.hide_values,
+            reduce_motion: file.reduce_motion,
+        }
+    }
+}
+
+impl From<UiPrefs> for PrefsFile {
+    fn from(prefs: UiPrefs) -> PrefsFile {
+        let stored = if prefs.theme.is_dark(prefs.system_dark) {
+            StoredTheme::Dark
+        } else {
+            StoredTheme::Light
+        };
+        PrefsFile {
+            theme: stored,
+            follow_system: prefs.theme == ThemeMode::System,
+            autostart: prefs.autostart,
+            hide_values: prefs.hide_values,
+            reduce_motion: prefs.reduce_motion,
+        }
+    }
 }
 
 fn is_false(value: &bool) -> bool {
@@ -135,7 +214,7 @@ mod tests {
             RELEASES_URL,
             "https://github.com/LuizFer1/HubFinance/releases"
         );
-        assert!(RELEASES_URL.starts_with(REPO_URL));
+        assert!(RELEASES_URL.starts_with("https://github.com/LuizFer1/HubFinance/"));
         for c in [' ', '&', '^', '"', '%'] {
             assert!(!RELEASES_URL.contains(c), "{c:?}");
         }
@@ -245,6 +324,108 @@ mod tests {
         assert_eq!(UiPrefs::load(dir.path()), prefs);
         let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
         assert!(raw.contains("\"hide_values\": true"), "{raw}");
+    }
+
+    #[test]
+    fn reduzir_movimento_grava_le_de_volta_e_desligado_nao_aparece() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefs = UiPrefs {
+            reduce_motion: true,
+            ..UiPrefs::default()
+        };
+        prefs.save(dir.path()).unwrap();
+        assert_eq!(UiPrefs::load(dir.path()), prefs);
+        UiPrefs::default().save(dir.path()).unwrap();
+        let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
+        assert!(!raw.contains("reduce_motion"), "{raw}");
+        // Arquivo de um hub anterior, sem o campo: desligado.
+        std::fs::write(dir.path().join("ui.json"), r#"{"theme":"light"}"#).unwrap();
+        assert!(!UiPrefs::load(dir.path()).reduce_motion);
+    }
+
+    #[test]
+    fn tema_sistema_grava_o_modo_resolvido_e_le_de_volta() {
+        let dir = tempfile::tempdir().unwrap();
+        for (system_dark, stored) in [(false, "\"light\""), (true, "\"dark\"")] {
+            let prefs = UiPrefs {
+                theme: ThemeMode::System,
+                system_dark,
+                ..UiPrefs::default()
+            };
+            prefs.save(dir.path()).unwrap();
+            assert_eq!(UiPrefs::load(dir.path()), prefs);
+            let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
+            assert!(raw.contains(stored), "{raw}");
+            assert!(raw.contains("\"follow_system\": true"), "{raw}");
+            assert!(!raw.contains("\"system\""), "{raw}");
+        }
+        // Tema fixo nao escreve `follow_system`.
+        UiPrefs::default().save(dir.path()).unwrap();
+        let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
+        assert!(!raw.contains("follow_system"), "{raw}");
+    }
+
+    /// O `UiPrefs` da 1.4.0, com o enum de dois valores: le o arquivo novo sem perder nada.
+    #[test]
+    fn hub_antigo_le_o_arquivo_com_tema_sistema() {
+        #[derive(Deserialize, Default, Debug, PartialEq)]
+        #[serde(rename_all = "lowercase")]
+        enum OldTheme {
+            #[default]
+            Dark,
+            Light,
+        }
+        #[derive(Deserialize)]
+        struct OldPrefs {
+            #[serde(default)]
+            theme: OldTheme,
+            #[serde(default)]
+            autostart: Option<bool>,
+            #[serde(default)]
+            hide_values: bool,
+        }
+        let dir = tempfile::tempdir().unwrap();
+        UiPrefs {
+            theme: ThemeMode::System,
+            system_dark: false,
+            autostart: Some(false),
+            hide_values: true,
+            reduce_motion: true,
+        }
+        .save(dir.path())
+        .unwrap();
+        let raw = std::fs::read(dir.path().join("ui.json")).unwrap();
+        assert!(String::from_utf8_lossy(&raw).contains("\"reduce_motion\": true"));
+        let old: OldPrefs = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(old.theme, OldTheme::Light);
+        assert_eq!(old.autostart, Some(false));
+        assert!(old.hide_values);
+    }
+
+    #[test]
+    fn ui_json_antigo_continua_lendo_igual() {
+        let dir = tempfile::tempdir().unwrap();
+        for (raw, theme) in [
+            (r#"{"theme":"dark"}"#, ThemeMode::Dark),
+            (r#"{"theme":"light","autostart":true}"#, ThemeMode::Light),
+            (r#"{"autostart":false}"#, ThemeMode::Dark),
+        ] {
+            std::fs::write(dir.path().join("ui.json"), raw).unwrap();
+            assert_eq!(UiPrefs::load(dir.path()).theme, theme, "{raw}");
+        }
+        // Gravar de novo sem mexer no tema nao troca o valor por "system".
+        let prefs = UiPrefs::load(dir.path());
+        prefs.save(dir.path()).unwrap();
+        let raw = std::fs::read_to_string(dir.path().join("ui.json")).unwrap();
+        assert!(raw.contains("\"dark\""), "{raw}");
+    }
+
+    #[test]
+    fn so_o_tema_sistema_segue_o_sistema() {
+        assert!(ThemeMode::Dark.is_dark(false));
+        assert!(!ThemeMode::Light.is_dark(true));
+        assert!(ThemeMode::System.is_dark(true));
+        assert!(!ThemeMode::System.is_dark(false));
     }
 
     #[test]

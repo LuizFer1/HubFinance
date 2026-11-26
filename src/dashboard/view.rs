@@ -1,6 +1,10 @@
 //! Modelos de tela: tudo o que Lancamentos e Reservas mostram (o Dashboard e o `grafite`), derivado do `Dataset` por
-//! funcoes puras. A UI chama `build_*` so quando dados, mes, filtros ou "hoje" mudam e guarda
-//! o resultado; desenhar um quadro nunca percorre o dataset.
+//! funcoes puras. A UI chama `build_*` so quando dados, mes, filtros, "hoje" ou "Ocultar
+//! valores" mudam e guarda o resultado; desenhar um quadro nunca percorre o dataset.
+//!
+//! Todo valor em R$ sai daqui ja como texto, pelo `Money` com `hidden` (spec Grafite 7.4), como o
+//! `grafite` faz: a tela nunca formata dinheiro, entao "Ocultar valores" vale em toda tela de
+//! dados sem uma regra por view. Porcentagens, contagens, datas e nomes continuam visiveis.
 
 use super::aggregate::NO_CATEGORY_COLOR;
 use super::contract::ReserveKind;
@@ -8,7 +12,8 @@ use super::dataset::Dataset;
 use super::list::{
     CategoryOption, Filters, ListView, NONE_KEY, category_options, has_unauthored, list_month,
 };
-use super::periods::{month_label_capitalized, month_of, month_window};
+use super::money::{BigMoney, Money};
+use super::periods::{month_label_capitalized, month_long, month_of, month_window};
 use super::reserves::{
     EmergencyView, MovementRow, PotRow, ReserveSeries, ReserveShare, ReserveTotals, emergency_goal,
     emergency_view, movements, ordered, pot_row, pots_note, reserve_axis_top, series, shares,
@@ -55,11 +60,12 @@ pub fn build_transactions(
     _today: &str,
     month: &str,
     filters: &Filters,
+    hidden: bool,
 ) -> TransactionsView {
     TransactionsView {
         month: month.to_string(),
         month_label: month_label_capitalized(month),
-        list: list_month(dataset, month, filters),
+        list: list_month(dataset, month, filters, Money::new(hidden)),
         categories: category_options(dataset, month),
         selected_category: filters
             .category
@@ -92,6 +98,14 @@ pub struct ReservesView {
     /// 12, a janela, o mais antigo primeiro.
     pub months: Vec<String>,
     pub totals: ReserveTotals,
+    /// O valor grande do card Total separado.
+    pub total: BigMoney,
+    /// "R$ 1.200,00 guardados em setembro".
+    pub saved_note: String,
+    /// Linhas do card "Últimos 12 meses": "+R$ X" e "−R$ X"; zero sai "R$ 0,00", sem sinal
+    /// ("−R$ 0,00" apontava uma retirada que nao houve). A cor do zero e da tela.
+    pub deposits: String,
+    pub withdrawals: String,
     pub withdrawals_note: String,
     /// Barra dividida do card Total: saldo > 0, ordem padrao.
     pub shares: Vec<ReserveShare>,
@@ -100,11 +114,16 @@ pub struct ReservesView {
     pub pots_note: String,
     pub series: Vec<ReserveSeries>,
     pub axis_top: i64,
+    /// Rotulos do eixo do grafico: teto, metade e zero ("•••" ocultos).
+    pub y_labels: [String; 3],
+    /// "Total" do tooltip de cada mes da janela (soma dos saldos positivos).
+    pub month_totals: Vec<String>,
     pub movements: Vec<MovementRow>,
     pub movement_count: usize,
 }
 
-pub fn build_reserves(dataset: &Dataset, today: &str) -> ReservesView {
+pub fn build_reserves(dataset: &Dataset, today: &str, hidden: bool) -> ReservesView {
+    let m = Money::new(hidden);
     let current = month_of(today);
     let months = month_window(today);
     let (emergency, rest) = ordered(dataset);
@@ -114,10 +133,10 @@ pub fn build_reserves(dataset: &Dataset, today: &str) -> ReservesView {
             // Emergencia extra (nao virou o card): meta derivada das proprias categorias.
             let derived =
                 (r.kind == ReserveKind::Emergency).then(|| emergency_goal(dataset, r, &current));
-            pot_row(dataset, r, &current, derived)
+            pot_row(dataset, r, &current, derived, m)
         })
         .collect();
-    let series = series(dataset, &months);
+    let series = series(dataset, &months, m);
     let peak = (0..months.len())
         .map(|i| {
             series
@@ -127,18 +146,47 @@ pub fn build_reserves(dataset: &Dataset, today: &str) -> ReservesView {
         })
         .max()
         .unwrap_or(0);
+    // O tooltip soma so os saldos positivos: e o que as pilhas desenham.
+    let month_totals = (0..months.len())
+        .map(|i| {
+            let total = series
+                .iter()
+                .filter_map(|s| s.balances.get(i).copied())
+                .filter(|v| *v > 0)
+                .fold(0i64, i64::saturating_add);
+            m.brl(total)
+        })
+        .collect();
     let totals = totals(dataset, &months);
-    let (movements, movement_count) = movements(dataset, &months);
+    let (movements, movement_count) = movements(dataset, &months, m);
+    let axis_top = reserve_axis_top(peak);
+    let flow = |minor: i64, signed: fn(Money, i64) -> String| {
+        if minor == 0 {
+            m.brl(0)
+        } else {
+            signed(m, minor)
+        }
+    };
     ReservesView {
         is_empty: !dataset.has_reserves(),
         reserve_count: dataset.reserve_count(),
         withdrawals_note: withdrawals_note(&totals),
+        total: m.big(totals.total_minor),
+        saved_note: format!(
+            "{} guardados em {}",
+            m.brl(totals.saved_this_month_minor),
+            month_long(&current)
+        ),
+        deposits: flow(totals.deposits_minor, Money::plus),
+        withdrawals: flow(totals.withdrawals_minor, Money::minus),
         totals,
         shares: shares(dataset, &current),
-        emergency: emergency.map(|r| emergency_view(dataset, r, &current)),
+        emergency: emergency.map(|r| emergency_view(dataset, r, &current, m)),
         pots_note: pots_note(&pots),
         pots,
-        axis_top: reserve_axis_top(peak),
+        axis_top,
+        y_labels: [m.axis(axis_top), m.axis(axis_top / 2), m.axis(0)],
+        month_totals,
         series,
         movements,
         movement_count,
@@ -201,10 +249,10 @@ mod tests {
             authors: ["U1".to_string()].into(),
             ..Filters::default()
         };
-        let v = build_transactions(&ds, "2026-09-24", "2026-09", &filters);
+        let v = build_transactions(&ds, "2026-09-24", "2026-09", &filters, false);
         assert_eq!(v.month, "2026-09");
         assert_eq!(v.month_label, "Setembro 2026");
-        assert_eq!(v.list, list_month(&ds, "2026-09", &filters));
+        assert_eq!(v.list, list_month(&ds, "2026-09", &filters, Money::SHOWN));
         assert_eq!(v.list.count, 3);
         assert_eq!(v.categories, category_options(&ds, "2026-09"));
         let authors: Vec<(&str, &str, &str)> = v
@@ -230,15 +278,15 @@ mod tests {
             ..Filters::default()
         };
         // Alimentacao nao tem lancamento em julho, mas o botao continua dizendo o nome.
-        let v = build_transactions(&ds, "2026-09-24", "2026-07", &pick("C1"));
+        let v = build_transactions(&ds, "2026-09-24", "2026-07", &pick("C1"), false);
         let selected = v.selected_category.unwrap();
         assert_eq!(selected.name, "Alimentação");
         assert_eq!(selected.color, "orange");
         assert_eq!(v.list.count, 0);
-        let none = build_transactions(&ds, "2026-09-24", "2026-09", &pick(""));
+        let none = build_transactions(&ds, "2026-09-24", "2026-09", &pick(""), false);
         assert_eq!(none.selected_category.unwrap().name, "Sem categoria");
         // Categoria apagada depois de escolhida.
-        let dead = build_transactions(&ds, "2026-09-24", "2026-09", &pick("C5"));
+        let dead = build_transactions(&ds, "2026-09-24", "2026-09", &pick("C5"), false);
         assert_eq!(dead.selected_category.unwrap().name, "Categoria removida");
         // Chip "Sem autor" fica enquanto estiver marcado, mesmo num mes sem esse caso.
         let filters = Filters {
@@ -246,9 +294,10 @@ mod tests {
             kind: TypeFilter::All,
             ..Filters::default()
         };
-        assert!(build_transactions(&ds, "2026-09-24", "2026-08", &filters).unauthored_chip);
+        assert!(build_transactions(&ds, "2026-09-24", "2026-08", &filters, false).unauthored_chip);
         assert!(
-            !build_transactions(&ds, "2026-09-24", "2026-08", &Filters::default()).unauthored_chip
+            !build_transactions(&ds, "2026-09-24", "2026-08", &Filters::default(), false)
+                .unauthored_chip
         );
     }
 
@@ -269,8 +318,8 @@ mod tests {
         assert_eq!(plain.is_empty(), with.is_empty());
         for month in month_window("2026-09-24") {
             assert_eq!(
-                build_transactions(&plain, "2026-09-24", &month, &Filters::default()),
-                build_transactions(&with, "2026-09-24", &month, &Filters::default()),
+                build_transactions(&plain, "2026-09-24", &month, &Filters::default(), false),
+                build_transactions(&with, "2026-09-24", &month, &Filters::default(), false),
                 "{month}"
             );
         }
@@ -280,7 +329,7 @@ mod tests {
     #[test]
     fn reservas_da_fixture() {
         use crate::dashboard::fixtures_with_reserves;
-        let v = build_reserves(&fixtures_with_reserves(), "2026-09-24");
+        let v = build_reserves(&fixtures_with_reserves(), "2026-09-24", false);
         assert!(!v.is_empty);
         assert_eq!(v.reserve_count, 6);
         assert_eq!(v.current_month, "2026-09");
@@ -301,7 +350,7 @@ mod tests {
     #[test]
     fn reservas_sem_reservas() {
         for ds in [fixtures(), Dataset::default()] {
-            let v = build_reserves(&ds, "2026-09-24");
+            let v = build_reserves(&ds, "2026-09-24", false);
             assert!(v.is_empty);
             assert_eq!(v.reserve_count, 0);
             assert_eq!(v.totals, ReserveTotals::default());
@@ -325,7 +374,7 @@ mod tests {
             data: serde_json::json!({ "kind": "goal", "name": "X", "icon": "tag", "color": "sky" })
                 .to_string(),
         }]);
-        let v = build_reserves(&ds, "2026-09-24");
+        let v = build_reserves(&ds, "2026-09-24", false);
         assert!(!v.is_empty);
         assert_eq!(v.totals.total_minor, 0);
         assert!(v.shares.is_empty());
@@ -347,7 +396,7 @@ mod tests {
                 "color": "slate", "multiple": 3, "essentialCategoryIds": ["C2"] })
             .to_string(),
         }]);
-        let v = build_reserves(&ds, "2026-09-24");
+        let v = build_reserves(&ds, "2026-09-24", false);
         assert_eq!(v.emergency.as_ref().map(|e| e.id.as_str()), Some("RE0"));
         let extra = &v.pots[0];
         assert_eq!(extra.id, "RE1");
@@ -359,11 +408,115 @@ mod tests {
     #[test]
     fn reservas_na_virada_de_ano() {
         use crate::dashboard::fixtures_with_reserves;
-        let v = build_reserves(&fixtures_with_reserves(), "2027-01-03");
+        let v = build_reserves(&fixtures_with_reserves(), "2027-01-03", false);
         assert_eq!(v.months[0], "2026-02");
         assert_eq!(v.current_month, "2027-01");
         // `M06` (outubro de 2026) ja passou e entra.
         assert_eq!(v.emergency.as_ref().map(|e| e.balance_minor), Some(240_000));
+    }
+
+    #[test]
+    fn ocultar_mascara_todo_valor_dos_lancamentos() {
+        use crate::dashboard::money::{MASK, leaks};
+        let ds = fixtures();
+        let shown = build_transactions(&ds, "2026-09-24", "2026-09", &Filters::default(), false);
+        let hidden = build_transactions(&ds, "2026-09-24", "2026-09", &Filters::default(), true);
+        // Visivel: os textos sao os de sempre (o teste de `list` cobre os numeros).
+        assert!(leaks(&format!("{shown:#?}")).is_some());
+        assert_eq!(leaks(&format!("{hidden:#?}")), None);
+        let l = &hidden.list;
+        assert_eq!(
+            [&l.income_label, &l.expense_label, &l.balance_label],
+            [MASK; 3]
+        );
+        assert!(l.groups.iter().all(|g| g.net == MASK));
+        let rows: Vec<_> = l.groups.iter().flat_map(|g| &g.rows).collect();
+        assert!(!rows.is_empty());
+        assert!(rows.iter().all(|r| r.amount == MASK), "{rows:#?}");
+        // Contagens, nomes e o resto nao mudam: so o texto do dinheiro.
+        assert_eq!(hidden.list.count, shown.list.count);
+        assert_eq!(hidden.categories, shown.categories);
+        assert_eq!(hidden.list.totals, shown.list.totals);
+    }
+
+    #[test]
+    fn ocultar_mascara_todo_valor_das_reservas() {
+        use crate::dashboard::fixtures_with_reserves;
+        use crate::dashboard::money::{AXIS_MASK, MASK, MASK_DIGITS, leaks};
+        let ds = fixtures_with_reserves();
+        let shown = build_reserves(&ds, "2026-09-24", false);
+        let v = build_reserves(&ds, "2026-09-24", true);
+        assert!(leaks(&format!("{shown:#?}")).is_some());
+        assert_eq!(leaks(&format!("{v:#?}")), None);
+        // KPIs.
+        assert_eq!(
+            (v.total.whole.as_str(), v.total.cents.as_str()),
+            (MASK_DIGITS, "")
+        );
+        assert_eq!(v.saved_note, format!("{MASK} guardados em setembro"));
+        assert_eq!([&v.deposits, &v.withdrawals], [MASK; 2]);
+        // Emergencia: saldo, meta, faltam, projecao e custo essencial; % e meses ficam.
+        let e = v.emergency.as_ref().expect("emergencia");
+        assert_eq!(e.balance.whole, MASK_DIGITS);
+        assert_eq!(e.goal_note.as_deref(), Some("de R$ •••••"));
+        assert_eq!(
+            e.pct_label,
+            shown.emergency.as_ref().expect("emergencia").pct_label
+        );
+        assert_eq!(
+            e.coverage_label,
+            shown.emergency.as_ref().expect("emergencia").coverage_label
+        );
+        let cost = e.cost.as_ref().expect("custo");
+        assert_eq!(cost.total_label, format!("{MASK}/mês"));
+        assert!(cost.parts.iter().all(|p| p.average_label == MASK));
+        // Caixinhas: saldo, "faltam", "de R$ X · 47%" e o ritmo.
+        assert!(v.pots.iter().all(|p| p.balance == MASK));
+        let with_goal = v
+            .pots
+            .iter()
+            .find(|p| p.meta_right.is_some())
+            .expect("meta");
+        let right = with_goal.meta_right.as_deref().unwrap_or_default();
+        // A porcentagem fica visivel: so o "de R$ X" vira a mascara.
+        let shown_right = shown
+            .pots
+            .iter()
+            .find(|p| p.id == with_goal.id)
+            .and_then(|p| p.meta_right.clone())
+            .unwrap_or_default();
+        let pct = shown_right.rsplit(" · ").next().unwrap_or_default();
+        assert!(pct.ends_with('%'), "{pct}");
+        assert_eq!(right, format!("de {MASK} · {pct}"));
+        // Grafico e movimentos.
+        assert_eq!(v.y_labels, [AXIS_MASK; 3]);
+        assert!(v.month_totals.iter().all(|t| t == MASK));
+        assert!(v.series.iter().flat_map(|s| &s.labels).all(|l| l == MASK));
+        assert!(!v.movements.is_empty());
+        assert!(v.movements.iter().all(|m| m.amount == MASK));
+        // Os numeros, as barras e as contagens nao mudam.
+        assert_eq!(v.totals, shown.totals);
+        assert_eq!(v.withdrawals_note, shown.withdrawals_note);
+        assert_eq!(v.movement_count, shown.movement_count);
+    }
+
+    #[test]
+    fn reservas_visiveis_com_sinal_e_zero_sem_sinal() {
+        use crate::dashboard::fixtures_with_reserves;
+        let v = build_reserves(&fixtures_with_reserves(), "2026-09-24", false);
+        assert_eq!(v.deposits, "+R$ 6.280,00");
+        assert_eq!(v.withdrawals, "\u{2212}R$ 250,00");
+        assert_eq!(v.saved_note, "R$ 2.380,00 guardados em setembro");
+        assert_eq!(v.total.text(), "R$ 6.030,00");
+        assert_eq!(v.y_labels, ["R$ 12 mil", "R$ 6 mil", "R$ 0"]);
+        assert_eq!(
+            v.emergency.as_ref().and_then(|e| e.goal_note.as_deref()),
+            Some("de R$ 3.900,00")
+        );
+        // Sem movimento na janela: "R$ 0,00" sem sinal ("−R$ 0,00" apontava uma retirada que
+        // nao houve).
+        let quiet = build_reserves(&fixtures_with_reserves(), "2030-01-10", false);
+        assert_eq!([&quiet.deposits, &quiet.withdrawals], ["R$ 0,00"; 2]);
     }
 
     #[test]
@@ -373,6 +526,7 @@ mod tests {
             "2026-09-24",
             "2026-09",
             &Filters::default(),
+            false,
         );
         assert!(v.is_empty_hub);
         assert_eq!(v.list.count, 0);

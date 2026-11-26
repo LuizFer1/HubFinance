@@ -1,0 +1,258 @@
+//! Numeros grandes: o valor partido em linha de base (`value_line`), o dinheiro com "R$" e
+//! centavos menores (`money`), o bloco rotulo + valor + nota (`stat`) e o valor secundario com
+//! rotulo na mesma linha (`figure`).
+
+use iced::widget::text::Wrapping;
+use iced::widget::{Column, column, container, row, text};
+use iced::{Alignment, Color, Element, Font, Padding};
+
+use crate::dashboard::money::BigMoney;
+use crate::ui::fonts;
+use crate::ui::theme::{Tokens, type_scale};
+
+/// Respiro que o pedaco menor precisa embaixo para a linha de base casar com a do maior, com
+/// altura de linha 1,0 (o iced nao alinha por linha de base). Na Inter a base fica a 0,1367 em
+/// do fundo da caixa (ascendente 0,96875 e descendente 0,2421875 centrados em 1 em).
+pub fn baseline_pad(big: f32, small: f32) -> f32 {
+    0.1367 * (big - small).max(0.0)
+}
+
+/// Valor partido em linha de base: `(texto, tamanho, fonte, cor)` de cada pedaco, o maior com
+/// `big` px. Pedaco vazio nao entra (sinal ou sufixo ausente).
+pub fn value_line<'a, M: 'a>(
+    pieces: Vec<(String, f32, Font, Color)>,
+    big: f32,
+    spacing: f32,
+) -> Element<'a, M> {
+    let mut line = row![].spacing(spacing).align_y(Alignment::End);
+    for (content, size, font, color) in pieces {
+        if content.is_empty() {
+            continue;
+        }
+        line = line.push(
+            container(
+                text(content)
+                    .size(size)
+                    .font(font)
+                    .line_height(1.0)
+                    .wrapping(Wrapping::None)
+                    .color(color),
+            )
+            .padding(Padding {
+                bottom: baseline_pad(big, size),
+                ..Padding::ZERO
+            }),
+        );
+    }
+    line.into()
+}
+
+/// Degrau do valor: medio (24), grande (36, o do bloco) e heroi (44, um por tela). Sempre em
+/// Light: o peso fino so cabe em numero desse tamanho para cima.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatSize {
+    #[cfg_attr(not(test), expect(dead_code, reason = "valor medio sem tela ainda"))]
+    M,
+    L,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "o heroi do Resumo monta as pecas")
+    )]
+    XL,
+}
+
+impl StatSize {
+    pub const fn size(self) -> f32 {
+        match self {
+            StatSize::M => type_scale::VALUE_M,
+            StatSize::L => type_scale::VALUE_L,
+            StatSize::XL => type_scale::VALUE_XL,
+        }
+    }
+
+    /// Prefixo e centavos: 13 no medio, 16 nos outros.
+    const fn small(self) -> f32 {
+        match self {
+            StatSize::M => type_scale::LABEL,
+            StatSize::L | StatSize::XL => type_scale::SECTION,
+        }
+    }
+
+    const fn spacing(self) -> f32 {
+        match self {
+            StatSize::M => 4.0,
+            StatSize::L => 6.0,
+            StatSize::XL => 8.0,
+        }
+    }
+}
+
+/// Dinheiro grande: sinal com `R$` ("R$", "−R$") e centavos em `text_muted`, o inteiro em Light
+/// na `color`. O valor ja vem formatado (e mascarado) pelo modelo; aqui so a tipografia. Os
+/// centavos ja trazem a virgula e somem ocultos: juntar uma virgula aqui deixaria "•••••,".
+pub fn money<'a, M: 'a>(
+    t: &'static Tokens,
+    value: &BigMoney,
+    size: StatSize,
+    color: Color,
+) -> Element<'a, M> {
+    value_line(
+        vec![
+            (
+                format!("{}{}", value.sign, value.currency),
+                size.small(),
+                fonts::INTER,
+                t.text_muted,
+            ),
+            (value.whole.clone(), size.size(), fonts::INTER_LIGHT, color),
+            (
+                value.cents.clone(),
+                size.small(),
+                fonts::INTER,
+                t.text_muted,
+            ),
+        ],
+        size.size(),
+        size.spacing(),
+    )
+}
+
+/// Altura da linha do rotulo de `stat_label`: a da tag (20), para o card que leva uma tag ao lado
+/// do rotulo ("Emergência coberta" com "hoje") ter o topo na mesma altura dos vizinhos sem tag.
+const STAT_LABEL_HEIGHT: f32 = super::marks::TAG_HEIGHT;
+
+/// Rotulo de bloco: 13 Regular `text_muted`, como o de `stat`, mas numa linha da altura da tag,
+/// para cards lado a lado com e sem tag no rotulo (os KPIs de Reservas). O `stat` fica com o
+/// texto solto: o Resumo do dono usa ele, e a linha de 20 o desceria 3 px.
+pub fn stat_label<'a, M: 'a>(t: &'static Tokens, label: &str) -> Element<'a, M> {
+    container(
+        text(label.to_string())
+            .size(type_scale::LABEL)
+            .wrapping(Wrapping::None)
+            .color(t.text_muted),
+    )
+    .height(STAT_LABEL_HEIGHT)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Bloco de numero: rotulo 13 `text_muted` em cima, o valor e uma nota 12 opcional. Devolve a
+/// `Column` (espaco 8) para a tela trocar o espaco ou acrescentar linhas embaixo.
+pub fn stat<'a, M: 'a>(
+    t: &'static Tokens,
+    label: &str,
+    value: Element<'a, M>,
+    note: Option<&str>,
+) -> Column<'a, M> {
+    let mut col = column![
+        text(label.to_string())
+            .size(type_scale::LABEL)
+            .color(t.text_muted),
+        value
+    ]
+    .spacing(8);
+    if let Some(note) = note {
+        col = col.push(
+            text(note.to_string())
+                .size(type_scale::META)
+                .color(t.text_muted),
+        );
+    }
+    col
+}
+
+/// Respiro entre o rotulo e o valor de `figure`.
+const FIGURE_GAP: f32 = 6.0;
+
+/// Valor secundario com rotulo na mesma linha, alinhados pela linha de base: rotulo 12
+/// `text_muted` e valor 17 Regular na `color` ("Receitas +R$ 6.500,00" do resumo do mes). O
+/// valor ja vem formatado (e mascarado) pelo modelo: formatar aqui vazaria o numero por cima do
+/// "Ocultar valores".
+pub fn figure<'a, M: 'a>(
+    t: &'static Tokens,
+    label: &str,
+    value: &str,
+    color: Color,
+) -> Element<'a, M> {
+    value_line(
+        figure_pieces(t, label, value, color),
+        type_scale::VALUE_S,
+        FIGURE_GAP,
+    )
+}
+
+/// Pedacos de `figure`, separados para o teste ler tamanho e cor sem montar a arvore.
+fn figure_pieces(
+    t: &'static Tokens,
+    label: &str,
+    value: &str,
+    color: Color,
+) -> Vec<(String, f32, Font, Color)> {
+    vec![
+        (
+            label.to_string(),
+            type_scale::META,
+            fonts::INTER,
+            t.text_muted,
+        ),
+        (value.to_string(), type_scale::VALUE_S, fonts::INTER, color),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dashboard::money::Money;
+    use crate::ui::theme::{DARK, LIGHT};
+
+    #[test]
+    fn linha_de_base_do_valor_partido() {
+        assert!((baseline_pad(44.0, 16.0) - 3.8276).abs() < 1e-3);
+        assert_eq!(baseline_pad(16.0, 44.0), 0.0);
+    }
+
+    #[test]
+    fn numero_monta_em_todo_degrau_com_e_sem_nota() {
+        for t in [&DARK, &LIGHT] {
+            for size in [StatSize::M, StatSize::L, StatSize::XL] {
+                let value: Element<'_, ()> =
+                    money(t, &Money::new(false).big(123_456), size, t.text);
+                let _: Element<'_, ()> = stat(t, "Total separado", value, Some("nota")).into();
+                let value: Element<'_, ()> =
+                    money(t, &Money::new(true).big(-1), size, t.expense_fg);
+                let _: Element<'_, ()> = stat(t, "Saldo", value, None).into();
+            }
+            let _: Element<'_, ()> = figure(t, "Receitas", "+R$ 6.500,00", t.income_fg);
+            let _: Element<'_, ()> = stat_label(t, "Últimos 12 meses");
+            let _: Element<'_, ()> = value_line(
+                vec![
+                    ("3,5".into(), 36.0, fonts::INTER_LIGHT, t.text),
+                    (String::new(), 14.0, fonts::INTER, t.text_muted),
+                ],
+                36.0,
+                8.0,
+            );
+        }
+    }
+
+    #[test]
+    fn valor_secundario_com_rotulo_12_muted_e_valor_17_regular() {
+        let t = &DARK;
+        let pieces = figure_pieces(t, "Saldo", "•••", t.text);
+        assert_eq!(
+            pieces,
+            vec![
+                ("Saldo".to_string(), 12.0, fonts::INTER, t.text_muted),
+                ("•••".to_string(), 17.0, fonts::INTER, t.text),
+            ]
+        );
+    }
+
+    #[test]
+    fn rotulo_do_bloco_tem_a_altura_da_tag() {
+        // O topo dos tres cards de Reservas so casa se o rotulo e a tag tiverem a mesma altura
+        // (relatorio 9: tag de 20 px).
+        assert_eq!(STAT_LABEL_HEIGHT, 20.0);
+        let _: Element<'_, ()> = stat_label(&DARK, "Total separado");
+    }
+}

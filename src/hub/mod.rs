@@ -17,6 +17,9 @@ use snapshot::{Snapshot, Status};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     IssuePairingToken,
+    /// O "Conectar um celular" fechou: o codigo pendente deixa de valer no `TokenBook` (que e
+    /// o que o servidor confere), nao so some da tela. Sem codigo, nada.
+    CancelPairingToken,
     /// Remove (revoga) o aparelho e apaga as `erase` areas na mesma transacao. `erase` vazio e
     /// "Manter tudo": remove e grava a decisao de manter os dados.
     RemoveDevice {
@@ -37,11 +40,18 @@ pub enum Command {
 /// Pedidos da tela Analise. O nucleo executa; o estado volta por `Snapshot.assistant`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssistantCommand {
-    SaveSettings(crate::assistant::settings::Settings),
+    /// O ultimo botao do dialogo "Configurar assistente": a configuracao inteira e, se a pessoa
+    /// digitou uma, a chave nova (`Secret`: o `Debug` nunca a mostra). Um comando so para uma
+    /// gravacao nao apagar o erro da outra.
+    Configure {
+        settings: crate::assistant::settings::Settings,
+        key: Option<crate::assistant::secret::Secret>,
+    },
     /// Vazio apaga a chave. `Secret`: o `Debug` do comando (um `{:?}` esquecido, uma falha de
     /// `assert_eq!`) nunca mostra a chave.
     SaveKey(crate::assistant::secret::Secret),
-    ListModels,
+    /// "Testar conexao" no Ollama desta porta (a do dialogo, ainda nao gravada).
+    ListModels(u16),
     /// O envelope vem pronto da UI (`App::current_envelope`): e o mesmo texto da previa.
     NewConversation {
         book: crate::dashboard::contract::Book,
@@ -200,6 +210,12 @@ mod tests {
             "{}",
             pairing.qr_url
         );
+
+        handle.commands.send(Command::CancelPairingToken).unwrap();
+        let snap = wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
+            s.pairing.is_none()
+        });
+        assert!(up(&snap));
 
         handle
             .commands
@@ -506,9 +522,10 @@ mod tests {
         };
         handle
             .commands
-            .send(Command::Assistant(AssistantCommand::SaveSettings(
-                settings.clone(),
-            )))
+            .send(Command::Assistant(AssistantCommand::Configure {
+                settings: settings.clone(),
+                key: None,
+            }))
             .unwrap();
         let snap = wait_for(&mut handle.snapshot, Duration::from_secs(15), |s| {
             s.assistant.settings == settings
@@ -533,10 +550,10 @@ mod tests {
         };
         settings.cloud.enabled = true;
         let send = |c| handle.commands.send(Command::Assistant(c)).unwrap();
-        send(AssistantCommand::SaveSettings(settings));
-        send(AssistantCommand::SaveKey(
-            crate::assistant::secret::Secret::new("sk-or-teste".into()),
-        ));
+        send(AssistantCommand::Configure {
+            settings,
+            key: Some(crate::assistant::secret::Secret::new("sk-or-teste".into())),
+        });
         send(AssistantCommand::NewConversation {
             book: Book::Personal,
             title: "t".into(),

@@ -6,6 +6,53 @@ Todas as mudanças relevantes do HubFinance ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [1.5.0] - 2026-11-26
+
+Nenhuma mudança no protocolo `/v1`, no banco de sync nem no `assistant.db`. O `ui.json` ganha
+`follow_system` e `reduce_motion`, que um hub 1.4.0 ignora.
+
+### Adicionado
+
+- **Redesenho "Grafite · Mesa":** régua única de espaço, raio, tamanho e tipo; papéis de cor
+  derivados da paleta Grafite (sem hex novo); primitivas compartilhadas (card, botão, tag, chip,
+  segmentado, interruptor, banner, diálogo, barra, avatar, estado vazio).
+- **Navegação:** Resumo (antes Dashboard), Lançamentos, Reservas, Análise (com nº de alertas),
+  Aparelhos (antes Conexão) e Ajustes; cabeçalho fixo com a pergunta de cada tela; só o
+  conteúdo rola.
+- **Tela Ajustes:** tema Escuro/Claro/Sistema (segue o Windows), ocultar valores, iniciar com o
+  Windows, reduzir movimento, assistente e Sobre.
+- **Atalhos:** Esc fecha diálogos e menus, Ctrl+1–6 trocam de tela, Alt+setas mudam o mês,
+  Ctrl+H oculta valores; atalhos nos tooltips, que abrem com atraso de 400 ms.
+- **"Ocultar valores" em todas as telas de dados,** incluindo achados, respostas do assistente e
+  tooltips; o envio à nuvem continua com os valores reais.
+- **Lançamentos:** filtros e cabeçalho da tabela fixos, só as linhas rolam; resumo do mês; na
+  janela estreita saem Pagamento e depois Autor.
+- **Reservas no padrão do Resumo;** série da emergência em cinza no gráfico de evolução.
+- **Resumo:** cards de primeiro uso e de espera pelo primeiro sync; estado "abrindo" no boot;
+  régua com rótulo do dia no gráfico de ritmo.
+- **Aparelhos:** lista Conectados, endereço com Copiar e o fluxo "Conectar um celular" em 3
+  passos (Wi-Fi, certificado, parear); o código nasce no passo 3 e é cancelado ao fechar.
+- **Análise em dois painéis:** achados por gravidade com barra de gasto × normal ou meta;
+  respostas em Markdown com Copiar; "Desfazer" ao apagar conversa.
+- **Assistente:** configuração em diálogo em passos com Testar conexão; prévia de envio à nuvem
+  em diálogo.
+- **Bandeja:** ícone por estado (normal, atenção sem rede, erro); "Conectar um celular" e
+  "Copiar endereço" no menu.
+- **Movimento:** scrim dos diálogos com fade, toast que sobe e desce, cursor piscando na
+  resposta que chega; "Reduzir movimento" desliga os três.
+
+### Alterado
+
+- **Botões desabilitados com aparência própria;** pressionado distinto do hover.
+- **Cards com borda;** tema e contagens saem da lateral; avatar com anel na cor da pessoa.
+- **O prompt do assistente pede os valores no formato R$ 1.234,56.**
+
+### Corrigido
+
+- **Navegação e janela:** trocar de tela volta a rolagem ao topo; conversa apagada não reaparece
+  antes do snapshot; teclado numérico só troca de tela com o dígito; tooltip e ícone da bandeja
+  recusados são tentados de novo; fechar a janela encerra as animações.
+
 ## [1.4.0] - 2026-11-25
 
 Nenhuma mudança no protocolo `/v1` nem no banco de sync. O assistente guarda configuração e
@@ -370,7 +417,8 @@ campo da 0.0.2 acontece.
 - Scripts `scripts/e2e.sh` (roteiro curl de pareamento e sync) e `scripts/seed-dashboard.sh`
   (carga de exemplo do dashboard).
 
-[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.4.0...HEAD
+[Não lançado]: https://github.com/LuizFer1/HubFinance/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/LuizFer1/HubFinance/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/LuizFer1/HubFinance/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/LuizFer1/HubFinance/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/LuizFer1/HubFinance/compare/v1.2.0...v1.3.0

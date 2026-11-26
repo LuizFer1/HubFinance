@@ -4,6 +4,7 @@
 //! toca o sistema fica atras de `cfg(windows)` e do trait `Desktop`, para teste nenhum criar
 //! bandeja, mutex nem chave de registro.
 
+pub mod appearance;
 pub mod args;
 pub mod autostart;
 pub mod instance;
@@ -19,6 +20,10 @@ use std::rc::Rc;
 pub enum DesktopEvent {
     /// Clique no icone, "Abrir o HubFinance" no menu, ou o programa aberto de novo.
     OpenWindow,
+    /// "Conectar um celular" no menu: abre a janela, se fechada, e o fluxo de Aparelhos.
+    ConnectPhone,
+    /// "Copiar endereco" no menu: a UI resolve o endereco e copia por `Desktop::copy_text`.
+    CopyAddress,
     /// "Desligar o hub" no menu da bandeja.
     Quit,
 }
@@ -38,10 +43,21 @@ pub trait Desktop {
     /// Com bandeja, fechar a janela nao desliga o hub (ha como voltar). Sem bandeja, fechar
     /// desliga, como na 1.0.0.
     fn has_tray(&self) -> bool;
-    fn set_tooltip(&self, text: &str);
+    /// `false` = o sistema recusou e a UI tenta de novo depois (ela so guarda o que foi aceito).
+    fn set_tooltip(&self, text: &str) -> bool;
+    /// Troca o desenho do icone. A UI so chama quando o estado muda, ou quando a ultima troca
+    /// falhou. `false` = recusado.
+    fn set_icon(&self, icon: tray::TrayIcon) -> bool;
+    /// Copia para a area de transferencia sem depender da janela (ver `tray::copy_text`).
+    fn copy_text(&self, text: &str) -> Result<(), String>;
     /// `None` = sistema sem a opcao (a linha nao aparece no card).
     fn autostart(&self) -> Option<bool>;
     fn set_autostart(&self, enabled: bool) -> Result<(), String>;
+    /// Tema do sistema agora (`true` = escuro), para o tema "Sistema"; `None` = nao se sabe.
+    /// Leitura, sem efeito: vale com ou sem bandeja, por isso o padrao serve aos dois.
+    fn system_dark(&self) -> Option<bool> {
+        appearance::system_dark()
+    }
 }
 
 /// Linux, macOS, e Windows quando a bandeja nao subiu.
@@ -51,7 +67,17 @@ impl Desktop for Headless {
     fn has_tray(&self) -> bool {
         false
     }
-    fn set_tooltip(&self, _text: &str) {}
+    /// Sem bandeja nao ha o que mudar: conta como feito, para a UI nao insistir.
+    fn set_tooltip(&self, _text: &str) -> bool {
+        true
+    }
+    fn set_icon(&self, _icon: tray::TrayIcon) -> bool {
+        true
+    }
+    /// Sem bandeja nao ha menu que peca a copia; a janela copia pelo iced.
+    fn copy_text(&self, _text: &str) -> Result<(), String> {
+        Err("sem suporte neste sistema".into())
+    }
     fn autostart(&self) -> Option<bool> {
         None
     }
@@ -91,8 +117,14 @@ impl Desktop for Windows {
     fn has_tray(&self) -> bool {
         true
     }
-    fn set_tooltip(&self, text: &str) {
-        self.tray.set_tooltip(text);
+    fn set_tooltip(&self, text: &str) -> bool {
+        self.tray.set_tooltip(text)
+    }
+    fn set_icon(&self, icon: tray::TrayIcon) -> bool {
+        self.tray.set_icon(icon)
+    }
+    fn copy_text(&self, text: &str) -> Result<(), String> {
+        tray::copy_text(text)
     }
     fn autostart(&self) -> Option<bool> {
         autostart::is_enabled()
@@ -112,8 +144,16 @@ pub(crate) fn wide(s: &str) -> Vec<u16> {
 pub(crate) struct Fake {
     pub tray: bool,
     pub tooltip: std::cell::RefCell<String>,
+    /// Cada troca de icone pedida, na ordem: o teste confere que a UI nao repete.
+    pub icons: std::cell::RefCell<Vec<tray::TrayIcon>>,
+    /// O que foi copiado pela bandeja, na ordem.
+    pub copied: std::cell::RefCell<Vec<String>>,
+    /// A bandeja recusa tooltip e icone (o pedido fica registrado, mas a resposta e `false`).
+    pub fail_tray: std::cell::Cell<bool>,
     pub autostart: std::cell::Cell<Option<bool>>,
     pub fail_autostart: std::cell::Cell<bool>,
+    /// O tema do sistema que o teste escolhe; nunca le o registro da maquina.
+    pub system_dark: std::cell::Cell<Option<bool>>,
 }
 
 #[cfg(test)]
@@ -122,8 +162,12 @@ impl Fake {
         Fake {
             tray: true,
             tooltip: Default::default(),
+            icons: Default::default(),
+            copied: Default::default(),
+            fail_tray: Default::default(),
             autostart: std::cell::Cell::new(Some(false)),
             fail_autostart: Default::default(),
+            system_dark: Default::default(),
         }
     }
 }
@@ -133,8 +177,17 @@ impl Desktop for Fake {
     fn has_tray(&self) -> bool {
         self.tray
     }
-    fn set_tooltip(&self, text: &str) {
+    fn set_tooltip(&self, text: &str) -> bool {
         *self.tooltip.borrow_mut() = text.to_string();
+        !self.fail_tray.get()
+    }
+    fn set_icon(&self, icon: tray::TrayIcon) -> bool {
+        self.icons.borrow_mut().push(icon);
+        !self.fail_tray.get()
+    }
+    fn copy_text(&self, text: &str) -> Result<(), String> {
+        self.copied.borrow_mut().push(text.to_string());
+        Ok(())
     }
     fn autostart(&self) -> Option<bool> {
         self.autostart.get()
@@ -145,6 +198,9 @@ impl Desktop for Fake {
         }
         self.autostart.set(Some(enabled));
         Ok(())
+    }
+    fn system_dark(&self) -> Option<bool> {
+        self.system_dark.get()
     }
 }
 
@@ -164,8 +220,12 @@ mod tests {
         let d = Headless;
         assert!(!d.has_tray());
         assert_eq!(d.autostart(), None);
+        // Em teste o `Headless` (o de `app_with`) nunca le o tema do registro.
+        assert_eq!(d.system_dark(), None);
         assert!(d.set_autostart(true).is_err());
-        d.set_tooltip("ignorado");
+        assert!(d.set_tooltip("ignorado"));
+        assert!(d.set_icon(tray::TrayIcon::Error));
+        assert!(d.copy_text("x").is_err());
     }
 
     #[test]
@@ -184,11 +244,34 @@ mod tests {
     }
 
     #[test]
+    fn fake_guarda_icones_e_copias_na_ordem() {
+        let d = Fake::with_tray();
+        assert!(d.set_icon(tray::TrayIcon::Attention));
+        d.fail_tray.set(true);
+        assert!(!d.set_icon(tray::TrayIcon::Normal));
+        assert!(!d.set_tooltip("y"));
+        assert_eq!(
+            *d.icons.borrow(),
+            [tray::TrayIcon::Attention, tray::TrayIcon::Normal]
+        );
+        d.copy_text("https://192.168.0.12:7777").unwrap();
+        assert_eq!(*d.copied.borrow(), ["https://192.168.0.12:7777"]);
+    }
+
+    #[test]
     fn canal_entrega_na_ordem() {
         let (tx, mut rx) = channel();
-        tx.unbounded_send(DesktopEvent::OpenWindow).unwrap();
-        tx.unbounded_send(DesktopEvent::Quit).unwrap();
-        assert_eq!(rx.try_recv().unwrap(), DesktopEvent::OpenWindow);
-        assert_eq!(rx.try_recv().unwrap(), DesktopEvent::Quit);
+        let sent = [
+            DesktopEvent::OpenWindow,
+            DesktopEvent::ConnectPhone,
+            DesktopEvent::CopyAddress,
+            DesktopEvent::Quit,
+        ];
+        for e in sent {
+            tx.unbounded_send(e).unwrap();
+        }
+        for e in sent {
+            assert_eq!(rx.try_recv().unwrap(), e);
+        }
     }
 }

@@ -4,7 +4,7 @@
 //!
 //! Decisoes (plano 0.0.2, Tarefa 4):
 //! - `hub.AAAA-MM-DD.log` em `<data_dir>/logs/`, rotacao diaria. Com a data no nome nao existe
-//!   um `hub.log` fixo; por isso o card "Sobre o hub" mostra a pasta, nao um arquivo.
+//!   um `hub.log` fixo; por isso Ajustes > Sobre mostra a pasta, nao um arquivo.
 //! - Retencao de `KEEP_FILES` arquivos por `prune`, chamada no boot (o contrato testado), e
 //!   tambem por `max_log_files` do appender, que poda a cada rotacao: um hub pode ficar ligado
 //!   semanas sem reiniciar.

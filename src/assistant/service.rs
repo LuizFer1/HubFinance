@@ -73,6 +73,12 @@ pub struct AssistantService {
     /// Ids cuja gravacao falhou alguma vez: ao fechar, vao para o `stash` em vez de so ficarem
     /// no disco.
     unsaved: HashSet<String>,
+    /// O ultimo Ollama pedido em "Testar conexao": so a resposta dele vale. A pessoa pode ter
+    /// trocado a porta no dialogo enquanto a lista de outra porta vinha.
+    listing_target: Option<Destination>,
+    /// Listagens ainda sem resposta. Contador, e nao booleano: com dois pedidos no ar, a
+    /// resposta descartada do primeiro nao pode apagar o "carregando" do segundo.
+    listing_in_flight: u32,
 }
 
 fn new_id() -> String {
@@ -119,6 +125,8 @@ impl AssistantService {
             now,
             stash: Vec::new(),
             unsaved: HashSet::new(),
+            listing_target: None,
+            listing_in_flight: 0,
         }
     }
 
@@ -160,12 +168,33 @@ impl AssistantService {
             return;
         }
         self.view.last_error = None;
-        if s.provider != self.view.settings.provider
-            || s.local.port != self.view.settings.local.port
-        {
-            self.view.models = None;
-        }
         self.view.settings = s;
+    }
+
+    /// "Usar Ollama local" / "Usar OpenRouter" do dialogo: a chave (se a pessoa digitou uma) e a
+    /// configuracao num comando so. Dois comandos separados apagariam um o erro do outro (cada
+    /// gravacao bem-sucedida limpa `last_error`). A chave vai primeiro: se ela falha, a
+    /// configuracao nao e gravada, para a nuvem nao ficar ligada sem chave. Toda chamada publica
+    /// `configure_result` com um numero novo, com sucesso ou nao: e por ele que o dialogo sabe
+    /// que a sua gravacao terminou e como.
+    pub fn configure(&mut self, s: Settings, key: Option<&str>) {
+        let seq = self
+            .view
+            .configure_result
+            .as_ref()
+            .map_or(0, |(n, _)| *n)
+            .wrapping_add(1);
+        let failed = |view: &AssistantView| view.last_error.clone().map_or(Ok(()), Err);
+        if let Some(key) = key.map(str::trim).filter(|k| !k.is_empty()) {
+            self.save_key(key);
+            let r = failed(&self.view);
+            if r.is_err() {
+                self.view.configure_result = Some((seq, r));
+                return;
+            }
+        }
+        self.save_settings(s);
+        self.view.configure_result = Some((seq, failed(&self.view)));
     }
 
     pub fn save_key(&mut self, key: &str) {
@@ -190,13 +219,36 @@ impl AssistantService {
         self.view.has_key = self.secrets.load().ok().flatten().is_some();
     }
 
-    /// `listed` e o destino que foi consultado. Se o usuario trocou de provedor ou de porta
-    /// enquanto a lista vinha, ela e de outro lugar e nao pode aparecer como a do atual.
+    /// "Testar conexao" no Ollama da porta `port` (a do dialogo, ainda nao gravada): marca o
+    /// carregando e devolve o provedor para o hub listar fora da thread. So loopback
+    /// (`Destination::local`); nunca a nuvem, cujo catalogo seria trafego antes de pergunta.
+    /// `None` com porta 0: nada sai e nada fica carregando.
+    pub fn begin_listing(&mut self, port: u16) -> Option<(Box<dyn Provider>, Destination)> {
+        let d = Destination::try_local(port).ok()?;
+        self.listing_target = Some(d.clone());
+        self.listing_in_flight = self.listing_in_flight.saturating_add(1);
+        self.view.listing = true;
+        let provider = OpenAiCompatible::new(
+            d.clone(),
+            None,
+            self.view.settings.cloud.deny_data_collection,
+        );
+        Some((Box::new(provider), d))
+    }
+
+    /// `listed` e o destino que foi consultado. Toda resposta tira um do carregando; so a do
+    /// ultimo pedido vira a lista (a de uma porta anterior e de outro lugar).
     pub fn set_models(&mut self, listed: &Destination, r: Result<Vec<String>, AssistantError>) {
-        if self.destination().as_ref() != Some(listed) {
+        self.listing_in_flight = self.listing_in_flight.saturating_sub(1);
+        self.view.listing = self.listing_in_flight > 0;
+        if self.listing_target.as_ref() != Some(listed) {
             return;
         }
+        let Destination::Local { port } = listed else {
+            return;
+        };
         self.view.models = Some(r.map_err(|e| e.to_string()));
+        self.view.models_port = Some(*port);
     }
 
     /// O usuario viu a previa e aprovou o envio da conversa `id` para a nuvem. Vale so se `id`
@@ -1022,20 +1074,82 @@ mod tests {
     fn lista_de_modelos_de_outro_destino_e_descartada() {
         let dir = tempfile::tempdir().unwrap();
         let mut s = svc(dir.path());
-        let listed = Destination::local(11434);
-        // O usuario trocou a porta enquanto a lista vinha.
-        let mut st = s.view().settings.clone();
-        st.local.port = 11500;
-        s.save_settings(st);
+        let (_, listed) = s.begin_listing(11434).expect("porta valida");
+        // O usuario trocou a porta enquanto a lista vinha e testou de novo.
+        let (_, again) = s.begin_listing(11500).expect("porta valida");
         s.set_models(&listed, Ok(vec!["velho".into()]));
         assert_eq!(s.view().models, None);
-        s.set_models(&Destination::local(11500), Ok(vec!["novo".into()]));
+        s.set_models(&again, Ok(vec!["novo".into()]));
         assert_eq!(s.view().models, Some(Ok(vec!["novo".into()])));
-        s.set_models(
-            &Destination::local(11500),
-            Err(AssistantError::LocalUnreachable(11500)),
-        );
+        assert_eq!(s.view().models_port, Some(11500));
+        let _ = s.begin_listing(11500);
+        s.set_models(&again, Err(AssistantError::LocalUnreachable(11500)));
         assert!(matches!(s.view().models, Some(Err(_))));
+    }
+
+    #[test]
+    fn testar_conexao_marca_o_carregando_ate_a_ultima_resposta() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = svc(dir.path());
+        assert!(!s.view().listing);
+        // Porta 0 nao sai nem fica carregando.
+        assert!(s.begin_listing(0).is_none());
+        assert!(!s.view().listing);
+        let (_, first) = s.begin_listing(11434).unwrap();
+        assert!(s.view().listing);
+        let (_, second) = s.begin_listing(11500).unwrap();
+        // A resposta descartada do primeiro pedido nao apaga o carregando do segundo.
+        s.set_models(&first, Ok(vec!["velho".into()]));
+        assert!(s.view().listing);
+        assert_eq!(s.view().models, None);
+        s.set_models(&second, Ok(vec!["novo".into()]));
+        assert!(!s.view().listing);
+        assert_eq!(s.view().models_port, Some(11500));
+        // Resposta a mais (nunca deveria haver) nao deixa o contador negativo.
+        s.set_models(&second, Ok(vec![]));
+        assert!(!s.view().listing);
+    }
+
+    #[test]
+    fn configurar_grava_chave_e_configuracao_juntas_e_conta_a_gravacao() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = open_with(dir.path(), Box::new(FakeSecretStore::default()));
+        let mut cloud = Settings {
+            provider: ProviderChoice::Cloud,
+            ..Settings::default()
+        };
+        cloud.cloud.enabled = true;
+        s.configure(cloud.clone(), Some("  sk-or-x  "));
+        assert_eq!(s.view().configure_result, Some((1, Ok(()))));
+        assert!(s.view().has_key);
+        assert_eq!(s.view().settings, cloud);
+        assert_eq!(s.view().last_error, None);
+        // Sem chave nova so grava a configuracao.
+        s.configure(Settings::default(), None);
+        assert_eq!(s.view().configure_result, Some((2, Ok(()))));
+        assert_eq!(s.view().settings, Settings::default());
+        assert!(s.view().has_key);
+    }
+
+    #[test]
+    fn chave_que_falha_nao_liga_a_nuvem_e_o_erro_fica() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = open_with(dir.path(), Box::new(FailingStore));
+        let mut cloud = Settings {
+            provider: ProviderChoice::Cloud,
+            ..Settings::default()
+        };
+        cloud.cloud.enabled = true;
+        s.configure(cloud, Some("sk-or-x"));
+        assert_eq!(
+            s.view().configure_result,
+            Some((1, Err("Não foi possível salvar a chave.".into())))
+        );
+        assert_eq!(s.view().settings, Settings::default());
+        assert_eq!(
+            s.view().last_error.as_deref(),
+            Some("Não foi possível salvar a chave.")
+        );
     }
 
     #[test]

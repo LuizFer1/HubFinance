@@ -13,7 +13,7 @@ use crate::dashboard::aggregate::{
 use crate::dashboard::budgets::budget_report;
 use crate::dashboard::contract::Book;
 use crate::dashboard::dataset::Dataset;
-use crate::dashboard::money::{format_brl, signed_brl};
+use crate::dashboard::money::{Money, format_brl, signed_brl};
 use crate::dashboard::periods::{last_months, month_of, shift_month};
 use crate::dashboard::reserves::{balance_until, emergency_view, ordered};
 
@@ -97,7 +97,8 @@ pub fn build(analysis: &Analysis, ds: &Dataset, today: &str, book: Book) -> Enve
         .map(|r| (r.name.clone(), balance_until(ds, &r.id, &current)))
         .collect();
     let emergency_goal_minor = emergency
-        .map(|r| emergency_view(ds, r, &current).goal_minor)
+        // So o numero da meta: o envelope nunca leva mascara.
+        .map(|r| emergency_view(ds, r, &current, Money::SHOWN).goal_minor)
         .filter(|g| *g > 0);
     Envelope {
         book,

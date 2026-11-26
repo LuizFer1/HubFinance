@@ -4,7 +4,7 @@
 use std::net::Ipv4Addr;
 
 use iced::widget::{
-    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text, tooltip,
+    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text,
 };
 use iced::{Alignment, Element, Length, Padding, mouse, window};
 
@@ -654,26 +654,13 @@ fn hide_values_button(app: &App) -> Element<'_, Message> {
     } else {
         icons::EYE
     };
-    let eye = button(container(icons::icon_inherit(glyph, 20.0)).center(Length::Fill))
-        .width(44)
-        .height(44)
-        .padding(0)
-        .style(theme::icon_button(t))
-        .on_press(Message::ToggleHideValues);
-    tooltip(
-        eye,
-        container(
-            text(app.dashboard.header.hide_toggle.as_str())
-                .size(12)
-                .color(t.text),
-        )
-        .padding([6, 10])
-        .style(theme::menu(t)),
-        tooltip::Position::Bottom,
+    widgets::icon_button(
+        t,
+        glyph,
+        ButtonSize::Large,
+        app.dashboard.header.hide_toggle.as_str(),
+        Some(Message::ToggleHideValues),
     )
-    .gap(4)
-    .delay(theme::TOOLTIP_DELAY)
-    .into()
 }
 
 /// Seletor de conta. So aparece com uma linha `books` viva de conta comercial (derivado das

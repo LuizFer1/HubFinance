@@ -113,7 +113,7 @@ pub const INITIAL_SIZE: Size = Size::new(1440.0, 900.0);
 pub enum CopyTarget {
     Address,
     CaLink,
-    /// Pastas do card "Sobre o hub": copiaveis mesmo sem rede, ao contrario dos enderecos.
+    /// Pastas de Ajustes > Sobre: copiaveis mesmo sem rede, ao contrario dos enderecos.
     DataDir,
     LogsDir,
     /// Fallback quando o navegador nao abre: a URL das releases com "Copiar".
@@ -235,12 +235,12 @@ pub struct App {
     /// Ultimo texto mandado ao tooltip da bandeja.
     pub(super) tooltip: String,
     /// "Iniciar com o Windows" como o sistema diz (cache do registro, lido no boot e depois de
-    /// cada troca); `None` = sistema sem a opcao, e a linha some do card.
+    /// cada troca); `None` = sistema sem a opcao, e a secao some de Ajustes.
     pub(super) autostart: Option<bool>,
     /// O que o `ui.json` lembra (`Some(false)` = desligado de proposito); vai junto em toda
     /// gravacao do arquivo para trocar o tema nao apagar a decisao.
     pub(super) autostart_pref: Option<bool>,
-    /// A ultima troca da opcao falhou no sistema: o card avisa.
+    /// A ultima troca da opcao falhou no sistema: a linha em Ajustes avisa.
     pub(super) autostart_failed: bool,
     /// "Ocultar valores" do Dashboard, lembrado no `ui.json` como o tema.
     pub(super) hide_values: bool,
@@ -1829,6 +1829,39 @@ pub(super) mod tests {
         assert_eq!(app.screen, Screen::Dashboard);
         assert_eq!(app.theme, ThemeMode::Light);
         assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
+    }
+
+    #[test]
+    fn nasce_com_o_tema_do_sistema_ou_escuro_se_ele_nao_diz() {
+        let dir = tempfile::tempdir().unwrap();
+        let boot = |system: Option<bool>| {
+            let fake = Fake::with_tray();
+            fake.system_dark.set(system);
+            let (cmd_tx, _rx) = mpsc::unbounded_channel();
+            let (_tx, snap_rx) = watch::channel(Snapshot::default());
+            App::new(
+                HubHandle {
+                    commands: cmd_tx,
+                    snapshot: snap_rx,
+                },
+                UtcOffset::UTC,
+                UiPrefs {
+                    theme: ThemeMode::System,
+                    ..UiPrefs::default()
+                },
+                dir.path().to_path_buf(),
+                Rc::new(fake),
+            )
+        };
+        assert!(std::ptr::eq(
+            boot(Some(false)).tokens,
+            &super::super::theme::LIGHT
+        ));
+        assert!(std::ptr::eq(
+            boot(Some(true)).tokens,
+            &super::super::theme::DARK
+        ));
+        assert!(std::ptr::eq(boot(None).tokens, &super::super::theme::DARK));
     }
 
     /// Espera a thread de `save_prefs` gravar o que o teste quer ver.

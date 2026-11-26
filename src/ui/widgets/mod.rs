@@ -90,10 +90,13 @@ pub fn dot<'a, M: 'a>(color: Color, size: f32) -> Element<'a, M> {
         .into()
 }
 
-/// Tamanho da inicial por diametro do avatar (40 / 24 / 22 no design).
+/// Tamanho da inicial por diametro do avatar (40 / 28 / 24 / 22 no design; o de 28 e o de
+/// "Quem lançou" no Resumo).
 fn initial_size(size: f32) -> f32 {
     if size >= 40.0 {
         16.0
+    } else if size >= 28.0 {
+        12.0
     } else if size >= 24.0 {
         11.0
     } else {
@@ -257,6 +260,18 @@ pub fn initial(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn avatar_monta_com_e_sem_cor_em_todo_tamanho() {
+        for t in [&theme::DARK, &theme::LIGHT] {
+            for size in [22.0, 24.0, 28.0, 40.0] {
+                let _: Element<'_, ()> = avatar(t, "Ana", Some("magenta"), None, size);
+                let _: Element<'_, ()> = avatar(t, "Pixel", None, None, size);
+            }
+        }
+        assert_eq!(initial_size(28.0), 12.0);
+        assert_eq!(initial_size(24.0), 11.0);
+    }
 
     #[test]
     fn inicial_maiuscula_e_vazio_vira_interrogacao() {

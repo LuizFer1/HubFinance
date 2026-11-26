@@ -1503,19 +1503,10 @@ fn people(app: &App) -> Option<Element<'_, Message>> {
     let p = app.dashboard.people.as_ref()?;
     let mut col = column![txt(p.title.clone(), 13.0, t.text_muted)].spacing(14);
     for person in &p.rows {
-        let (bg, fg) = match &person.color {
-            Some(tk) => (t.token(tk), t.bg),
-            None => t.avatar_neutral(),
-        };
         col = col.push(
             row![
-                container(
-                    txt(person.initial.clone(), 12.0, fg)
-                        .font(fonts::INTER_SEMIBOLD)
-                        .line_height(1.0)
-                )
-                .center(28)
-                .style(theme::fill(bg, 14.0)),
+                // A inicial ja vem do modelo; o avatar tira a primeira letra dela de novo.
+                widgets::avatar(t, &person.initial, person.color.as_deref(), None, 28.0),
                 column![
                     txt(person.name.clone(), 14.0, t.text),
                     txt(person.line.clone(), 12.0, t.text_muted).line_height(1.45),

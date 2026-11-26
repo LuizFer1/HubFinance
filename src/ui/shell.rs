@@ -366,7 +366,8 @@ pub(super) enum Arrival {
     Opening,
     /// Nucleo no ar, hub sem nenhuma linha e nenhum aparelho pareado: "Comece por aqui".
     FirstUse,
-    /// Hub sem nenhuma linha, mas com aparelho pareado: "Aguardando o primeiro sync de ...".
+    /// Hub sem nenhuma linha e com aparelho pareado que nunca sincronizou: "Aguardando o
+    /// primeiro sync de ...".
     Waiting(String),
     /// Sem dados para esta tela, mas o hub tem linhas (so reservas, conta comercial vazia) ou
     /// o nucleo esta desligando: o vazio de sempre, sem prometer um sync que talvez ja houve.
@@ -376,12 +377,15 @@ pub(super) enum Arrival {
 /// Escolhe o estado. A ordem importa: dado na tela ganha de tudo (um snapshot com dados nunca
 /// mostra esqueleto), depois o boot, e so com o nucleo no ar e o hub vazio de verdade os passos
 /// do primeiro uso ou a espera; o hub com erro nem chega aqui (a casca troca a tela pelo card
-/// de falha).
+/// de falha). `any_synced` (algum aparelho ativo ja enviou ou recebeu) desliga a espera: o
+/// primeiro sync manda perfil, categorias e formas de pagamento, que nao sao lancamento nem
+/// reserva, e "Aguardando o primeiro sync" seria mentira para quem so nao lancou nada ainda.
 pub(super) fn arrival(
     status: &Status,
     screen_has_data: bool,
     hub_has_rows: bool,
     devices: &[&str],
+    any_synced: bool,
 ) -> Arrival {
     if screen_has_data {
         return Arrival::Data;
@@ -391,12 +395,27 @@ pub(super) fn arrival(
         Status::Running | Status::NoNetwork if !hub_has_rows => {
             if devices.is_empty() {
                 Arrival::FirstUse
+            } else if any_synced {
+                Arrival::Empty
             } else {
                 Arrival::Waiting(waiting_line(devices))
             }
         }
         _ => Arrival::Empty,
     }
+}
+
+/// Algum aparelho ativo (a regra de `active_device_names`) ja fez um envio ou recebimento.
+pub(super) fn any_active_synced(app: &App) -> bool {
+    let pending = app
+        .pending_removal
+        .as_ref()
+        .and_then(super::app::PendingRemoval::device_id);
+    app.snapshot.devices.iter().any(|d| {
+        !d.revoked
+            && Some(d.device_id.as_str()) != pending
+            && (d.last_push_at.is_some() || d.last_pull_at.is_some())
+    })
 }
 
 /// "Aguardando o primeiro sync de Pixel da Ana"; com mais de um, a contagem ("de 2 celulares"):
@@ -426,6 +445,7 @@ pub(super) fn screen_arrival(app: &App, screen_has_data: bool) -> Arrival {
         screen_has_data,
         hub_has_rows(app),
         &active_device_names(app),
+        any_active_synced(app),
     )
 }
 
@@ -435,8 +455,8 @@ pub(super) const OPENING_TEXT: &str = "Abrindo os dados da casa";
 /// Esqueleto do boot, o mesmo em Resumo, Lancamentos e Reservas: o texto e blocos de
 /// `surface_2` no lugar das secoes (uma faixa larga, duas lado a lado na proporcao 2:1 do
 /// Resumo e mais uma larga). Nao imita cada tela: dura o tempo de abrir o banco. A altura total
-/// (~480) cabe na janela minima sem rolar, porque em Lancamentos a casca nao rola
-/// (`owns_scroll`).
+/// (~425: texto, 100 + 160 + 100 e tres espacos de 16) cabe nos ~470 que sobram em 1024x720 com
+/// o cabecalho quebrado em duas linhas, porque em Lancamentos a casca nao rola (`owns_scroll`).
 pub(super) fn opening(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let block = |height: f32| {
@@ -447,13 +467,13 @@ pub(super) fn opening(app: &App) -> Element<'_, Message> {
     };
     column![
         text(OPENING_TEXT).size(13).color(t.text_muted),
-        block(120.0),
+        block(100.0),
         row![
-            container(block(180.0)).width(Length::FillPortion(2)),
-            container(block(180.0)).width(Length::FillPortion(1)),
+            container(block(160.0)).width(Length::FillPortion(2)),
+            container(block(160.0)).width(Length::FillPortion(1)),
         ]
         .spacing(space::BETWEEN_CARDS),
-        block(120.0),
+        block(100.0),
     ]
     .spacing(space::BETWEEN_CARDS)
     .width(Length::Fill)
@@ -975,9 +995,9 @@ fn transactions_question(month: &str) -> String {
 /// "Parcial".
 const RESERVES_QUESTION: &str = "Quanto está guardado, e para quê?";
 
-/// Linha do Resumo no boot: a da conta pessoal com dados (`grafite::header`), que e o que a
-/// tela vai dizer quando o banco abrir na maioria das casas.
-const DASHBOARD_LINE: &str = "Somente leitura · dados do último sync";
+/// Linha do Resumo no boot: so o que vale com ou sem dados. "Dados do último sync" ainda nao e
+/// verdade enquanto o banco nao abriu.
+const DASHBOARD_LINE: &str = "Somente leitura";
 
 /// "1 lançamento" / "1.234 lançamentos" (milhar com ponto, como o pt-BR do app).
 pub(super) fn plural(n: usize, one: &str, many: &str) -> String {
@@ -1488,39 +1508,77 @@ mod tests {
     #[test]
     fn estado_da_tela_sem_dados_por_status_aparelho_e_hub() {
         let ana = ["Pixel da Ana"];
+        let at = |status: Status, data: bool, rows: bool, devices: &[&str], synced: bool| {
+            arrival(&status, data, rows, devices, synced)
+        };
+        let waiting = Arrival::Waiting("Aguardando o primeiro sync de Pixel da Ana".into());
         // Com dados na tela, dados, ate no boot.
-        assert_eq!(arrival(&Status::Starting, true, true, &ana), Arrival::Data);
-        assert_eq!(arrival(&Status::Running, true, true, &[]), Arrival::Data);
+        assert_eq!(at(Status::Starting, true, true, &ana, true), Arrival::Data);
+        assert_eq!(at(Status::Running, true, true, &[], false), Arrival::Data);
         // Boot: abrindo, mesmo sem aparelho no snapshot inicial.
         assert_eq!(
-            arrival(&Status::Starting, false, false, &[]),
+            at(Status::Starting, false, false, &[], false),
             Arrival::Opening
         );
         // Nucleo no ar, hub vazio e nenhum aparelho: primeiro uso (tambem sem rede).
         assert_eq!(
-            arrival(&Status::Running, false, false, &[]),
+            at(Status::Running, false, false, &[], false),
             Arrival::FirstUse
         );
         assert_eq!(
-            arrival(&Status::NoNetwork, false, false, &[]),
+            at(Status::NoNetwork, false, false, &[], false),
             Arrival::FirstUse
         );
-        // Aparelho pareado, nada chegou: aguardando.
+        // Aparelho pareado que nunca sincronizou: aguardando (tambem sem rede).
+        assert_eq!(at(Status::Running, false, false, &ana, false), waiting);
+        assert_eq!(at(Status::NoNetwork, false, false, &ana, false), waiting);
+        // I1: o aparelho ja sincronizou (perfil, categorias), so nao ha lancamento nem reserva:
+        // nada de "Aguardando o primeiro sync".
         assert_eq!(
-            arrival(&Status::Running, false, false, &ana),
-            Arrival::Waiting("Aguardando o primeiro sync de Pixel da Ana".into())
-        );
-        // O hub tem linhas (so reservas, outra conta): o vazio de sempre, sem prometer sync.
-        assert_eq!(arrival(&Status::Running, false, true, &ana), Arrival::Empty);
-        assert_eq!(arrival(&Status::Running, false, true, &[]), Arrival::Empty);
-        // Desligando ou desligado: nem passos nem espera.
-        assert_eq!(arrival(&Status::Stopped, false, false, &[]), Arrival::Empty);
-        assert_eq!(
-            arrival(&Status::Stopping, false, false, &ana),
+            at(Status::Running, false, false, &ana, true),
             Arrival::Empty
         );
+        assert_eq!(
+            at(Status::NoNetwork, false, false, &ana, true),
+            Arrival::Empty
+        );
+        // O hub tem linhas (so reservas, outra conta): o vazio de sempre, sem prometer sync.
+        assert_eq!(
+            at(Status::Running, false, true, &ana, false),
+            Arrival::Empty
+        );
+        assert_eq!(at(Status::Running, false, true, &[], false), Arrival::Empty);
+        // Desligando, desligado ou com erro: nem passos, nem espera, nem esqueleto.
+        assert_eq!(
+            at(Status::Stopped, false, false, &[], false),
+            Arrival::Empty
+        );
+        assert_eq!(
+            at(Status::Stopping, false, false, &ana, false),
+            Arrival::Empty
+        );
+        let failed = || Status::Failed("Porta 7777 em uso".into());
+        assert_eq!(at(failed(), false, false, &ana, false), Arrival::Empty);
+        assert_eq!(at(failed(), false, false, &[], false), Arrival::Empty);
     }
 
+    #[test]
+    fn hub_com_erro_mostra_o_card_de_falha_e_nao_o_esqueleto() {
+        let dir = tempfile::tempdir().unwrap();
+        let snap = Snapshot {
+            status: Status::Failed("Porta 7777 em uso".into()),
+            ..Snapshot::default()
+        };
+        let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
+        for screen in [Screen::Dashboard, Screen::Transactions, Screen::Reserves] {
+            app.screen = screen;
+            // A casca troca a tela pelo card de falha antes de qualquer estado de chegada.
+            assert_eq!(failure(&app), Some("Porta 7777 em uso"));
+            assert!(!owns_scroll(&app));
+            assert_ne!(screen_arrival(&app, false), Arrival::Opening);
+            let _ = root(&app);
+        }
+    }
     #[test]
     fn texto_do_aguardando_com_um_e_com_varios_aparelhos() {
         assert_eq!(
@@ -1567,6 +1625,24 @@ mod tests {
             screen_arrival(&app, false),
             Arrival::Waiting("Aguardando o primeiro sync de 2 celulares".into())
         );
+        // Sem rede: os cards montam com o aviso do Wi-Fi.
+        app.snapshot.status = Status::NoNetwork;
+        draw(&mut app);
+        app.snapshot.status = Status::Running;
+        // I1: um deles ja sincronizou (so perfil e categorias): o vazio de sempre.
+        app.snapshot.devices.push(device(
+            "Moto da Bia",
+            Some("2026-09-24T10:00:00Z"),
+            None,
+            false,
+        ));
+        assert!(any_active_synced(&app));
+        assert_eq!(screen_arrival(&app, false), Arrival::Empty);
+        // Revogado que sincronizou nao conta.
+        if let Some(d) = app.snapshot.devices.last_mut() {
+            d.revoked = true;
+        }
+        assert!(!any_active_synced(&app));
         // Com dados: o Resumo do dono, intocado.
         let (app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
         assert_eq!(screen_arrival(&app, !app.dashboard.is_empty), Arrival::Data);
@@ -1577,8 +1653,9 @@ mod tests {
     fn subtitulos() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
-        // No boot o vazio nao e verdade ainda: a linha nao diz "Nada sincronizado".
-        assert_eq!(titles(&app).1, "Somente leitura · dados do último sync");
+        // No boot o vazio nao e verdade ainda: a linha nao diz "Nada sincronizado", nem promete
+        // "dados do último sync" antes de o banco abrir.
+        assert_eq!(titles(&app).1, "Somente leitura");
         app.snapshot.status = Status::Running;
         assert_eq!(titles(&app).1, "Nada sincronizado ainda");
         app.screen = Screen::Connection;

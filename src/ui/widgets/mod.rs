@@ -17,7 +17,7 @@ mod values;
 
 pub use controls::{
     ChipShape, RowHover, SegmentedVariant, action_button, action_button_icon, action_button_with,
-    chip, icon_button, list_row, segmented,
+    chip, copy_button, field_copy, icon_button, list_row, segmented,
 };
 pub use marks::{
     Bar, TagTone, bar, color_tag, neutral_tile, partial_tag, tag, tag_icon, tile, token_tile,

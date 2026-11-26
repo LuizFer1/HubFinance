@@ -344,50 +344,24 @@ fn field<'a>(
     target: CopyTarget,
     size: f32,
 ) -> Element<'a, Message> {
-    let t = app.tokens;
-    let enabled = value.is_some();
-    let shown = match value {
-        Some(v) => text(v).size(size).font(fonts::INTER_MEDIUM).color(t.text),
-        None => text("sem endereço de rede").size(15).color(t.text_muted),
-    };
-    // O iced 0.14 nao tem reticencias: texto que nao cabe e cortado na borda do campo.
-    let value = container(shown.wrapping(Wrapping::None))
-        .width(Length::Fill)
-        .clip(true);
-    let copy = copy_button(app, target, enabled);
-    container(
-        row![icons::icon(glyph, 15.0, glyph_color), value, copy]
-            .spacing(10)
-            .align_y(Alignment::Center),
+    widgets::field_copy(
+        app.tokens,
+        (glyph, glyph_color),
+        value,
+        size,
+        "sem endereço de rede",
+        app.is_copied(target),
+        Message::Copy(target),
     )
-    .height(44)
-    .width(Length::Fill)
-    .padding(Padding {
-        top: 0.0,
-        right: 6.0,
-        bottom: 0.0,
-        left: 14.0,
-    })
-    .align_y(Alignment::Center)
-    .style(theme::field(t))
-    .into()
 }
 
-/// Botao "Copiar"/"Copiado" de 32 px, extraido de `field` para o card "Sobre" reusar.
+/// "Copiar" do card "Sobre" (pastas e URL das versoes), com o "Copiado" desta tela.
 fn copy_button(app: &App, target: CopyTarget, enabled: bool) -> Element<'_, Message> {
-    let t = app.tokens;
-    let copied = app.is_copied(target);
-    let mut copy = widgets::action_button_icon(
-        t,
-        ButtonKind::Ghost,
-        ButtonSize::Compact,
-        if copied { icons::CHECK } else { icons::COPY },
-        if copied { "Copiado" } else { "Copiar" },
-    );
-    if enabled {
-        copy = copy.on_press(Message::Copy(target));
-    }
-    copy.into()
+    widgets::copy_button(
+        app.tokens,
+        app.is_copied(target),
+        enabled.then_some(Message::Copy(target)),
+    )
 }
 
 // ---- sobre o hub ----

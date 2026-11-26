@@ -1,8 +1,9 @@
 //! Controles: botoes de acao e de icone, segmentado, chip, linha de lista, campo com "Copiar".
 //! O estilo por `Status` mora em `theme` (testado la); aqui a altura, o respiro e o texto.
 
+use iced::widget::text::Wrapping;
 use iced::widget::{Button, Row, button, container, mouse_area, row, text, tooltip};
-use iced::{Alignment, Element, Length, Padding};
+use iced::{Alignment, Color, Element, Length, Padding};
 
 use crate::ui::theme::{self, ButtonKind, ButtonSize, Tokens, radius, size, space, type_scale};
 use crate::ui::{fonts, icons};
@@ -227,6 +228,65 @@ pub fn list_row<'a, M: Clone + 'a>(
         .into()
 }
 
+/// "Copiar" fantasma compacto que vira "Copiado" com o check enquanto `copied` (1,6 s, quem
+/// conta e a tela). Sem `on_copy` fica desabilitado (nada a copiar).
+pub fn copy_button<'a, M: Clone + 'a>(
+    t: &'static Tokens,
+    copied: bool,
+    on_copy: Option<M>,
+) -> Element<'a, M> {
+    action_button_icon(
+        t,
+        ButtonKind::Ghost,
+        ButtonSize::Compact,
+        if copied { icons::CHECK } else { icons::COPY },
+        if copied { "Copiado" } else { "Copiar" },
+    )
+    .on_press_maybe(on_copy)
+    .into()
+}
+
+/// Campo de 44 px com "Copiar": icone `(glifo, cor)`, o valor em Medium no tamanho `size` (cortado na borda se
+/// ainda nao couber: o iced 0.14 nao tem reticencias) e o botao a direita. Sem valor mostra
+/// `placeholder` em `text_muted` e o botao fica desabilitado.
+pub fn field_copy<'a, M: Clone + 'a>(
+    t: &'static Tokens,
+    (glyph, glyph_color): (&'static str, Color),
+    value: Option<String>,
+    size: f32,
+    placeholder: &str,
+    copied: bool,
+    on_copy: M,
+) -> Element<'a, M> {
+    let enabled = value.is_some();
+    let shown = match value {
+        Some(v) => text(v).size(size).font(fonts::INTER_MEDIUM).color(t.text),
+        None => text(placeholder.to_string())
+            .size(type_scale::SUPPORT)
+            .color(t.text_muted),
+    };
+    let value = container(shown.wrapping(Wrapping::None))
+        .width(Length::Fill)
+        .clip(true);
+    let copy = copy_button(t, copied, enabled.then_some(on_copy));
+    container(
+        row![icons::icon(glyph, 15.0, glyph_color), value, copy]
+            .spacing(10)
+            .align_y(Alignment::Center),
+    )
+    .height(size::CTRL_L)
+    .width(Length::Fill)
+    .padding(Padding {
+        top: 0.0,
+        right: 6.0,
+        bottom: 0.0,
+        left: 14.0,
+    })
+    .align_y(Alignment::Center)
+    .style(theme::field(t))
+    .into()
+}
+
 fn label_text<'a>(size: ButtonSize, label: impl text::IntoFragment<'a>) -> text::Text<'a> {
     text(label)
         .size(size.text_size())
@@ -308,6 +368,34 @@ mod tests {
                 };
                 let _ = list_row(t, text("Linha"), hover(), Some(52.0), [0, 20], 0.0);
                 let _ = list_row(t, text("Linha"), hover(), None, [10, 8], 8.0);
+            }
+        }
+    }
+
+    #[test]
+    fn campo_com_copiar_monta_com_e_sem_valor() {
+        for t in [&DARK, &LIGHT] {
+            for copied in [true, false] {
+                let _ = field_copy(
+                    t,
+                    (icons::LOCK_SIMPLE, t.income_fg),
+                    Some("https://192.168.0.2:7777".into()),
+                    15.0,
+                    "sem endereço de rede",
+                    copied,
+                    (),
+                );
+                let _ = field_copy(
+                    t,
+                    (icons::LOCK_SIMPLE, t.income_fg),
+                    None,
+                    15.0,
+                    "-",
+                    copied,
+                    (),
+                );
+                let _ = copy_button(t, copied, Some(()));
+                let _ = copy_button::<()>(t, copied, None);
             }
         }
     }

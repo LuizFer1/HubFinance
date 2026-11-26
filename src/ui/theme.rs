@@ -334,14 +334,18 @@ impl Tokens {
         }
     }
 
-    /// Avatar de quem nao tem cor de perfil: (preenchimento, inicial). O #C4C4C4 do design e o
-    /// `neutral_300` com a inicial em `bg` no escuro; no claro o cinza claro equivalente e o
-    /// `neutral_700`, com a inicial em `fg` (o `neutral_300` com `bg` daria 2,2:1). Escolha da
-    /// H4b para "Quem lançou", valendo para toda tela.
-    pub fn avatar_neutral(&self) -> (Color, Color) {
-        match self.mode {
-            Mode::Dark => (self.neutral_300, self.bg),
-            Mode::Light => (self.neutral_700, self.text),
+    /// Avatar sem foto (spec 9): (anel de 1,5 px, preenchimento). O anel e a cor da pessoa e o
+    /// fundo e a tinta de 18 % dela sobre `surface`; a inicial vai em `fg` em todos os casos. A
+    /// inicial em `bg` sobre a cor cheia ficava entre 3,1 e 4,5:1 no claro e nenhum cinza fixo
+    /// passava nas doze cores; sobre a tinta o `fg` passa em todas, nos dois temas (teste). Sem
+    /// cor de perfil (aparelho sem perfil conhecido), o anel e `idle()`, o cinza de controle.
+    pub fn avatar_colors(&self, token: Option<&str>) -> (Color, Color) {
+        match token {
+            Some(tk) => (self.token(tk), self.token_tint(tk, AVATAR_TINT)),
+            None => {
+                let ring = self.idle();
+                (ring, mix(self.surface, ring, AVATAR_TINT))
+            }
         }
     }
 
@@ -714,6 +718,9 @@ pub fn scrim() -> impl Fn(&Theme) -> container::Style {
         ..container::Style::default()
     }
 }
+
+/// Tinta do fundo do avatar sem foto (spec 9).
+const AVATAR_TINT: f32 = 0.18;
 
 /// Atraso dos tooltips: sem ele a dica pisca sob o mouse que so atravessa o icone a caminho de
 /// outro lugar.
@@ -1516,15 +1523,13 @@ mod tests {
         assert_eq!(LIGHT.idle(), LIGHT.neutral_400);
     }
 
-    /// Avatar sem cor de perfil: a escolha da H4b para "Quem lançou" vale em toda tela.
+    /// Avatar sem cor de perfil: anel no cinza de controle, a mesma regra da tinta.
     #[test]
-    fn avatar_neutro_passa_4_5_nos_dois_temas() {
-        assert_eq!(DARK.avatar_neutral(), (DARK.neutral_300, DARK.bg));
-        assert_eq!(LIGHT.avatar_neutral(), (LIGHT.neutral_700, LIGHT.text));
+    fn avatar_sem_cor_usa_o_cinza_de_controle() {
         for t in [&DARK, &LIGHT] {
-            let (fill, initial) = t.avatar_neutral();
-            let c = contrast(initial, fill);
-            assert!(c >= 4.5, "{:?}: {c:.2}", t.mode);
+            let (ring, fill) = t.avatar_colors(None);
+            assert_eq!(ring, t.idle());
+            assert_eq!(fill, mix(t.surface, t.idle(), AVATAR_TINT));
         }
     }
 
@@ -1583,18 +1588,27 @@ mod tests {
         assert!(contrast(DARK.bg, DARK.neutral_100) >= 4.5);
     }
 
-    /// Lacuna da paleta, registrada e nao corrigida (os `tag-*` nao mudam, paleta §1): no claro,
-    /// a inicial em `bg` sobre a cor da pessoa fica entre 3,1 e 4,5:1. Nenhum cinza fixo passa
-    /// nas doze (o `fg` da 3,3 no violeta); quem mexer precisa de outra regra, nao de outro hex.
+    /// A lacuna da paleta (inicial em `bg` sobre a cor cheia da pessoa, entre 3,1 e 4,5:1 no
+    /// claro) caiu com o avatar da spec 9: a inicial em `fg` sobre a tinta de 18 % passa 4,5 nas
+    /// doze cores e sem cor, nos dois temas. A regra antiga continua abaixo do piso, para quem
+    /// pensar em voltar a ela.
     #[test]
-    fn inicial_sobre_a_cor_da_pessoa_no_claro_fica_abaixo_do_piso() {
-        let worst = colors::TOKENS
+    fn inicial_do_avatar_passa_4_5_nas_doze_cores_e_nos_dois_temas() {
+        let old_worst = colors::TOKENS
             .iter()
             .map(|tk| contrast(LIGHT.bg, LIGHT.token(tk)))
             .fold(f64::MAX, f64::min);
-        assert!(worst > 3.0 && worst < 4.5, "{worst:.2}");
-        for tk in colors::TOKENS {
-            assert!(contrast(DARK.bg, DARK.token(tk)) >= 4.5, "{tk}");
+        assert!(old_worst < 4.5, "{old_worst:.2}");
+        for t in [&DARK, &LIGHT] {
+            let tokens = colors::TOKENS.iter().map(|tk| Some(*tk));
+            for token in tokens.chain([None]) {
+                let (ring, fill) = t.avatar_colors(token);
+                let c = contrast(t.text, fill);
+                assert!(c >= 4.5, "{token:?} {:?}: {c:.2}", t.mode);
+                // O anel se separa do fundo do card (elemento grafico, 1,5:1 basta para o
+                // contorno ser visto; a leitura vem da inicial).
+                assert!(contrast(ring, t.surface) >= 1.5, "{token:?} {:?}", t.mode);
+            }
         }
     }
 

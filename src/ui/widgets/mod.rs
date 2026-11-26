@@ -109,10 +109,13 @@ fn initial_size(size: f32) -> f32 {
     }
 }
 
+/// Espessura do anel na cor da pessoa, com e sem foto (spec 9).
+const AVATAR_RING: f32 = 1.5;
+
 /// Avatar redondo. Com foto: a imagem recortada em circulo, anel de 2 px na superficie e anel
 /// de 1,5 px na cor da pessoa (os aneis ficam por fora, como o `box-shadow` do prototipo).
-/// Sem foto: a inicial (SemiBold, cor `bg`) sobre um circulo solido na cor; sem token,
-/// `neutral_600` (aparelho sem perfil conhecido).
+/// Sem foto (spec 9): anel de 1,5 px na cor, fundo na tinta de 18 % dela e a inicial
+/// (SemiBold) em `fg`; sem token, o anel e o cinza de controle (`Tokens::avatar_colors`).
 pub fn avatar<'a, M: 'a>(
     t: &'static Tokens,
     name: &str,
@@ -120,10 +123,9 @@ pub fn avatar<'a, M: 'a>(
     photo: Option<&image::Handle>,
     size: f32,
 ) -> Element<'a, M> {
-    let (neutral, neutral_initial) = t.avatar_neutral();
-    let (color, initial_color) = token.map_or((neutral, neutral_initial), |tk| (t.token(tk), t.bg));
+    let (color, fill) = t.avatar_colors(token);
     if let Some(handle) = photo {
-        let ring = 1.5;
+        let ring = AVATAR_RING;
         let gap = 2.0;
         let outer = size + 2.0 * (ring + gap);
         let surface = t.surface;
@@ -153,10 +155,18 @@ pub fn avatar<'a, M: 'a>(
             .size(initial_size(size))
             .font(fonts::INTER_SEMIBOLD)
             .line_height(1.0)
-            .color(initial_color),
+            .color(t.text),
     )
     .center(size)
-    .style(theme::fill(color, size / 2.0))
+    .style(move |_: &Theme| container::Style {
+        background: Some(fill.into()),
+        border: Border {
+            color,
+            width: AVATAR_RING,
+            radius: (size / 2.0).into(),
+        },
+        ..container::Style::default()
+    })
     .into()
 }
 

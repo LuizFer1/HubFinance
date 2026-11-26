@@ -94,19 +94,10 @@ fn frame(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .style(theme::page(t));
-    container(column![titlebar(app), hline(t), body])
+    container(column![titlebar(app), widgets::divider(t), body])
         .width(Length::Fill)
         .height(Length::Fill)
         .style(theme::fill(t.bg, 0.0))
-        .into()
-}
-
-/// Linha de 1 px no divisor: o iced nao tem borda de um lado so.
-fn hline<'a>(t: &'static Tokens) -> Element<'a, Message> {
-    container(Space::new())
-        .width(Length::Fill)
-        .height(1)
-        .style(theme::fill(t.divider(), 0.0))
         .into()
 }
 

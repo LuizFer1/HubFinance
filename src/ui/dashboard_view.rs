@@ -387,14 +387,6 @@ fn swatch<'a>(color: Color, size: f32, radius: f32) -> Element<'a, Message> {
         .into()
 }
 
-fn hline<'a>(t: &'static Tokens) -> Element<'a, Message> {
-    container(Space::new())
-        .width(Length::Fill)
-        .height(1)
-        .style(theme::fill(t.divider(), 0.0))
-        .into()
-}
-
 /// Barra horizontal de `frac` da largura (lista do historico, taxa de poupanca, medidor da
 /// reserva). `FillPortion` e `u16`: a fracao vira milesimos.
 fn ratio_bar<'a>(
@@ -592,7 +584,7 @@ fn business_capital<'a>(t: &'static Tokens, b: &BusinessBlock) -> Element<'a, Me
     for c in &b.capital {
         col = col.push(value_row(&c.label, &c.value, t.text));
     }
-    col.push(hline(t))
+    col.push(widgets::divider(t))
         .push(txt(b.debt_title.clone(), 13.0, t.text_muted))
         .push(value_row(&b.debt.label, &b.debt.value, t.expense_fg))
         .into()
@@ -800,7 +792,7 @@ fn balance_column(app: &App) -> Element<'_, Message> {
         if let Some(r) = reserves {
             block = block.push(r);
         }
-        col = col.push(column![hline(t), block].spacing(16));
+        col = col.push(column![widgets::divider(t), block].spacing(16));
     } else if let Some(r) = reserves {
         col = col.push(r);
     }
@@ -995,10 +987,10 @@ fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
                 .wrapping(Wrapping::None),
             );
         }
-        right = right.push(column![hline(t), line].spacing(12));
+        right = right.push(column![widgets::divider(t), line].spacing(12));
     }
     right = right.push(column![
-        hline(t),
+        widgets::divider(t),
         link_button(t, &r.link, Message::SelectScreen(Screen::Reserves))
     ]);
     tiles(
@@ -1092,7 +1084,8 @@ fn history_body(app: &App) -> Element<'_, Message> {
     if let Some(note) = footnote.filter(|n| !n.is_empty()) {
         foot = foot.push(txt(note, 12.0, t.text_muted).line_height(1.5));
     }
-    col.push(column![hline(t), foot].spacing(14)).into()
+    col.push(column![widgets::divider(t), foot].spacing(14))
+        .into()
 }
 
 // ---- para onde foi ----
@@ -1254,7 +1247,7 @@ fn where_it_went(app: &App, width: f32) -> Element<'_, Message> {
             bottom: 18.0,
             ..Padding::ZERO
         }),
-        hline(t),
+        widgets::divider(t),
         container(tiles(width - 40.0, 44.0, 8.0, blocks)).padding(Padding {
             top: 8.0,
             ..Padding::ZERO
@@ -1457,7 +1450,7 @@ fn upcoming_row<'a>(t: &'static Tokens, u: &UpcomingLine) -> Element<'a, Message
         .spacing(12)
         .padding([12, 0])
         .align_y(Alignment::Center),
-        hline(t),
+        widgets::divider(t),
     ]
     .into()
 }
@@ -1563,7 +1556,7 @@ fn recent(app: &App) -> Element<'_, Message> {
             t.text
         };
         if k > 0 {
-            list = list.push(hline(t));
+            list = list.push(widgets::divider(t));
         }
         list = list.push(
             row![
@@ -1593,7 +1586,7 @@ fn recent(app: &App) -> Element<'_, Message> {
     .align_y(Alignment::Center);
     column![
         heading(t, &r.title, "", Some(&r.count), 0.0),
-        widgets::card(t, column![list, hline(t), foot]).padding(Padding {
+        widgets::card(t, column![list, widgets::divider(t), foot]).padding(Padding {
             top: 10.0,
             right: 20.0,
             bottom: 8.0,

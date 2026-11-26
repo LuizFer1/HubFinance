@@ -529,7 +529,7 @@ fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
     .align_y(Alignment::Center);
     col = col
         .push(Space::new().height(20))
-        .push(widgets::hdivider(t))
+        .push(widgets::divider(t))
         .push(Space::new().height(16))
         .push(essential_section(app, e.cost.as_ref(), inner_width))
         .push(Space::new().height(14))
@@ -690,12 +690,12 @@ fn pots_card(app: &App) -> Element<'_, Message> {
         Space::new().height(8)
     ];
     if v.pots.is_empty() {
-        col = col.push(widgets::hdivider(t)).push(
+        col = col.push(widgets::divider(t)).push(
             container(text("Nenhuma caixinha ainda").size(13).color(t.text_muted)).padding([14, 0]),
         );
     }
     for p in &v.pots {
-        col = col.push(widgets::hdivider(t)).push(pot_row(app, p));
+        col = col.push(widgets::divider(t)).push(pot_row(app, p));
     }
     widgets::card(t, col).padding(pad(18.0, 20.0, 8.0)).into()
 }
@@ -864,7 +864,7 @@ fn movements_card(app: &App) -> Element<'_, Message> {
     .padding([0, 8]);
     let mut col = column![title, Space::new().height(8)];
     if v.movements.is_empty() {
-        col = col.push(widgets::hdivider(t)).push(
+        col = col.push(widgets::divider(t)).push(
             container(
                 text("Nenhuma movimentação nos últimos 12 meses")
                     .size(13)
@@ -876,7 +876,7 @@ fn movements_card(app: &App) -> Element<'_, Message> {
         );
     }
     for m in &v.movements {
-        col = col.push(widgets::hdivider(t)).push(movement_row(app, m));
+        col = col.push(widgets::divider(t)).push(movement_row(app, m));
     }
     widgets::card(t, col).padding(pad(18.0, 12.0, 8.0)).into()
 }

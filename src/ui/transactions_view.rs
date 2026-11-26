@@ -389,14 +389,14 @@ fn table(app: &App) -> Element<'_, Message> {
     .height(40)
     .padding([0, 20])
     .align_y(Alignment::Center);
-    let mut col = column![header, widgets::hdivider(t)];
+    let mut col = column![header, widgets::divider(t)];
     if v.list.count == 0 {
         col = col.push(empty(app));
     }
     let day_bg = mix(t.surface, t.bg, 0.45);
     for (i, group) in v.list.groups.iter().enumerate() {
         if i > 0 {
-            col = col.push(widgets::hdivider(t));
+            col = col.push(widgets::divider(t));
         }
         col = col.push(
             container(
@@ -419,7 +419,7 @@ fn table(app: &App) -> Element<'_, Message> {
             .style(theme::fill(day_bg, 0.0)),
         );
         for r in &group.rows {
-            col = col.push(widgets::hdivider(t)).push(table_row(app, r));
+            col = col.push(widgets::divider(t)).push(table_row(app, r));
         }
     }
     // `padding(1)`: as faixas de dia sao opacas e de largura cheia, e o iced desenha a borda por

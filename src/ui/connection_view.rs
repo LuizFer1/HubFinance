@@ -582,7 +582,7 @@ fn users_card(app: &App) -> Element<'_, Message> {
         let now = SystemTime::now();
         for person in app.visible_people() {
             col = col
-                .push(widgets::hdivider(t))
+                .push(widgets::divider(t))
                 .push(person_row(app, person, now));
         }
     }
@@ -729,7 +729,7 @@ fn empty_users<'a>(t: &'static Tokens) -> Element<'a, Message> {
     .spacing(8)
     .align_x(Alignment::Center);
     column![
-        widgets::hdivider(t),
+        widgets::divider(t),
         container(body)
             .padding(Padding {
                 top: 36.0,

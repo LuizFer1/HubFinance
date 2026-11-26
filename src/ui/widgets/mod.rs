@@ -12,7 +12,7 @@ use super::theme::{self, Tokens};
 
 mod surface;
 
-pub use surface::{card, inset};
+pub use surface::{card, divider, inset, vdivider};
 
 /// Controle segmentado de duas opcoes (o "toggle" do hub): `(glifo opcional, rotulo, ativo,
 /// mensagem)` para cada lado.
@@ -267,27 +267,6 @@ pub fn step_text<'a>(t: &'static Tokens, content: impl text::IntoFragment<'a>) -
         .size(13)
         .line_height(1.45)
         .color(t.text_soft())
-}
-
-/// Separador vertical de 1 x 20 no divisor, com 4 px de margem dos lados.
-pub fn vdivider<'a, M: 'a>(t: &'static Tokens) -> Element<'a, M> {
-    container(
-        container(Space::new())
-            .width(1)
-            .height(20)
-            .style(theme::fill(t.divider(), 0.0)),
-    )
-    .padding([0, 4])
-    .into()
-}
-
-/// Separador horizontal de 1 px no divisor (borda superior das linhas de lista).
-pub fn hdivider<'a, M: 'a>(t: &'static Tokens) -> Element<'a, M> {
-    container(Space::new())
-        .width(Length::Fill)
-        .height(1)
-        .style(theme::fill(t.divider(), 0.0))
-        .into()
 }
 
 /// Valor grande dos cards: prefixo ("R$", "+R$", "−R$") e centavos em 16 Regular, inteiro em

@@ -599,6 +599,17 @@ pub fn card(t: &'static Tokens) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
+/// Caixa interna (dentro de card ou dialogo): `surface_2`, raio 6, sem borda. Card dentro de
+/// card dava borda dupla e nao separava os planos; a caixa e o terceiro plano da regua.
+pub fn inset(t: &'static Tokens) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: bg(t.surface_2),
+        border: rounded(radius::INSET),
+        text_color: Some(t.text),
+        ..container::Style::default()
+    }
+}
+
 /// Campo de endereco: fundo da janela com a borda interna no divisor.
 pub fn field(t: &'static Tokens) -> impl Fn(&Theme) -> container::Style {
     move |_| container::Style {
@@ -1702,6 +1713,16 @@ mod tests {
             });
             assert_eq!(active, t.idle(), "{:?}", t.mode);
             assert!(contrast(active, t.bg) >= 3.0, "{:?}", t.mode);
+        }
+    }
+
+    #[test]
+    fn caixa_interna_e_surface_2_sem_borda() {
+        for t in [&DARK, &LIGHT] {
+            let style = inset(t)(&t.iced_theme());
+            assert_eq!(style.background, bg(t.surface_2), "{:?}", t.mode);
+            assert_eq!(style.border.width, 0.0);
+            assert_eq!(style.border.radius, 6.0.into());
         }
     }
 

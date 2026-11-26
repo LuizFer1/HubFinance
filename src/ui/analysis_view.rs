@@ -422,9 +422,14 @@ fn consent_preview<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, 
             .font(fonts::INTER)
             .color(t.text),
     );
-    let envelope = container(scrollable(container(body).padding(12).width(Length::Fill)))
-        .height(220)
-        .style(theme::card(t));
+    // Caixa interna, nao card: ela ja mora num card. O `padding(4)` mantem o cursor da rolagem
+    // longe do canto arredondado (o texto continua a 12 px: 4 + 8).
+    let envelope = container(
+        scrollable(container(body).padding(8).width(Length::Fill)).style(theme::scrollbar(t)),
+    )
+    .height(220)
+    .padding(4)
+    .style(theme::inset(t));
     let actions = row![
         Space::new().width(Length::Fill),
         button(text("Cancelar").size(13).font(fonts::INTER_MEDIUM))
@@ -590,13 +595,18 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
     let intro = text(INTRO).size(13).line_height(1.5).color(t.text_soft());
     // Fonte padrão do app (Inter Hub, com `tnum`: os dígitos alinham). O app não embute uma
     // monoespaçada, e a do sistema teria cobertura incerta para "—" e "−".
-    let content = container(scrollable(
-        container(text(preview).size(12).font(fonts::INTER).color(t.text))
-            .padding(12)
-            .width(Length::Fill),
-    ))
+    // Caixa interna dentro do dialogo, com o mesmo respiro da previa para o cursor da rolagem.
+    let content = container(
+        scrollable(
+            container(text(preview).size(12).font(fonts::INTER).color(t.text))
+                .padding(8)
+                .width(Length::Fill),
+        )
+        .style(theme::scrollbar(t)),
+    )
     .height(Length::Fill)
-    .style(theme::card(t));
+    .padding(4)
+    .style(theme::inset(t));
     let close = button(text("Fechar").size(13).font(fonts::INTER_MEDIUM))
         .height(38)
         .padding([0, 16])

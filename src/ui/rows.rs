@@ -2,11 +2,12 @@
 //! (tile da categoria, autor, valor, hover). Sairam do Dashboard quando ele virou o Grafite.
 
 use iced::widget::text::Wrapping;
-use iced::widget::{container, mouse_area, row, text};
-use iced::{Alignment, Border, Color, Element, Length, Theme};
+use iced::widget::{container, row, text};
+use iced::{Alignment, Color, Element, Length};
 
 use super::app::{App, Message};
 use super::theme::Tokens;
+use super::widgets::RowHover;
 use super::{fonts, icons, widgets};
 use crate::dashboard::contract::Kind;
 use crate::dashboard::list::{ListRow, RowAuthor};
@@ -95,8 +96,8 @@ pub(super) fn value_cell<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Mes
     .into()
 }
 
-/// Linha com hover de 4 % (o mesmo `hover_row` da tela Conexao: so uma tela por vez). Altura
-/// por parametro: 52 nos lancamentos, 56 nas movimentacoes de reserva.
+/// Linha de lista com o hover da tela (`app.hover_row`), sobre `widgets::list_row`. Altura por
+/// parametro: 52 nos lancamentos e nas conversas, 56 nas movimentacoes de reserva.
 pub(super) fn hover_row<'a>(
     app: &'a App,
     id: &str,
@@ -105,23 +106,16 @@ pub(super) fn hover_row<'a>(
     radius: f32,
     height: f32,
 ) -> Element<'a, Message> {
-    let t = app.tokens;
-    let hovered = app.hover_row.as_deref() == Some(id);
-    let body = container(content)
-        .height(height)
-        .padding(padding)
-        .width(Length::Fill)
-        .align_y(Alignment::Center)
-        .style(move |_: &Theme| container::Style {
-            background: hovered.then(|| t.text_alpha(0.04).into()),
-            border: Border {
-                radius: radius.into(),
-                ..Border::default()
-            },
-            ..container::Style::default()
-        });
-    mouse_area(body)
-        .on_enter(Message::HoverRow(id.to_string()))
-        .on_exit(Message::UnhoverRow(id.to_string()))
-        .into()
+    widgets::list_row(
+        app.tokens,
+        content,
+        RowHover {
+            hovered: app.hover_row.as_deref() == Some(id),
+            enter: Message::HoverRow(id.to_string()),
+            exit: Message::UnhoverRow(id.to_string()),
+        },
+        Some(height),
+        padding,
+        radius,
+    )
 }

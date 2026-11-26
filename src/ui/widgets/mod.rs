@@ -16,8 +16,8 @@ mod surface;
 mod values;
 
 pub use controls::{
-    ChipShape, SegmentedVariant, action_button, action_button_icon, action_button_with, chip,
-    icon_button, segmented,
+    ChipShape, RowHover, SegmentedVariant, action_button, action_button_icon, action_button_with,
+    chip, icon_button, list_row, segmented,
 };
 pub use marks::{
     Bar, TagTone, bar, color_tag, neutral_tile, partial_tag, tag, tag_icon, tile, token_tile,

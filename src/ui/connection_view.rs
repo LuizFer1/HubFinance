@@ -9,12 +9,12 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, SystemTime};
 
 use iced::widget::text::Wrapping;
-use iced::widget::{Space, column, container, mouse_area, qr_code, rich_text, row, span, text};
+use iced::widget::{Space, column, container, qr_code, rich_text, row, span, text};
 use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
 use super::app::{App, CopyTarget, Message};
-use super::theme::{self, ButtonKind, ButtonSize, Tokens};
-use super::widgets::SegmentedVariant;
+use super::theme::{self, ButtonKind, ButtonSize, Tokens, radius};
+use super::widgets::{RowHover, SegmentedVariant};
 use super::{fonts, icons, measure, shell, time, widgets};
 use crate::config;
 use crate::dashboard::people::{Person, presence};
@@ -652,22 +652,18 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
     .spacing(14)
     .align_y(Alignment::Center);
 
-    let hovered = app.hover_row.as_deref() == Some(person.device_id.as_str());
-    let body = container(content)
-        .padding([10, 8])
-        .width(Length::Fill)
-        .style(move |_: &Theme| container::Style {
-            background: hovered.then(|| t.text_alpha(0.04).into()),
-            border: Border {
-                radius: 8.0.into(),
-                ..Border::default()
-            },
-            ..container::Style::default()
-        });
-    mouse_area(body)
-        .on_enter(Message::HoverRow(person.device_id.clone()))
-        .on_exit(Message::UnhoverRow(person.device_id.clone()))
-        .into()
+    widgets::list_row(
+        t,
+        content,
+        RowHover {
+            hovered: app.hover_row.as_deref() == Some(person.device_id.as_str()),
+            enter: Message::HoverRow(person.device_id.clone()),
+            exit: Message::UnhoverRow(person.device_id.clone()),
+        },
+        None,
+        [10, 8],
+        radius::CONTROL,
+    )
 }
 
 fn empty_users<'a>(t: &'static Tokens) -> Element<'a, Message> {

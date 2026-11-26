@@ -1,8 +1,8 @@
 //! Controles: botoes de acao e de icone, segmentado, chip, linha de lista, campo com "Copiar".
 //! O estilo por `Status` mora em `theme` (testado la); aqui a altura, o respiro e o texto.
 
-use iced::widget::{Button, Row, button, container, row, text, tooltip};
-use iced::{Alignment, Element, Length};
+use iced::widget::{Button, Row, button, container, mouse_area, row, text, tooltip};
+use iced::{Alignment, Element, Length, Padding};
 
 use crate::ui::theme::{self, ButtonKind, ButtonSize, Tokens, radius, size, space, type_scale};
 use crate::ui::{fonts, icons};
@@ -192,6 +192,41 @@ pub fn chip<'a, M: 'a>(
     }
 }
 
+/// Estado de hover de uma linha e as mensagens que o mantem. O hover vem do estado da tela (uma
+/// linha por vez), e nao do `Status` de um botao: a linha tem botoes dentro ("Remover",
+/// "Apagar"), e botao dentro de botao nao recebe o clique.
+pub struct RowHover<M> {
+    pub hovered: bool,
+    pub enter: M,
+    pub exit: M,
+}
+
+/// Linha de lista com hover a 4 % (`theme::list_row`). `height` fixa a linha (44 simples, 52
+/// de duas linhas; as Reservas ainda usam 56) ou, com `None`, ela cresce com o conteudo.
+/// `radius` e 8, ou 0 na tabela que vai de borda a borda do card.
+pub fn list_row<'a, M: Clone + 'a>(
+    t: &'static Tokens,
+    content: impl Into<Element<'a, M>>,
+    hover: RowHover<M>,
+    height: Option<f32>,
+    padding: impl Into<Padding>,
+    radius: f32,
+) -> Element<'a, M> {
+    let body = container(content)
+        .padding(padding)
+        .width(Length::Fill)
+        .align_y(Alignment::Center)
+        .style(theme::list_row(t, hover.hovered, radius));
+    let body = match height {
+        Some(h) => body.height(h),
+        None => body,
+    };
+    mouse_area(body)
+        .on_enter(hover.enter)
+        .on_exit(hover.exit)
+        .into()
+}
+
 fn label_text<'a>(size: ButtonSize, label: impl text::IntoFragment<'a>) -> text::Text<'a> {
     text(label)
         .size(size.text_size())
@@ -258,6 +293,21 @@ mod tests {
                     let _: Element<'_, ()> =
                         chip(t, text("Todos"), active, shape).on_press(()).into();
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn linha_de_lista_monta_com_e_sem_altura() {
+        for t in [&DARK, &LIGHT] {
+            for hovered in [true, false] {
+                let hover = || RowHover {
+                    hovered,
+                    enter: 1,
+                    exit: 2,
+                };
+                let _ = list_row(t, text("Linha"), hover(), Some(52.0), [0, 20], 0.0);
+                let _ = list_row(t, text("Linha"), hover(), None, [10, 8], 8.0);
             }
         }
     }

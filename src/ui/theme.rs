@@ -688,6 +688,20 @@ pub fn toast(t: &'static Tokens) -> impl Fn(&Theme) -> container::Style {
     menu(t)
 }
 
+/// Linha de lista sob o mouse: a camada `state` de 4 % (so mora em `surface`, ver `state`).
+/// Raio 8, ou 0 na tabela que encosta na borda do card.
+pub fn list_row(
+    t: &'static Tokens,
+    hovered: bool,
+    radius: f32,
+) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: hovered.then(|| Background::Color(t.state(false))),
+        border: rounded(radius),
+        ..container::Style::default()
+    }
+}
+
 /// Fundo do dialogo: preto a 55 % sobre a janela inteira.
 pub fn scrim() -> impl Fn(&Theme) -> container::Style {
     |_| container::Style {
@@ -1848,6 +1862,19 @@ mod tests {
                 panic!("fechar pressionado sem fundo");
             };
             assert!(contrast(s.text_color, fill) >= 4.5, "{:?}", t.mode);
+        }
+    }
+
+    #[test]
+    fn linha_de_lista_so_tem_fundo_sob_o_mouse() {
+        for t in [&DARK, &LIGHT] {
+            let theme = t.iced_theme();
+            assert_eq!(list_row(t, false, 8.0)(&theme).background, None);
+            assert_eq!(
+                list_row(t, true, 8.0)(&theme).background,
+                bg(t.state(false))
+            );
+            assert_eq!(list_row(t, true, 0.0)(&theme).border.radius, 0.0.into());
         }
     }
 

@@ -1938,6 +1938,49 @@ mod tests {
         assert!(near(contrast(LIGHT.accent_200, LIGHT.accent_800), 7.76));
     }
 
+    /// Relatorio 7.3, "texto por superficie": todo texto do hub sobre os seis fundos onde pode
+    /// aparecer, incluindo a linha sob o mouse e pressionada (`state` de 4 e 8 % sobre `surface`).
+    #[test]
+    fn texto_por_superficie_passa_4_5() {
+        for t in [&DARK, &LIGHT] {
+            let surfaces = [
+                ("bg", t.bg),
+                ("lateral", t.side()),
+                ("surface", t.surface),
+                ("surface_2", t.surface_2),
+                ("hover", mix(t.surface, t.text, 0.04)),
+                ("pressionado", mix(t.surface, t.text, 0.08)),
+            ];
+            let texts = [
+                ("fg", t.text),
+                ("text_soft", t.text_soft()),
+                ("text_muted", t.text_muted),
+                ("text_accent", t.text_accent()),
+                ("income_fg", t.income_fg),
+                ("expense_fg", t.expense_fg),
+                ("warning", t.warning),
+            ];
+            for (fundo, bg) in surfaces {
+                for (name, fg) in texts {
+                    let c = contrast(fg, bg);
+                    assert!(c >= 4.5, "{name}/{fundo} {:?}: {c:.2}", t.mode);
+                }
+            }
+        }
+        // Lacunas registradas (asteriscos da tabela): `idle` so serve para desabilitado, e o
+        // `accent` cru do claro cai abaixo do piso em caixa interna e linha pressionada, que e o
+        // motivo de `text_accent` existir.
+        assert!(contrast(DARK.text_disabled(), DARK.surface) < 4.5);
+        assert!(contrast(LIGHT.text_disabled(), LIGHT.surface_2) < 4.5);
+        assert!(contrast(LIGHT.accent, LIGHT.surface_2) < 4.5);
+        assert!(contrast(LIGHT.accent, mix(LIGHT.surface, LIGHT.text, 0.08)) < 4.5);
+        // Fechar da barra de titulo: #f2f2f2 sobre #c42b1c.
+        let near = |got: f64, want: f64| (got - want).abs() < 0.01;
+        for t in [&DARK, &LIGHT] {
+            assert!(near(contrast(t.close_hover_text, t.close_hover), 5.06));
+        }
+    }
+
     #[test]
     fn token_segue_o_modo() {
         assert_eq!(DARK.token("fuchsia"), Color::from_rgb8(0xe0, 0x93, 0xcf));

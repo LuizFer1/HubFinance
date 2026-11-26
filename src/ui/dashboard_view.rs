@@ -11,7 +11,9 @@
 
 use ::time::OffsetDateTime;
 use iced::widget::text::{IntoFragment, Span, Wrapping};
-use iced::widget::{Space, Stack, canvas, column, container, rich_text, row, span, text, tooltip};
+use iced::widget::{
+    Space, Stack, button, canvas, column, container, rich_text, row, span, text, tooltip,
+};
 use iced::{Alignment, Color, Element, Font, Length, Padding};
 
 use super::app::{App, Message, Screen};
@@ -341,22 +343,20 @@ fn meter<'a>(program: MeterProgram) -> Element<'a, Message> {
 }
 
 fn link_button<'a>(t: &'static Tokens, label: &str, message: Message) -> Element<'a, Message> {
-    // Linha inteira de 44 (o tamanho grande, texto 14) sem respiro lateral: o link encosta
-    // na borda do conteudo do card, como no design. A cor vem do estilo, que muda com o mouse.
-    widgets::action_button_with(
-        t,
-        ButtonKind::Link,
-        ButtonSize::Large,
+    // Linha inteira de 44 sem respiro lateral nem centralizacao: o link encosta na borda do
+    // conteudo do card, como no design. Texto e seta herdam a cor do estilo, que muda com o
+    // mouse.
+    button(
         row![
-            text(label.to_string())
-                .size(ButtonSize::Large.text_size())
-                .width(Length::Fill),
+            text(label.to_string()).size(14).width(Length::Fill),
             icons::icon_inherit(icons::CARET_RIGHT, 14.0),
         ]
         .align_y(Alignment::Center),
     )
     .width(Length::Fill)
+    .height(44)
     .padding(0)
+    .style(theme::button(t, ButtonKind::Link, ButtonSize::Regular))
     .on_press(message)
     .into()
 }

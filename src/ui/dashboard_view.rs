@@ -30,6 +30,7 @@ use crate::dashboard::grafite::{
     BusinessBlock, EmergencyBlock, HistoryBody, Line, Section, Tone, UpcomingLine,
 };
 use crate::dashboard::money::group_thousands;
+use crate::hub::snapshot::Status;
 
 /// Espaco entre blocos (o `gap: 16px` do `main`).
 const GAP: f32 = 16.0;
@@ -1593,29 +1594,43 @@ fn lan_note<'a>(t: &'static Tokens) -> text::Text<'a> {
 /// vazio com "Conectar um celular" da issue 02, que nao dizia o que vem depois de parear.
 fn first_use_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
-    let col = column![
-        lead(t, "Comece por aqui"),
-        first_use_step(t, 1, shell::connect_phone_button(app)),
-        first_use_step(t, 2, None),
-        first_use_step(t, 3, None),
-        lan_note(t),
-    ]
-    .spacing(20);
+    let mut col = column![lead(t, "Comece por aqui")].spacing(20);
+    if let Some(note) = no_network_note(app) {
+        col = col.push(note);
+    }
+    col = col
+        .push(first_use_step(t, 1, shell::connect_phone_button(app)))
+        .push(first_use_step(t, 2, None))
+        .push(first_use_step(t, 3, None))
+        .push(lan_note(t));
     widgets::card(t, col).padding(Padding::new(20.0)).into()
 }
 
 /// Ha aparelho pareado mas nada chegou: quem o hub espera e o passo que falta (o 3, o sync).
 fn waiting_card(app: &App, line: String) -> Element<'_, Message> {
     let t = app.tokens;
-    let col = column![
+    let mut col = column![
         row![swatch(t.warning, 7.0, 3.5), lead(t, line)]
             .spacing(10)
-            .align_y(Alignment::Center),
-        first_use_step(t, 3, None),
-        lan_note(t),
+            .align_y(Alignment::Center)
     ]
     .spacing(20);
+    if let Some(note) = no_network_note(app) {
+        col = col.push(note);
+    }
+    col = col.push(first_use_step(t, 3, None)).push(lan_note(t));
     widgets::card(t, col).padding(Padding::new(20.0)).into()
+}
+
+/// Aviso dos cards de primeiro uso e de espera quando o computador esta sem rede local: os
+/// passos continuam valendo (parear abre o QR em Aparelhos), mas nenhum celular alcanca o hub
+/// ate o Wi-Fi voltar, e sem o aviso a espera pareceria culpa do celular.
+const NO_NETWORK_NOTE: &str =
+    "Conecte o computador ao Wi-Fi de casa para o celular encontrar o hub.";
+
+fn no_network_note(app: &App) -> Option<Element<'_, Message>> {
+    (app.snapshot.status == Status::NoNetwork)
+        .then(|| txt(NO_NETWORK_NOTE, 13.0, app.tokens.warning).into())
 }
 
 fn empty_card(app: &App) -> Element<'_, Message> {
@@ -1719,6 +1734,26 @@ fn footer(app: &App) -> Option<Element<'_, Message>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aviso_do_wifi_so_sem_rede_e_o_botao_continua() {
+        use crate::hub::snapshot::Snapshot;
+        let dir = tempfile::tempdir().unwrap();
+        let snap = Snapshot {
+            status: Status::Running,
+            ..Snapshot::default()
+        };
+        let (mut app, _rx, _tx) = crate::ui::app::tests::app_with(snap, dir.path().to_path_buf());
+        assert!(no_network_note(&app).is_none());
+        app.snapshot.status = Status::NoNetwork;
+        assert_eq!(
+            shell::screen_arrival(&app, !app.dashboard.is_empty),
+            Arrival::FirstUse
+        );
+        assert!(no_network_note(&app).is_some());
+        assert!(shell::connect_phone_button(&app).is_some());
+        let _ = view(&app);
+    }
 
     #[test]
     fn rodape() {

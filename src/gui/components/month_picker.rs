@@ -39,6 +39,7 @@ pub fn can_go_next(shown: &str, current: &str) -> bool {
 pub struct MonthPicker {
     id: SharedString,
     label: SharedString,
+    can_prev: bool,
     can_next: bool,
     on_prev: Option<Handler>,
     on_next: Option<Handler>,
@@ -60,6 +61,7 @@ impl MonthPicker {
         MonthPicker {
             id: id.into(),
             label: label.into(),
+            can_prev: true,
             can_next,
             on_prev: None,
             on_next: None,
@@ -72,6 +74,12 @@ impl MonthPicker {
 
     pub fn surface(mut self, surface: PickerSurface) -> Self {
         self.surface = surface;
+        self
+    }
+
+    /// Sem mes anterior (o mais antigo com dados): a seta fica apagada e fora do Tab.
+    pub fn can_prev(mut self, can_prev: bool) -> Self {
+        self.can_prev = can_prev;
         self
     }
 
@@ -104,6 +112,7 @@ impl RenderOnce for MonthPicker {
         // anel afastado na cor do fundo do proprio seletor (`surface_2`).
         let arrow = |suffix: &str,
                      glyph: Icon,
+                     label: &'static str,
                      enabled: bool,
                      on: Option<Handler>,
                      focus: Option<FocusHandle>| {
@@ -112,6 +121,7 @@ impl RenderOnce for MonthPicker {
                 .ring_gap(bg)
                 .hover_bg(hover)
                 .glyph_size(16.0)
+                .aria_label(label)
                 .disabled_opacity(DISABLED_OPACITY)
                 .disabled(!enabled);
             if let Some(f) = focus {
@@ -137,7 +147,8 @@ impl RenderOnce for MonthPicker {
             .child(arrow(
                 "prev",
                 Icon::ChevronLeft,
-                true,
+                "Mês anterior",
+                self.can_prev,
                 self.on_prev,
                 self.focus_prev,
             ))
@@ -145,6 +156,7 @@ impl RenderOnce for MonthPicker {
             .child(arrow(
                 "next",
                 Icon::ChevronRight,
+                "Próximo mês",
                 self.can_next,
                 self.on_next,
                 self.focus_next,

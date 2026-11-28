@@ -63,13 +63,12 @@ pub fn render(
         }
         let shown = month_label_capitalized(app.month());
         let (prev_state, next_state) = (state.clone(), state.clone());
-        let mut picker = MonthPicker::new("month", shown, shell::can_go_next_month(app), t)
+        let picker = MonthPicker::new("month", shown, shell::can_go_next_month(app), t)
             .surface(PickerSurface::Header)
+            .can_prev(app.month_idx > 0)
             .focus(&focus.prev, &focus.next)
+            .on_prev(move |_, cx| dispatch_later(&prev_state, Msg::PrevMonth, cx))
             .on_next(move |_, cx| dispatch_later(&next_state, Msg::NextMonth, cx));
-        if app.month_idx > 0 {
-            picker = picker.on_prev(move |_, cx| dispatch_later(&prev_state, Msg::PrevMonth, cx));
-        }
         controls = controls.child(picker);
     }
     if app.screen.shows_values() {

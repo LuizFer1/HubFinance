@@ -301,6 +301,10 @@ pub const EXTRA_FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../assets/brand/hubfinance-simbolo-app.svg"),
     ),
     (
+        "brand/hubfinance-simbolo-app-160.svg",
+        include_bytes!("../../assets/brand/hubfinance-simbolo-app-160.svg"),
+    ),
+    (
         "brand/hubfinance-pequeno-telhado.svg",
         include_bytes!("../../assets/brand/hubfinance-pequeno-telhado.svg"),
     ),

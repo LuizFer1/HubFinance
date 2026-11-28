@@ -23,7 +23,7 @@ use crate::ui_model::shell::{self, NAV_ORDER};
 
 pub const WIDTH: f32 = 232.0;
 pub const RAIL_WIDTH: f32 = 76.0;
-pub const BRAND: &str = "brand/hubfinance-simbolo-app.svg";
+pub const BRAND: &str = "brand/hubfinance-simbolo-app-160.svg";
 
 /// Icone e rotulo de cada tela da navegacao (os do artboard Main).
 pub fn nav_item(screen: Screen) -> (Icon, &'static str) {

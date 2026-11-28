@@ -141,6 +141,10 @@ pub struct DeskEmergency {
     /// "de custo essencial guardados · meta: 6 meses".
     pub caption: String,
     pub reached: bool,
+    /// Preenchimento da barra do card (0..=1, 1 com a meta coberta; 0 sem meta ou sem custo).
+    /// Vem pronto para a tela não refazer a conta, e continua visível com valores ocultos
+    /// (é forma, não valor), como `DeskUsage.fill`.
+    pub fill: f32,
     /// "Reserva de emergência" com o saldo.
     pub balance: LabeledValue,
     /// "Custo essencial médio" com "R$ 5.420,00/mês"; `None` sem custo.
@@ -178,7 +182,7 @@ pub struct DeskMonth {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DeskTip {
-    /// "Nov 2026".
+    /// Nome do mês por extenso ("Outubro"), como no hover do design.
     pub title: String,
     pub rows: Vec<LabeledValue>,
 }
@@ -426,6 +430,7 @@ fn reserve_card(ds: &Dataset, today: &str, month: &str, m: Money) -> DeskReserve
             },
             coverage: v.coverage_label.clone(),
             reached,
+            fill: frac(v.balance_minor, v.goal_minor),
             balance: lv("Reserva de emergência", m.brl(v.balance_minor)),
             essential: v.cost.as_ref().map(|c| {
                 lv(
@@ -540,7 +545,7 @@ fn history_card(ds: &Dataset, today: &str, month: &str, m: Money) -> DeskHistory
 mod tests {
     use super::*;
     use crate::dashboard::contract::Book;
-    use crate::dashboard::dataset::{BOOKS, TRANSACTIONS};
+    use crate::dashboard::dataset::{self, BOOKS, TRANSACTIONS};
     use crate::dashboard::money::leaks;
     use crate::dashboard::{GRAFITE_TODAY, dataset_from, fixtures_grafite, grafite_rows};
     use serde_json::json;
@@ -703,6 +708,8 @@ mod tests {
         assert_eq!(e.headline, "Ainda não coberta");
         assert_eq!(e.caption, "de custo essencial guardados · meta: 6 meses");
         assert!(!e.reached);
+        // 350 / (6 x 2.500 = 15.000) = 0,0233.
+        assert!((e.fill - 0.023_333).abs() < 1e-4);
         assert_eq!(e.balance.value, "R$ 350,00");
         assert_eq!(e.essential.expect("custo").value, "R$ 2.500,00/mês");
         // Todas as reservas vivas: emergência 550 + 100 - 300 = 350 e a caixinha Casamento
@@ -715,6 +722,52 @@ mod tests {
             ("Retirado em novembro", "\u{2212}R$ 200,00")
         );
         assert_eq!(r.link, "Ver reservas");
+    }
+
+    /// Estado principal do design: reserva coberta, mês com guardado positivo e despesa acima
+    /// da receita no mesmo mês.
+    #[test]
+    fn reserva_coberta_guardado_positivo_e_despesa_acima_da_receita() {
+        let mut rows = vec![(
+            dataset::RESERVES,
+            "RE".to_string(),
+            json!({ "kind": "emergency", "name": "Reserva", "icon": "lifebuoy",
+                    "color": "violet", "multiple": 1, "essentialOverrideMinor": 100_000 }),
+        )];
+        // Depósito de 1.000,00 em novembro: saldo igual à meta (1 x 1.000,00).
+        rows.push((
+            dataset::RESERVE_MOVEMENTS,
+            "MV".to_string(),
+            json!({ "reserveId": "RE", "amountMinor": 100_000, "occurredOn": "2026-11-06",
+                    "userId": "UL", "recurring": false }),
+        ));
+        // Receita 1.000,00 e despesa 1.500,00: despesa passa da receita (150%).
+        for (id, kind, amount) in [("T1", "income", 100_000), ("T2", "expense", 150_000)] {
+            rows.push((
+                TRANSACTIONS,
+                id.to_string(),
+                json!({ "kind": kind, "description": "x", "amountMinor": amount,
+                        "occurredOn": "2026-11-10", "book": "personal", "userId": "UL" }),
+            ));
+        }
+        let v = build_desk(&dataset_from(rows), None, GRAFITE_TODAY, "2026-11", false);
+        let e = v.reserve.emergency.expect("emergencia");
+        // Saldo 1.000,00 >= meta 1.000,00: coberta; cobertura 1.000/1.000 = "1,0" (singular).
+        assert_eq!(e.headline, "Emergência coberta");
+        assert!(e.reached);
+        assert_eq!(e.fill, 1.0);
+        assert_eq!(e.coverage, "1,0");
+        assert_eq!(e.unit, "mês");
+        let f = v.reserve.month_flow.expect("movimento");
+        assert_eq!(
+            (f.label.as_str(), f.value.as_str()),
+            ("Guardado em novembro", "+R$ 1.000,00")
+        );
+        // 1.500 / 1.000 passa de 100%: `over` e a barra trava em 1.
+        let u = v.how_am_i.usage.expect("uso");
+        assert!(u.over);
+        assert_eq!(u.fill, 1.0);
+        assert_eq!(u.percent, "150,0%");
     }
 
     #[test]

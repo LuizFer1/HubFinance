@@ -178,6 +178,16 @@ impl Render for HubWindow {
         let (title, subtitle) = shell::titles(app);
         let title = title.to_string();
         let state = self.state.clone();
+        #[cfg(debug_assertions)]
+        if super::components::showcase::requested() {
+            return div()
+                .size_full()
+                .bg(tokens.bg)
+                .text_color(tokens.text)
+                .font_family(fonts::FAMILY)
+                .child(super::components::showcase::render(tokens))
+                .into_any_element();
+        }
         div()
             .id("hub-root")
             .track_focus(&self.focus)
@@ -196,6 +206,7 @@ impl Render for HubWindow {
             .gap_2()
             .child(div().text_size(px(30.0)).child(title))
             .child(div().text_size(px(14.0)).child(subtitle))
+            .into_any_element()
     }
 }
 

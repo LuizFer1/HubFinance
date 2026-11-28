@@ -37,7 +37,7 @@ pub struct CardRing {
     pub shadow: BoxShadow,
 }
 
-#[allow(dead_code)] // campos usados nas Tarefas 11 a 15
+#[allow(dead_code)] // usado na Tarefa 11 (campos restantes nas Tarefas 12 a 15)
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tokens {
     pub dark: bool,
@@ -217,6 +217,10 @@ pub fn apply(tokens: &Tokens, cx: &mut App) {
         c.muted = t.surface_2;
         c.muted_foreground = t.muted;
         // Anel de foco do design: `accent_400`.
+        // Limite conhecido (gpui-component 0.11): o Input preenche com `input_background()`
+        // (`background` no claro, `input` a 30% no escuro), nunca com `surface_2`, e o foco e
+        // `border_1` em `ring`, nao o contorno de 2 px com offset 2 px do design. O TextField
+        // da Tarefa 13 usa `.appearance(false)` e desenha o proprio quadro.
         c.ring = t.accent_400;
         c.selection = t.accent_900;
         c.caret = t.accent;

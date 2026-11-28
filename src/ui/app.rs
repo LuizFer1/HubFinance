@@ -1061,7 +1061,7 @@ pub fn boot(
         // primeiro `Snapshot` nao seria uma transicao para `Failed`, e um boot so com o icone
         // esconderia o erro.
         if open_window || matches!(app.snapshot.status, Status::Failed(_)) {
-            tasks.push(open_window_task(&mut app));
+            tasks.push(effects::task(Effect::OpenWindow, &mut app));
         }
         (app, Task::batch(tasks))
     }
@@ -1069,42 +1069,39 @@ pub fn boot(
 
 /// Abre a janela e guarda o id na hora: os botoes da barra de titulo nao precisam esperar
 /// o `WindowOpened`.
-fn open_window_task(app: &mut App) -> Task<Message> {
-    effects::task(Effect::OpenWindow, app)
+fn open_window_task() -> Vec<Effect<Message>> {
+    vec![Effect::OpenWindow]
 }
 
 /// Abre ou traz a janela. Com janela: desminimiza e pede foco (clique na bandeja e segunda
 /// execucao dao ao processo o direito de foco; se o Windows recusar, o botao pisca).
-fn open_or_focus(app: &mut App) -> Task<Message> {
+fn open_or_focus(app: &App) -> Vec<Effect<Message>> {
     match app.window {
-        Some(_) => effects::task(Effect::FocusWindow, app),
-        None => open_window_task(app),
+        Some(_) => vec![Effect::FocusWindow],
+        None => open_window_task(),
     }
 }
 
 /// Encerra o processo; o porque do "despertador" esta em `effects::task`.
-fn exit(app: &mut App) -> Task<Message> {
-    effects::task(Effect::Exit, app)
+fn exit() -> Vec<Effect<Message>> {
+    vec![Effect::Exit]
 }
 
 /// Desligamento com ordem (o `CloseRequested` da 1.0.0): remocao pendente, `Shutdown`,
 /// `Stopped` ou 5 s. Idempotente por `closing`.
-fn begin_shutdown(app: &mut App) -> Task<Message> {
+fn begin_shutdown(app: &mut App) -> Vec<Effect<Message>> {
     if app.closing {
-        return Task::none();
+        return vec![];
     }
     app.closing = true;
     // Antes do `Shutdown`, no mesmo canal: o nucleo processa em ordem.
     app.commit_pending();
     // Nucleo ja parado (ou morto): nao ha por que esperar o snapshot `Stopped`.
     if app.handle.commands.send(Command::Shutdown).is_err() {
-        return exit(app);
+        return exit();
     }
     // Garantia: se o nucleo travar, o processo sai mesmo assim em 5 s.
-    effects::task(
-        Effect::After(Duration::from_secs(5), Message::ForceExit),
-        app,
-    )
+    vec![Effect::After(Duration::from_secs(5), Message::ForceExit)]
 }
 
 /// `watch` -> Stream. `Task::run` aceita qualquer `Stream + Send`; nao precisa de
@@ -1118,11 +1115,28 @@ fn snapshot_stream(rx: watch::Receiver<Snapshot>) -> impl futures::Stream<Item =
     })
 }
 
+/// O `update` do iced: a transicao descreve os efeitos e so aqui eles viram `Task`.
 pub fn update(app: &mut App, message: Message) -> Task<Message> {
-    let task = match message {
-        Message::Resize(direction) => effects::resize(app, direction),
-        message => handle(app, message),
+    let effects = match message {
+        // So da iced: o arrastar da borda e do sistema de janelas dela, nao e um `Effect`.
+        Message::Resize(direction) => return effects::resize(app, direction),
+        message => step(app, message),
     };
+    // Convertido na hora (e em ordem): `OpenWindow` guarda o id da janela no estado.
+    let task = Task::batch(effects.into_iter().map(|e| effects::task(e, app)));
+    // Sem janela nao chegam quadros: o que comecou agora (um toast que expirou com a janela
+    // fechada, por exemplo) termina aqui, e nao aparece pela metade ao reabrir. Depois da
+    // conversao: o `OpenWindow` deste mesmo passo ja deu o id, e a janela que abre agora anima.
+    if app.window.is_none() {
+        app.motion.settle();
+    }
+    task
+}
+
+/// Uma mensagem: transicao de estado mais a limpeza posterior, devolvendo os efeitos em vez de
+/// `Task`. Os testes e as mensagens que disparam outras (`ConnectPhone`, atalhos) usam este.
+pub(super) fn step(app: &mut App, message: Message) -> Vec<Effect<Message>> {
+    let effects = handle(app, message);
     // Fluxo aberto que deixou de estar na tela (outra tela, "Desfazer" que trouxe um aparelho de
     // volta, nucleo que caiu): fecha e cancela o codigo, que nao pode valer sem ninguem ver.
     if app.connect.is_some() && !app.connect_showing() {
@@ -1132,15 +1146,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
     // dos cinco dialogos (ou qual caminho, snapshot incluso) mudou o estado.
     let scene = app.scene();
     app.motion.sync(scene, Instant::now());
-    // Sem janela nao chegam quadros: o que comecou agora (um toast que expirou com a janela
-    // fechada, por exemplo) termina aqui, e nao aparece pela metade ao reabrir.
-    if app.window.is_none() {
-        app.motion.settle();
-    }
-    task
+    effects
 }
 
-fn handle(app: &mut App, message: Message) -> Task<Message> {
+fn handle(app: &mut App, message: Message) -> Vec<Effect<Message>> {
     match message {
         Message::Snapshot(s) => {
             let new_token = s.pairing.as_ref().map(|p| &p.token);
@@ -1202,7 +1211,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             }
             app.sync_tray();
             if stopped && app.closing {
-                return exit(app);
+                return exit();
             }
             // Boot por `--autostart` que falhou (porta ocupada, banco): sem janela ninguem
             // veria; o tooltip diz "com erro" e a janela abre sozinha. So na transicao para
@@ -1216,11 +1225,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             if failed && !was_failed && app.window.is_none() && !app.closing {
                 return open_or_focus(app);
             }
-            Task::none()
+            vec![]
         }
         Message::IssueToken => {
             let _ = app.handle.commands.send(Command::IssuePairingToken);
-            Task::none()
+            vec![]
         }
         Message::Tick => {
             if app
@@ -1255,7 +1264,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             {
                 app.set_system_dark(dark);
             }
-            Task::none()
+            vec![]
         }
         Message::PrevMonth => {
             if app.month_idx > 0 {
@@ -1263,7 +1272,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 app.upcoming_expanded = false;
                 app.rebuild();
             }
-            Task::none()
+            vec![]
         }
         Message::NextMonth => {
             if app.month_idx + 1 < app.months.len() {
@@ -1271,7 +1280,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 app.upcoming_expanded = false;
                 app.rebuild();
             }
-            Task::none()
+            vec![]
         }
         Message::SelectBook(book) => {
             // Comercial so com a conta existindo: a mensagem vem de um botao que so existe
@@ -1281,11 +1290,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 app.select_book(book);
                 app.rebuild();
             }
-            Task::none()
+            vec![]
         }
         Message::ExpandUpcoming => {
             app.upcoming_expanded = true;
-            Task::none()
+            vec![]
         }
         Message::CloseRequested => {
             // Sem bandeja (Linux/macOS, ou bandeja que nao subiu) nao haveria como voltar:
@@ -1310,14 +1319,14 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             app.preview_after = None;
             app.envelope_preview = None;
             app.confirm_remove = None;
-            effects::task(Effect::CloseWindow, app)
+            vec![Effect::CloseWindow]
         }
         Message::Desktop(DesktopEvent::Quit) => begin_shutdown(app),
         Message::Desktop(DesktopEvent::OpenWindow) => open_or_focus(app),
         Message::Desktop(DesktopEvent::ConnectPhone) => {
             // Desligando: nao abre janela nem gera codigo que ninguem vai usar.
             if app.closing {
-                return Task::none();
+                return vec![];
             }
             // A janela primeiro: o `ConnectPhone` le o estado da tela, nao da janela, entao
             // vale com ela fechada, e o dialogo ja esta montado quando ela aparece.
@@ -1327,8 +1336,8 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             if app.any_dialog_open() {
                 return open;
             }
-            let connect = update(app, Message::ConnectPhone);
-            Task::batch([open, connect])
+            let connect = step(app, Message::ConnectPhone);
+            open.into_iter().chain(connect).collect()
         }
         Message::Desktop(DesktopEvent::CopyAddress) => {
             // Sem endereco (sem rede local) nao ha o que copiar; o icone ja esta com o ponto
@@ -1338,14 +1347,14 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             {
                 tracing::warn!("copiar endereco pela bandeja: {err}");
             }
-            Task::none()
+            vec![]
         }
-        Message::ForceExit => exit(app),
+        Message::ForceExit => exit(),
         Message::WindowOpened(id) => {
             if app.window == Some(id) {
-                effects::task(Effect::QueryMaximized, app)
+                vec![Effect::QueryMaximized]
             } else {
-                Task::none()
+                vec![]
             }
         }
         Message::WindowClosed(id) => {
@@ -1358,43 +1367,43 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 // Sem janela nao ha quadros: o que andava termina aqui, nao ao reabrir.
                 app.motion.settle();
             }
-            Task::none()
+            vec![]
         }
         Message::TitlePressed => {
             app.title_pressed = true;
-            Task::none()
+            vec![]
         }
         Message::TitleReleased => {
             app.title_pressed = false;
-            Task::none()
+            vec![]
         }
         Message::TitleMoved => {
             if !app.title_pressed {
-                return Task::none();
+                return vec![];
             }
             // O laco de movimento do sistema consome o soltar do botao: sem zerar aqui, o
             // proximo movimento sem botao comecaria outro arrasto.
             app.title_pressed = false;
-            effects::task(Effect::StartDrag, app)
+            vec![Effect::StartDrag]
         }
-        Message::Minimize => effects::task(Effect::Minimize, app),
+        Message::Minimize => vec![Effect::Minimize],
         Message::ToggleMaximize => {
             app.title_pressed = false;
-            effects::task(Effect::ToggleMaximize, app)
+            vec![Effect::ToggleMaximize]
         }
         Message::Maximized(maximized) => {
             app.maximized = maximized;
-            Task::none()
+            vec![]
         }
         Message::Resized(size) => {
             app.window_size = size;
-            effects::task(Effect::QueryMaximized, app)
+            vec![Effect::QueryMaximized]
         }
         // So da iced: o adaptador `update` executa `effects::resize` antes do handle, para o
         // handle nao montar Task fora do `Effect` (no GPUI nao existe esta mensagem).
-        Message::Resize(_) => Task::none(),
+        Message::Resize(_) => vec![],
         Message::SelectScreen(screen) => {
-            let top = effects::task(Effect::ScrollToTop, app);
+            let top = vec![Effect::ScrollToTop];
             // Clicar na tela em que ja se esta so volta ao topo: a pessoa nao saiu dela, entao
             // a remocao pendente segue com o "Desfazer" e a chave digitada fica no campo.
             if screen == app.screen {
@@ -1417,7 +1426,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             top
         }
         Message::ConnectPhone => {
-            let task = update(app, Message::SelectScreen(Screen::Connection));
+            let task = step(app, Message::SelectScreen(Screen::Connection));
             // Hub que nao subiu: a casca mostra o card de falha no lugar de Aparelhos, e um
             // codigo nao teria quem o emitir. O fluxo nem abre.
             if super::shell::failure(app).is_some() {
@@ -1441,7 +1450,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                     let _ = app.handle.commands.send(Command::IssuePairingToken);
                 }
             }
-            Task::none()
+            vec![]
         }
         Message::ConnectBack => {
             let mut left_pair = false;
@@ -1456,37 +1465,37 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             if left_pair {
                 let _ = app.handle.commands.send(Command::CancelPairingToken);
             }
-            Task::none()
+            vec![]
         }
         Message::ConnectOs(os) => {
             let modal = !connection_view::in_screen_case(app);
             app.connect
                 .get_or_insert_with(|| ConnectFlow::new(modal))
                 .os = os;
-            Task::none()
+            vec![]
         }
         Message::ConnectClose => {
             app.close_connect();
-            Task::none()
+            vec![]
         }
         Message::ConfigureAssistant => {
             // O dialogo e uma camada da janela: abre por cima de Ajustes ou da Analise, sem
             // trocar de tela.
             app.open_setup();
-            Task::none()
+            vec![]
         }
         Message::ToggleCategoryMenu => {
             app.cat_menu_open = !app.cat_menu_open;
-            Task::none()
+            vec![]
         }
         Message::CloseCategoryMenu => {
             app.cat_menu_open = false;
-            Task::none()
+            vec![]
         }
         Message::PickCategory(category) => {
             app.cat_menu_open = false;
             app.set_filters(|f| f.category = category);
-            Task::none()
+            vec![]
         }
         Message::ToggleAuthor(key) => {
             // Todos os chips da tela: perfis vivos e, se aparecer, "Sem autor".
@@ -1500,20 +1509,20 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 all.push(NONE_KEY.to_string());
             }
             app.set_filters(|f| f.toggle_author(&key, &all));
-            Task::none()
+            vec![]
         }
         Message::AllAuthors => {
             app.set_filters(|f| f.authors.clear());
-            Task::none()
+            vec![]
         }
         Message::SetType(kind) => {
             app.set_filters(|f| f.kind = kind);
-            Task::none()
+            vec![]
         }
         Message::ClearFilters => {
             app.cat_menu_open = false;
             app.set_filters(Filters::clear);
-            Task::none()
+            vec![]
         }
         Message::ToggleHideValues => {
             app.hide_values = !app.hide_values;
@@ -1521,11 +1530,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             app.refresh_replies();
             // Os rotulos em R$ dos graficos estao gravados na geometria em cache.
             app.clear_charts();
-            effects::task(Effect::SavePrefs(app.prefs()), app)
+            vec![Effect::SavePrefs(app.prefs())]
         }
         Message::SetTheme(mode) => {
             if mode == app.theme {
-                return Task::none();
+                return vec![];
             }
             app.theme = mode;
             // Ao escolher "Sistema" o valor guardado pode ser velho (o tique so consulta com
@@ -1536,14 +1545,14 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 app.system_dark = dark;
             }
             app.apply_theme();
-            effects::task(Effect::SavePrefs(app.prefs()), app)
+            vec![Effect::SavePrefs(app.prefs())]
         }
         Message::SystemTheme(mode) => {
             // Onde o registro responde (Windows), so ele manda: o aviso do winit la chega
             // atrasado ou com o valor anterior (ver `desktop::appearance`), e aceita-lo fazia
             // o tema piscar entre o velho e o novo, sobretudo com alto contraste.
             if app.desktop.system_dark().is_some() {
-                return Task::none();
+                return vec![];
             }
             // `None` = o sistema nao tem preferencia: fica o ultimo valor conhecido.
             match mode {
@@ -1551,23 +1560,23 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 iced::theme::Mode::Light => app.set_system_dark(false),
                 iced::theme::Mode::None => {}
             }
-            Task::none()
+            vec![]
         }
         Message::SetAutostart(enabled) => {
             if app.autostart == Some(enabled) {
-                return Task::none();
+                return vec![];
             }
             match app.desktop.set_autostart(enabled) {
                 Ok(()) => {
                     app.autostart = Some(enabled);
                     app.autostart_pref = Some(enabled);
                     app.autostart_failed = false;
-                    effects::task(Effect::SavePrefs(app.prefs()), app)
+                    vec![Effect::SavePrefs(app.prefs())]
                 }
                 Err(err) => {
                     tracing::warn!("iniciar com o Windows: {err}");
                     app.autostart_failed = true;
-                    Task::none()
+                    vec![]
                 }
             }
         }
@@ -1586,30 +1595,30 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 CopyTarget::Reply => None,
             };
             let Some(text) = text else {
-                return Task::none();
+                return vec![];
             };
             app.copied = Some((target, Instant::now() + COPIED_FOR));
             // O iced nao devolve falha da area de transferencia; o rotulo vira "Copiado" mesmo
             // assim (limite aceito na spec).
-            Task::batch([
-                effects::task(Effect::CopyToClipboard(text), app),
-                effects::task(Effect::After(COPIED_FOR, Message::CopyExpired), app),
-            ])
+            vec![
+                Effect::CopyToClipboard(text),
+                Effect::After(COPIED_FOR, Message::CopyExpired),
+            ]
         }
         Message::OpenReleases => {
             // O navegador do usuario vai ao GitHub por um clique dele; este processo nao abre
             // socket. A falha volta como `OpenUrlFailed` para virar estado na tela.
-            effects::task(Effect::OpenUrl(config::RELEASES_URL), app)
+            vec![Effect::OpenUrl(config::RELEASES_URL)]
         }
         Message::OpenUrlFailed => {
             app.releases_open_failed = true;
-            Task::none()
+            vec![]
         }
         Message::CopyReply(id) => {
             let Some(m) = super::analysis_view::open_conversation(app)
                 .and_then(|o| o.messages.iter().find(|m| m.id == id))
             else {
-                return Task::none();
+                return vec![];
             };
             // O mesmo texto da tela: mascarado com o olho ligado (decisao registrada em
             // `CachedReply::copy`). Sem cache valido, monta na hora pelo mesmo caminho.
@@ -1623,32 +1632,32 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             };
             app.copied = Some((CopyTarget::Reply, Instant::now() + COPIED_FOR));
             app.copied_reply = Some(id);
-            Task::batch([
-                effects::task(Effect::CopyToClipboard(copy), app),
-                effects::task(Effect::After(COPIED_FOR, Message::CopyExpired), app),
-            ])
+            vec![
+                Effect::CopyToClipboard(copy),
+                Effect::After(COPIED_FOR, Message::CopyExpired),
+            ]
         }
         Message::AnalysisTab(tab) => {
             app.analysis_tab = tab;
-            Task::none()
+            vec![]
         }
         Message::CopyExpired => {
             // Um segundo clique adiou o prazo: o timer do primeiro nao apaga o do segundo.
             if app.copied.is_some_and(|(_, until)| Instant::now() >= until) {
                 app.copied = None;
             }
-            Task::none()
+            vec![]
         }
         Message::HoverRow(id) => {
             app.hover_row = Some(id);
-            Task::none()
+            vec![]
         }
         Message::UnhoverRow(id) => {
             // Saida de uma linha pode chegar depois da entrada na vizinha.
             if app.hover_row.as_ref() == Some(&id) {
                 app.hover_row = None;
             }
-            Task::none()
+            vec![]
         }
         Message::AskRemove(device_id) => {
             app.confirm_remove = Some(RemoveDialog {
@@ -1656,7 +1665,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 step: RemoveStep::Choose,
                 selected: AreaSet::default(),
             });
-            Task::none()
+            vec![]
         }
         Message::ToggleArea(area) => {
             let enabled = app
@@ -1667,7 +1676,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             if let Some(dialog) = app.confirm_remove.as_mut().filter(|_| enabled) {
                 dialog.selected.toggle(area);
             }
-            Task::none()
+            vec![]
         }
         Message::SelectAllAreas => {
             let with_data: AreaSet = app
@@ -1684,45 +1693,45 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             if let Some(dialog) = app.confirm_remove.as_mut() {
                 dialog.selected = with_data;
             }
-            Task::none()
+            vec![]
         }
         Message::SelectNoAreas => {
             if let Some(dialog) = app.confirm_remove.as_mut() {
                 dialog.selected = AreaSet::default();
             }
-            Task::none()
+            vec![]
         }
         Message::RemoveContinue => {
             let Some(dialog) = app.confirm_remove.as_mut() else {
-                return Task::none();
+                return vec![];
             };
             if dialog.selected.is_empty() {
-                return update(app, Message::ConfirmRemove);
+                return step(app, Message::ConfirmRemove);
             }
             dialog.step = RemoveStep::Confirm;
-            Task::none()
+            vec![]
         }
         Message::RemoveBack => {
             if let Some(dialog) = app.confirm_remove.as_mut() {
                 dialog.step = RemoveStep::Choose;
             }
-            Task::none()
+            vec![]
         }
         Message::CancelRemove => {
             app.confirm_remove = None;
-            Task::none()
+            vec![]
         }
         Message::ShowEnvelope => {
             app.envelope_preview = Some(app.current_envelope());
-            Task::none()
+            vec![]
         }
         Message::CloseEnvelope => {
             app.envelope_preview = None;
-            Task::none()
+            vec![]
         }
         Message::ConfirmRemove => {
             let Some(dialog) = app.confirm_remove.take() else {
-                return Task::none();
+                return vec![];
             };
             // Marcar algo exige ter passado pelo passo 2 (vermelho, com as contagens): sem
             // isso, uma mensagem fora de ordem apagaria sem a confirmacao explicita.
@@ -1731,10 +1740,10 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                     step: RemoveStep::Confirm,
                     ..dialog
                 });
-                return Task::none();
+                return vec![];
             }
             let Some(device) = app.device(&dialog.device_id) else {
-                return Task::none();
+                return vec![];
             };
             let (orphan, data, device_name) =
                 (device.revoked, device.data.clone(), device.name.clone());
@@ -1744,7 +1753,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                     .handle
                     .commands
                     .send(Command::KeepDeviceData(dialog.device_id));
-                return Task::none();
+                return vec![];
             }
             let base = if orphan {
                 format!("Dados de {device_name}")
@@ -1768,24 +1777,24 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 deadline: Instant::now() + UNDO_FOR,
                 action,
             });
-            Task::none()
+            vec![]
         }
         Message::UndoRemove => {
             // Nada foi enviado ao nucleo: desfazer e so esquecer. Vale para a remocao e para
             // o apagar, que saem juntos no mesmo comando, e para a conversa.
             app.pending_removal = None;
-            Task::none()
+            vec![]
         }
         Message::DecideOrphan => {
             let first = app.orphans().first().map(|d| d.device_id.clone());
             if let Some(device_id) = first {
-                return update(app, Message::AskRemove(device_id));
+                return step(app, Message::AskRemove(device_id));
             }
-            Task::none()
+            vec![]
         }
         Message::PostponeOrphans => {
             app.orphans_postponed = true;
-            Task::none()
+            vec![]
         }
         Message::StartConversation => {
             let settings = &app.snapshot.assistant.settings;
@@ -1796,7 +1805,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 .filter(|d| !d.is_cloud() || app.snapshot.assistant.has_key)
             else {
                 app.open_setup();
-                return Task::none();
+                return vec![];
             };
             app.chat_input.clear();
             // Na janela estreita a conversa nova fica a vista, e nao atras do segmentado.
@@ -1821,11 +1830,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             } else {
                 send_assistant(app, AssistantCommand::Resend);
             }
-            Task::none()
+            vec![]
         }
         Message::ChatInput(text) => {
             app.chat_input = text;
-            Task::none()
+            vec![]
         }
         Message::ChatSubmit => {
             let text = app.chat_input.trim().to_string();
@@ -1836,15 +1845,15 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 || app.snapshot.assistant.busy
                 || awaiting_cloud_consent(app).is_some()
             {
-                return Task::none();
+                return vec![];
             }
             app.chat_input.clear();
             send_assistant(app, AssistantCommand::Send(text));
-            Task::none()
+            vec![]
         }
         Message::ChatStop => {
             send_assistant(app, AssistantCommand::Cancel);
-            Task::none()
+            vec![]
         }
         Message::ChatRetry => {
             if !app.snapshot.assistant.busy
@@ -1853,20 +1862,20 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             {
                 send_assistant(app, AssistantCommand::Resend);
             }
-            Task::none()
+            vec![]
         }
         Message::OpenConversation(id) => {
             app.analysis_tab = AnalysisTab::Chat;
             send_assistant(app, AssistantCommand::Open(id));
-            Task::none()
+            vec![]
         }
         Message::CloseConversation => {
             send_assistant(app, AssistantCommand::Close);
-            Task::none()
+            vec![]
         }
         Message::DeleteConversation(id) => {
             send_assistant(app, AssistantCommand::Delete(id));
-            Task::none()
+            vec![]
         }
         Message::AskDeleteConversation(id) => {
             if app
@@ -1875,7 +1884,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 .and_then(PendingRemoval::conversation_id)
                 == Some(id.as_str())
             {
-                return Task::none();
+                return vec![];
             }
             // So um "Desfazer" por vez: o anterior (de conversa ou de aparelho) vai agora, e o
             // toast passa a ser desta.
@@ -1889,7 +1898,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 deadline: Instant::now() + UNDO_FOR,
                 action: PendingAction::DeleteConversation,
             });
-            Task::none()
+            vec![]
         }
         Message::DeleteAllConversations => {
             let armed = app
@@ -1911,11 +1920,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             } else {
                 app.confirm_delete_all = Some(Instant::now() + DELETE_ALL_ARMED_FOR);
             }
-            Task::none()
+            vec![]
         }
         Message::CloseAssistantSetup => {
             app.close_setup();
-            Task::none()
+            vec![]
         }
         Message::SetupChoice(choice) => {
             if let Some(setup) = app.assistant_setup.as_mut()
@@ -1923,7 +1932,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             {
                 setup.draft.choice = choice;
             }
-            Task::none()
+            vec![]
         }
         Message::SetupNext => {
             let view = &app.snapshot.assistant;
@@ -1948,7 +1957,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             if let Some(port) = test {
                 send_assistant(app, AssistantCommand::ListModels(port));
             }
-            Task::none()
+            vec![]
         }
         Message::SetupBack => {
             if let Some(setup) = app.assistant_setup.as_mut()
@@ -1956,7 +1965,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             {
                 setup.step = SetupStep::Where;
             }
-            Task::none()
+            vec![]
         }
         Message::SetupPort(text) => {
             if let Some(setup) = app.assistant_setup.as_mut() {
@@ -1966,7 +1975,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                     .take(PORT_DIGITS)
                     .collect();
             }
-            Task::none()
+            vec![]
         }
         Message::SetupTest => {
             // A lista vem da porta que esta no campo, mesmo sem gravar: e o teste dela.
@@ -1978,38 +1987,38 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             if let Some(port) = port {
                 send_assistant(app, AssistantCommand::ListModels(port));
             }
-            Task::none()
+            vec![]
         }
         Message::SetupLocalModel(model) => {
             if let Some(setup) = app.assistant_setup.as_mut() {
                 setup.draft.local_model = Some(model);
             }
-            Task::none()
+            vec![]
         }
         Message::SetupCloudModel(text) => {
             if let Some(setup) = app.assistant_setup.as_mut() {
                 setup.draft.cloud_model = text;
             }
-            Task::none()
+            vec![]
         }
         Message::SetupDeny(deny) => {
             if let Some(setup) = app.assistant_setup.as_mut() {
                 setup.draft.deny = deny;
             }
-            Task::none()
+            vec![]
         }
         Message::SetupFinish => {
             let Some(setup) = app.assistant_setup.as_ref() else {
-                return Task::none();
+                return vec![];
             };
             if !super::assistant_settings_view::can_finish(app, setup) {
-                return Task::none();
+                return vec![];
             }
             let saved = &app.snapshot.assistant.settings;
             let Some(settings) =
                 crate::ui_model::assistant_setup::settings_to_save(saved, &setup.draft)
             else {
-                return Task::none();
+                return vec![];
             };
             // `take`: o campo esvazia no mesmo instante. A chave so vai com a nuvem: escolher o
             // Ollama com uma chave digitada no passo da nuvem nao a grava.
@@ -2019,7 +2028,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             if key.is_none() && settings == *saved {
                 // Nada a gravar: o gravado ja e isto.
                 app.close_setup();
-                return Task::none();
+                return vec![];
             }
             // Hub fora do ar: o comando nao teria quem o grave. A chave digitada ja saiu do
             // campo (`take`) e nao volta: digitar de novo e mais seguro que guarda-la.
@@ -2027,7 +2036,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 if let Some(setup) = app.assistant_setup.as_mut() {
                     setup.error = Some(HUB_DOWN_SAVE.into());
                 }
-                return Task::none();
+                return vec![];
             }
             let expected = app
                 .snapshot
@@ -2041,11 +2050,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 setup.error = None;
             }
             send_assistant(app, AssistantCommand::Configure { settings, key });
-            Task::none()
+            vec![]
         }
         Message::KeyInput(key) => {
             app.key_input = key.expose().to_string();
-            Task::none()
+            vec![]
         }
         Message::RemoveKey => {
             if app
@@ -2053,17 +2062,17 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 .as_ref()
                 .is_some_and(|s| s.saving.is_some())
             {
-                return Task::none();
+                return vec![];
             }
             app.key_input.clear();
             send_assistant(app, AssistantCommand::SaveKey(Secret::new(String::new())));
-            Task::none()
+            vec![]
         }
         Message::ShowCloudPreview => {
             if let Some(open) = awaiting_cloud_consent(app) {
                 app.consent_preview = Some(open.id.clone());
             }
-            Task::none()
+            vec![]
         }
         Message::CancelPreview => {
             // So o "Cancelar": a abertura recem-criada, sem nada saido, some; o resto so fecha
@@ -2073,15 +2082,15 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 .and_then(|open| super::analysis_view::cancel_preview_message(open, busy));
             app.consent_preview = None;
             match cancel {
-                Some(message) => update(app, message),
-                None => Task::none(),
+                Some(message) => step(app, message),
+                None => vec![],
             }
         }
         Message::ClosePreview => {
             // Esc e o scrim: um gesto rapido nao apaga nada. A conversa continua esperando,
             // com "Ver previa e enviar" no pe.
             app.consent_preview = None;
-            Task::none()
+            vec![]
         }
         Message::ApproveCloudSend => {
             // O id vai junto: o nucleo so libera se for a conversa ainda aberta. E so a conversa
@@ -2091,23 +2100,23 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 app.consent_preview = None;
                 send_assistant(app, AssistantCommand::ApproveCloudSend(id));
             }
-            Task::none()
+            vec![]
         }
         Message::KeyPressed(press) => match super::keys::shortcut(app, &press) {
-            Some(message) => update(app, message),
-            None => Task::none(),
+            Some(message) => step(app, message),
+            None => vec![],
         },
-        Message::FocusNext => effects::task(Effect::FocusNext, app),
-        Message::FocusPrevious => effects::task(Effect::FocusPrevious, app),
-        Message::Noop => Task::none(),
+        Message::FocusNext => vec![Effect::FocusNext],
+        Message::FocusPrevious => vec![Effect::FocusPrevious],
+        Message::Noop => vec![],
         Message::Frame(at) => {
             app.motion.frame(at);
-            Task::none()
+            vec![]
         }
         Message::ToggleReduceMotion => {
             let reduce = !app.motion.reduce();
             app.motion.set_reduce(reduce);
-            effects::task(Effect::SavePrefs(app.prefs()), app)
+            vec![Effect::SavePrefs(app.prefs())]
         }
     }
 }
@@ -2514,9 +2523,12 @@ pub(super) mod tests {
         // Toda tela da navegacao, Ajustes inclusive; cada troca volta a rolagem ao topo (a
         // tarefa do `snap_to`), porque o cabecalho fixo nao rola e so o conteudo tem posicao.
         for screen in super::super::shell::nav_entries(&app).map(|e| e.screen) {
-            let task = update(&mut app, Message::SelectScreen(screen));
+            let effects = step(&mut app, Message::SelectScreen(screen));
             assert_eq!(app.screen, screen);
-            assert_eq!(task.units(), 1, "{screen:?}");
+            assert!(
+                matches!(effects.as_slice(), [Effect::ScrollToTop]),
+                "{screen:?}"
+            );
         }
         assert_eq!(app.screen, Screen::Settings);
     }
@@ -3129,9 +3141,9 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::AskRemove("D1".into()));
         let _ = update(&mut app, Message::ConfirmRemove);
         app.key_input = "sk-rascunho".into();
-        let task = update(&mut app, Message::SelectScreen(Screen::Connection));
+        let effects = step(&mut app, Message::SelectScreen(Screen::Connection));
         // Volta ao topo, mas a remocao continua pendente (com "Desfazer") e nada saiu.
-        assert_eq!(task.units(), 1);
+        assert!(matches!(effects.as_slice(), [Effect::ScrollToTop]));
         assert!(revoked(&mut rx).is_empty());
         assert_eq!(
             app.pending_removal

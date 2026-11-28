@@ -180,6 +180,7 @@ mod tests {
     use super::*;
     use crate::hub::snapshot::Snapshot;
     use crate::store::erase::AreaSet;
+    use crate::ui_model::effect::Effect;
 
     fn press(key: Key, physical: Code, modifiers: Modifiers) -> KeyPress {
         convert(&key, Physical::Code(physical), modifiers, false)
@@ -444,11 +445,11 @@ mod tests {
             super::super::app::update(&mut app, Message::KeyPressed(ctrl_digit('2', Code::Digit2)));
         assert_eq!(app.screen, Screen::Transactions);
         // Tab vira a operacao de foco (uma tarefa para o iced); tecla sem atalho, nenhuma.
-        let task = super::super::app::update(&mut app, Message::KeyPressed(tab(false)));
-        assert_eq!(task.units(), 1);
-        let task = super::super::app::update(&mut app, Message::KeyPressed(tab(true)));
-        assert_eq!(task.units(), 1);
-        let task = super::super::app::update(
+        let effects = super::super::app::step(&mut app, Message::KeyPressed(tab(false)));
+        assert!(matches!(effects.as_slice(), [Effect::FocusNext]));
+        let effects = super::super::app::step(&mut app, Message::KeyPressed(tab(true)));
+        assert!(matches!(effects.as_slice(), [Effect::FocusPrevious]));
+        let effects = super::super::app::step(
             &mut app,
             Message::KeyPressed(press(
                 Key::Character("x".into()),
@@ -456,7 +457,7 @@ mod tests {
                 Modifiers::empty(),
             )),
         );
-        assert_eq!(task.units(), 0);
+        assert!(effects.is_empty());
         assert_eq!(app.screen, Screen::Transactions);
         let before = app.month_idx;
         let _ = super::super::app::update(

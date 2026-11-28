@@ -1109,6 +1109,7 @@ mod tests {
     use crate::assistant::settings::{ProviderChoice, Settings};
     use crate::dashboard::money::MASK_DIGITS;
     use crate::ui_model::analysis::tests::{conversation_with, msg};
+    use crate::ui_model::effect::Effect;
 
     #[test]
     fn barras_dos_achados_montam_com_e_sem_valores_ocultos() {
@@ -1411,15 +1412,21 @@ mod tests {
         assert!(cached.hidden);
         // O texto desenhado, nao o fonte: sem as marcas do Markdown.
         assert_eq!(cached.copy, format!("Gastou {MASK} no mercado."));
-        let task = update(&mut app, Message::CopyReply("R1".into()));
-        assert_eq!(task.units(), 2);
+        let effects = crate::ui::app::step(&mut app, Message::CopyReply("R1".into()));
+        assert!(matches!(
+            effects.as_slice(),
+            [
+                Effect::CopyToClipboard(_),
+                Effect::After(_, Message::CopyExpired)
+            ]
+        ));
         assert!(app.is_copied(CopyTarget::Reply));
         assert_eq!(app.copied_reply.as_deref(), Some("R1"));
         let _ = view(&app);
         // Mensagem que nao esta na conversa aberta: nada a copiar.
         app.copied = None;
-        let task = update(&mut app, Message::CopyReply("X".into()));
-        assert_eq!(task.units(), 0);
+        let effects = crate::ui::app::step(&mut app, Message::CopyReply("X".into()));
+        assert!(effects.is_empty());
         assert!(!app.is_copied(CopyTarget::Reply));
     }
 }

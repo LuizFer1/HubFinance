@@ -8,7 +8,7 @@
 //! (`ui_model::icons`).
 
 // Usado pelas telas a partir da Tarefa 15; ate la so parte das variantes tem uso.
-#![allow(dead_code)] // usado na Tarefa 15
+#![allow(dead_code)] // usado nas telas (Tarefa 17 em diante)
 
 use gpui::{Hsla, Pixels, Styled as _, Svg, svg};
 

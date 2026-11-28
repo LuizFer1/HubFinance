@@ -5,9 +5,10 @@
 use crate::advisor::Severity;
 use crate::dashboard::money::group_thousands;
 use crate::dashboard::periods::month_long;
-use crate::hub::snapshot::Status;
+use crate::hub::snapshot::{Snapshot, Status};
 use crate::ui_model::app::{App, Msg, Screen};
 use crate::ui_model::time;
+use ::time::OffsetDateTime;
 
 /// A versao precisa de um lugar sempre a vista (Ajustes > Sobre so aparece a quem abre a
 /// tela), e o subtitulo curto nao quebra em duas linhas. "Somente leitura" ficou fora dela de
@@ -321,6 +322,176 @@ pub fn header_line(app: &App) -> (&str, String) {
         partial.to_string()
     };
     (title, line)
+}
+
+/// Icone do card de status: forma + cor, nunca so cor (spec §5). O anel girando do design e
+/// `Spinner`; quem desenha decide a animacao (e a corta com "Reduzir movimento").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusIcon {
+    Ok,
+    Warning,
+    Spinner,
+    Danger,
+}
+
+/// Botao do card. So o erro tem um hoje; "Ligar hub" entra com o `Off` (Tarefa 32).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CardAction {
+    /// Leva a Ajustes, onde estao as pastas de dados e de logs que explicam a falha.
+    Details,
+}
+
+impl CardAction {
+    pub fn label(self) -> &'static str {
+        match self {
+            CardAction::Details => "Ver detalhes",
+        }
+    }
+
+    pub fn msg(self) -> Msg {
+        match self {
+            CardAction::Details => Msg::SelectScreen(Screen::Settings),
+        }
+    }
+}
+
+/// O card de status da lateral: `lines[0]` fica sob o titulo e o resto abaixo do fio.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatusCard {
+    pub icon: StatusIcon,
+    pub title: String,
+    pub lines: Vec<String>,
+    pub action: Option<CardAction>,
+}
+
+/// A tabela da spec §5. A porta vem do snapshot (`https_port`), nunca o 8443 do design: o hub
+/// usa 7777 e um numero fixo na tela mentiria. `now` entra como parametro para o "ha 4 min" ser
+/// testavel sem relogio.
+pub fn status_card(snapshot: &Snapshot, now: OffsetDateTime) -> StatusCard {
+    let card = |icon, title: &str, lines: Vec<String>| StatusCard {
+        icon,
+        title: title.to_string(),
+        lines,
+        action: None,
+    };
+    let addr = snapshot
+        .addresses
+        .first()
+        .map(|ip| format!("{ip}:{}", snapshot.https_port));
+    match &snapshot.status {
+        Status::Running => {
+            let rows = !snapshot.dashboard.is_empty() || snapshot.dashboard.has_reserves();
+            match (rows, last_sync(snapshot)) {
+                (true, Some((at, name))) => card(
+                    StatusIcon::Ok,
+                    "Hub ligado",
+                    addr.into_iter()
+                        .chain([
+                            format!("Último sync {}", time::relative_to(at, now)),
+                            name.to_string(),
+                        ])
+                        .collect(),
+                ),
+                // Linhas no hub sem nenhum carimbo de sync (aparelho removido, banco antigo):
+                // nao inventa um "ha X min", mostra so onde o hub esta.
+                (true, None) => card(StatusIcon::Ok, "Hub ligado", addr.into_iter().collect()),
+                (false, _) => card(
+                    StatusIcon::Ok,
+                    "Hub ligado",
+                    vec!["Sem dados · aguardando o primeiro sync".into()],
+                ),
+            }
+        }
+        Status::NoNetwork => card(
+            StatusIcon::Warning,
+            "Sem rede local",
+            vec!["Conecte o computador a um Wi-Fi".into()],
+        ),
+        Status::Starting => card(
+            StatusIcon::Spinner,
+            "Iniciando…",
+            vec![match snapshot.https_port {
+                0 => "Abrindo a porta de rede".to_string(),
+                port => format!("Abrindo a porta {port}"),
+            }],
+        ),
+        // `Stopped` so aparece ao sair: o mesmo texto de quem esta salvando.
+        Status::Stopping | Status::Stopped => card(
+            StatusIcon::Spinner,
+            "Desligando…",
+            vec!["Salvando os dados".into()],
+        ),
+        Status::Failed(msg) => StatusCard {
+            icon: StatusIcon::Danger,
+            title: "Hub com erro".into(),
+            lines: vec![msg.clone()],
+            action: Some(CardAction::Details),
+        },
+    }
+}
+
+/// O sync mais recente entre todos os aparelhos ativos (instante e nome). Aparelho removido nao
+/// conta: o card falaria de quem ja nao sincroniza.
+fn last_sync(snapshot: &Snapshot) -> Option<(OffsetDateTime, &str)> {
+    snapshot
+        .devices
+        .iter()
+        .filter(|d| !d.revoked)
+        .flat_map(|d| {
+            [d.last_push_at.as_deref(), d.last_pull_at.as_deref()]
+                .into_iter()
+                .flatten()
+                .filter_map(time::parse)
+                .map(move |at| (at, d.name.as_str()))
+        })
+        .max_by_key(|(at, _)| *at)
+}
+
+/// Titulo e subtitulo do cabecalho da interface GPUI, exatamente como nos artboards (spec §5).
+/// O "Parcial" nao entra: e um chip a parte. Fica separado de `titles`, que a iced ainda usa.
+pub fn header_texts(app: &App) -> (&'static str, &'static str) {
+    match app.screen {
+        Screen::Dashboard => (
+            "Dashboard",
+            // No boot o banco ainda nao abriu: "dados do ultimo sync" seria falso.
+            if app.snapshot.status == Status::Starting && app.dashboard.is_empty {
+                "Resumo da casa · Somente leitura"
+            } else {
+                "Resumo da casa · Somente leitura · dados do último sync"
+            },
+        ),
+        Screen::Transactions => (
+            "Lançamentos",
+            "Tudo o que entrou e saiu no mês · Somente leitura",
+        ),
+        Screen::Reserves => ("Reservas", "Dinheiro separado da casa · Somente leitura"),
+        Screen::Analysis => (
+            "Análise",
+            "Onde dá para melhorar? · calculado neste computador",
+        ),
+        Screen::Connection => ("Conexão", "Pareie aparelhos e acompanhe o hub"),
+        Screen::Settings => ("Ajustes", "Preferências deste computador"),
+    }
+}
+
+/// Telas com seletor de mes no cabecalho (as que leem um mes escolhido).
+pub fn has_month_picker(screen: Screen) -> bool {
+    matches!(
+        screen,
+        Screen::Dashboard | Screen::Transactions | Screen::Reserves | Screen::Analysis
+    )
+}
+
+/// O mes escolhido existe depois dele? O "›" do seletor fica desabilitado no corrente.
+pub fn can_go_next_month(app: &App) -> bool {
+    app.month_idx + 1 < app.months.len()
+}
+
+/// Abaixo desta largura a lateral vira o trilho de icones de 76 px (spec §4.3).
+pub const RAIL_BELOW: f32 = 1024.0;
+
+pub fn is_rail(width: f32) -> bool {
+    width < RAIL_BELOW
 }
 
 #[cfg(test)]
@@ -751,5 +922,189 @@ mod tests {
         let (app, _rx, _tx) = crate::ui_model::app::tests::app_with_fixtures(dir.path());
         assert_eq!(screen_arrival(&app, !app.dashboard.is_empty), Arrival::Data);
         assert!(hub_has_rows(&app));
+    }
+
+    // ---- Card de status (spec §5): um teste por linha da tabela ----
+
+    fn card_of(snapshot: Snapshot) -> StatusCard {
+        status_card(&snapshot, time::parse("2026-11-27T15:30:00Z").unwrap())
+    }
+
+    fn running_with_data() -> Snapshot {
+        Snapshot {
+            status: Status::Running,
+            addresses: vec!["192.168.0.12".parse().unwrap()],
+            https_port: 7777,
+            dashboard: std::sync::Arc::new(crate::dashboard::fixtures_grafite()),
+            devices: vec![
+                device("Pixel 8 da Ana", Some("2026-11-27T15:26:00Z"), None, false),
+                device("Velho", Some("2026-11-27T10:00:00Z"), None, false),
+            ],
+            ..Snapshot::default()
+        }
+    }
+
+    #[test]
+    fn card_rodando_com_dados_traz_endereco_sync_e_aparelho() {
+        let card = card_of(running_with_data());
+        assert_eq!(card.icon, StatusIcon::Ok);
+        assert_eq!(card.title, "Hub ligado");
+        // A porta e a do snapshot (7777), nunca o 8443 do design.
+        assert_eq!(
+            card.lines,
+            [
+                "192.168.0.12:7777",
+                "Último sync há 4 min",
+                "Pixel 8 da Ana"
+            ]
+        );
+        assert_eq!(card.action, None);
+    }
+
+    #[test]
+    fn card_do_sync_ignora_aparelho_removido() {
+        let mut snap = running_with_data();
+        snap.devices
+            .push(device("Removido", Some("2026-11-27T15:29:00Z"), None, true));
+        assert_eq!(card_of(snap).lines[2], "Pixel 8 da Ana");
+    }
+
+    #[test]
+    fn card_com_dados_e_sem_carimbo_nao_inventa_sync() {
+        let mut snap = running_with_data();
+        snap.devices.clear();
+        assert_eq!(card_of(snap).lines, ["192.168.0.12:7777"]);
+    }
+
+    #[test]
+    fn card_rodando_sem_dados_espera_o_primeiro_sync() {
+        let card = card_of(Snapshot {
+            status: Status::Running,
+            addresses: vec!["192.168.0.12".parse().unwrap()],
+            https_port: 7777,
+            ..Snapshot::default()
+        });
+        assert_eq!(card.icon, StatusIcon::Ok);
+        assert_eq!(card.title, "Hub ligado");
+        assert_eq!(card.lines, ["Sem dados · aguardando o primeiro sync"]);
+    }
+
+    #[test]
+    fn card_sem_rede_pede_wifi() {
+        let card = card_of(Snapshot {
+            status: Status::NoNetwork,
+            ..Snapshot::default()
+        });
+        assert_eq!(card.icon, StatusIcon::Warning);
+        assert_eq!(card.title, "Sem rede local");
+        assert_eq!(card.lines, ["Conecte o computador a um Wi-Fi"]);
+    }
+
+    #[test]
+    fn card_iniciando_diz_a_porta_do_snapshot() {
+        let card = card_of(Snapshot {
+            status: Status::Starting,
+            https_port: 7777,
+            ..Snapshot::default()
+        });
+        assert_eq!(card.icon, StatusIcon::Spinner);
+        assert_eq!(card.title, "Iniciando…");
+        assert_eq!(card.lines, ["Abrindo a porta 7777"]);
+        // Antes de o servidor bindar a porta ainda e 0: nada de "porta 0".
+        let boot = card_of(Snapshot::default());
+        assert_eq!(boot.lines, ["Abrindo a porta de rede"]);
+    }
+
+    #[test]
+    fn card_desligando_e_parado_salvam_os_dados() {
+        for status in [Status::Stopping, Status::Stopped] {
+            let card = card_of(Snapshot {
+                status,
+                ..Snapshot::default()
+            });
+            assert_eq!(card.icon, StatusIcon::Spinner);
+            assert_eq!(card.title, "Desligando…");
+            assert_eq!(card.lines, ["Salvando os dados"]);
+        }
+    }
+
+    #[test]
+    fn card_com_erro_mostra_a_mensagem_e_ver_detalhes() {
+        let card = card_of(Snapshot {
+            status: Status::Failed("Porta 7777 em uso por outro programa".into()),
+            ..Snapshot::default()
+        });
+        assert_eq!(card.icon, StatusIcon::Danger);
+        assert_eq!(card.title, "Hub com erro");
+        assert_eq!(card.lines, ["Porta 7777 em uso por outro programa"]);
+        let action = card.action.expect("acao");
+        assert_eq!(action.label(), "Ver detalhes");
+        assert!(matches!(action.msg(), Msg::SelectScreen(Screen::Settings)));
+    }
+
+    #[test]
+    fn cabecalho_usa_os_textos_do_design() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        let expected = [
+            (
+                Screen::Transactions,
+                "Lançamentos",
+                "Tudo o que entrou e saiu no mês · Somente leitura",
+            ),
+            (
+                Screen::Reserves,
+                "Reservas",
+                "Dinheiro separado da casa · Somente leitura",
+            ),
+            (
+                Screen::Analysis,
+                "Análise",
+                "Onde dá para melhorar? · calculado neste computador",
+            ),
+            (
+                Screen::Connection,
+                "Conexão",
+                "Pareie aparelhos e acompanhe o hub",
+            ),
+            (Screen::Settings, "Ajustes", "Preferências deste computador"),
+        ];
+        for (screen, title, subtitle) in expected {
+            app.screen = screen;
+            assert_eq!(header_texts(&app), (title, subtitle));
+        }
+        app.screen = Screen::Dashboard;
+        // No boot ainda nao ha "ultimo sync" a citar.
+        assert_eq!(
+            header_texts(&app),
+            ("Dashboard", "Resumo da casa · Somente leitura")
+        );
+        app.snapshot.status = Status::Running;
+        assert_eq!(
+            header_texts(&app),
+            (
+                "Dashboard",
+                "Resumo da casa · Somente leitura · dados do último sync"
+            )
+        );
+    }
+
+    #[test]
+    fn seletor_de_mes_so_nas_telas_de_mes_e_proximo_so_antes_do_corrente() {
+        assert!(has_month_picker(Screen::Dashboard));
+        assert!(has_month_picker(Screen::Reserves));
+        assert!(!has_month_picker(Screen::Connection));
+        assert!(!has_month_picker(Screen::Settings));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        assert!(!can_go_next_month(&app));
+        let _ = crate::ui_model::app::update(&mut app, Msg::PrevMonth);
+        assert!(can_go_next_month(&app));
+    }
+
+    #[test]
+    fn trilho_abaixo_de_1024() {
+        assert!(is_rail(1023.0));
+        assert!(!is_rail(1024.0));
     }
 }

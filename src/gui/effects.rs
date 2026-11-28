@@ -83,8 +83,10 @@ pub fn run(effect: Effect, state: &Entity<HubState>, cx: &mut App) {
         Effect::FocusPrevious => {
             with_window(cx, |window, cx| window.focus_prev(cx));
         }
-        // Sem rolagem propria ainda: "voltar ao topo" fica para a casca (Tarefa 15).
-        Effect::ScrollToTop => {}
+        Effect::ScrollToTop => state
+            .read(cx)
+            .scroll
+            .set_offset(gpui::point(px(0.0), px(0.0))),
         Effect::Exit => cx.quit(),
     }
 }

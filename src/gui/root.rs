@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, Global, IntoElement, KeyDownEvent, Keystroke,
-    Render, Window, div, prelude::*, px,
+    Render, ScrollHandle, Window, div, prelude::*, px,
 };
 
 use super::theme::{self, Tokens};
@@ -29,6 +29,9 @@ pub struct HubState {
     demo: Option<Arc<Dataset>>,
     /// Tema efetivo ja aplicado ao `gpui-component` (`None` = nenhum ainda).
     applied_dark: Option<bool>,
+    /// Rolagem do conteudo: vive aqui (e nao na janela) porque o `Effect::ScrollToTop` chega
+    /// ao estado, que nao conhece a view.
+    pub scroll: ScrollHandle,
 }
 
 impl HubState {
@@ -37,6 +40,7 @@ impl HubState {
             app,
             demo: demo_dataset(),
             applied_dark: None,
+            scroll: ScrollHandle::new(),
         }
     }
 
@@ -143,6 +147,7 @@ pub fn key_press(keystroke: &Keystroke, repeat: bool) -> KeyPress {
 pub struct HubWindow {
     state: Entity<HubState>,
     focus: FocusHandle,
+    shell_focus: super::shell::ShellFocus,
     #[cfg(debug_assertions)]
     demo_fields: Option<super::components::showcase::Fields>,
 }
@@ -160,9 +165,11 @@ impl HubWindow {
         #[cfg(debug_assertions)]
         let demo_fields = super::components::showcase::requested()
             .then(|| super::components::showcase::Fields::new(window, cx));
+        let shell_focus = super::shell::ShellFocus::new(cx);
         HubWindow {
             state,
             focus,
+            shell_focus,
             #[cfg(debug_assertions)]
             demo_fields,
         }
@@ -186,8 +193,9 @@ impl Render for HubWindow {
         let app = &self.state.read(cx).app;
         let tokens = Tokens::of(app.theme.is_dark(app.system_dark));
         let maximized = app.maximized;
-        let (title, subtitle) = shell::titles(app);
-        let title = title.to_string();
+        let owns_scroll = shell::owns_scroll(app);
+        let scroll = self.state.read(cx).scroll.clone();
+        let state_for_shell = self.state.clone();
         let state = self.state.clone();
         #[cfg(debug_assertions)]
         if super::components::showcase::requested() {
@@ -233,13 +241,37 @@ impl Render for HubWindow {
             .child(
                 div()
                     .flex_1()
+                    .min_h_0()
                     .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap_2()
-                    .child(div().text_size(px(30.0)).child(title))
-                    .child(div().text_size(px(14.0)).child(subtitle)),
+                    .child(super::shell::sidebar::render(
+                        tokens,
+                        app,
+                        &state_for_shell,
+                        &self.shell_focus,
+                    ))
+                    .child(
+                        // Lancamentos e Analise rolam por dentro; nas outras telas rola o
+                        // conteudo todo, cabecalho junto.
+                        div()
+                            .id("content")
+                            .track_scroll(&scroll)
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .when(!owns_scroll, |d| d.overflow_y_scroll())
+                            .when(owns_scroll, |d| d.overflow_hidden())
+                            .px(px(32.0))
+                            .py(px(28.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(20.0))
+                            .child(super::shell::header::render(
+                                tokens,
+                                app,
+                                &state_for_shell,
+                                &self.shell_focus,
+                            )),
+                    ),
             )
             .into_any_element()
     }

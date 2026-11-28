@@ -41,6 +41,26 @@ pub async fn bind_servers(
     ca: Router,
     material: &TlsMaterial,
 ) -> Result<Servers, ServeError> {
+    bind_servers_on(
+        crate::config::bind_ip_from_env(),
+        https_port,
+        http_port,
+        api,
+        ca,
+        material,
+    )
+    .await
+}
+
+/// O mesmo que `bind_servers` com o IP escolhido por quem chama (os testes usam o loopback).
+async fn bind_servers_on(
+    ip: std::net::IpAddr,
+    https_port: u16,
+    http_port: u16,
+    api: Router,
+    ca: Router,
+    material: &TlsMaterial,
+) -> Result<Servers, ServeError> {
     let tls_config = RustlsConfig::from_pem(
         material.server.cert_pem.clone().into_bytes(),
         material.server.key_pem.clone().into_bytes(),
@@ -48,8 +68,8 @@ pub async fn bind_servers(
     .await
     .map_err(ServeError::Tls)?;
 
-    let https_listener = listen(https_port)?;
-    let http_listener = listen(http_port)?;
+    let https_listener = listen(ip, https_port)?;
+    let http_listener = listen(ip, http_port)?;
     let https_addr = https_listener
         .local_addr()
         .map_err(|e| ServeError::Bind(https_port, e))?;
@@ -91,9 +111,9 @@ pub async fn bind_servers(
 
 /// `0.0.0.0` por padrao (`HUBFINANCE_BIND` so em debug, ver `config::bind_ip`): os celulares chegam por qualquer interface de LAN, e o IP pode mudar sem
 /// reiniciar o hub.
-fn listen(port: u16) -> Result<std::net::TcpListener, ServeError> {
-    let listener = std::net::TcpListener::bind((crate::config::bind_ip_from_env(), port))
-        .map_err(|e| ServeError::Bind(port, e))?;
+fn listen(ip: std::net::IpAddr, port: u16) -> Result<std::net::TcpListener, ServeError> {
+    let listener =
+        std::net::TcpListener::bind((ip, port)).map_err(|e| ServeError::Bind(port, e))?;
     listener
         .set_nonblocking(true)
         .map_err(|e| ServeError::Bind(port, e))?;
@@ -114,12 +134,15 @@ impl Servers {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::net::{IpAddr, Ipv4Addr};
     use std::time::Instant;
 
     use time::OffsetDateTime;
 
     use super::*;
+
+    /// Teste nunca escuta em 0.0.0.0: o Firewall do Windows abriria um alerta a cada `cargo test`.
+    const LOOPBACK: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
     #[tokio::test]
     async fn sobe_em_portas_efemeras_e_desliga_rapido() {
@@ -131,7 +154,7 @@ mod tests {
             OffsetDateTime::now_utc(),
         )
         .unwrap();
-        let servers = bind_servers(0, 0, Router::new(), Router::new(), &material)
+        let servers = bind_servers_on(LOOPBACK, 0, 0, Router::new(), Router::new(), &material)
             .await
             .unwrap();
         assert_ne!(servers.https_addr.port(), 0);
@@ -149,9 +172,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let material =
             crate::tls::load_or_create(dir.path(), &[], OffsetDateTime::now_utc()).unwrap();
-        let taken = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
+        let taken = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = taken.local_addr().unwrap().port();
-        let result = bind_servers(port, 0, Router::new(), Router::new(), &material).await;
+        let result =
+            bind_servers_on(LOOPBACK, port, 0, Router::new(), Router::new(), &material).await;
         assert!(matches!(result, Err(ServeError::Bind(p, _)) if p == port));
     }
 }

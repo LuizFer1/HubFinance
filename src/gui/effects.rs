@@ -30,15 +30,22 @@ pub fn run(effect: Effect, state: &Entity<HubState>, cx: &mut App) {
             }
         }
         Effect::Minimize => {
+            // Tarefa 14: na barra propria o botao usa `window_control_area(Min)`.
             with_window(cx, |window, _| window.minimize_window());
         }
         Effect::ToggleMaximize => {
+            // Windows: o `zoom_window` do gpui so manda SW_MAXIMIZE (gpui-pre-windows 0.3.14,
+            // window.rs:949), entao uma janela ja maximizada nao volta ao normal por aqui.
+            // Tarefa 14: o botao da barra propria usa `window_control_area(Max)`.
             with_window(cx, |window, _| window.zoom_window());
             // A resposta do sistema chega depois do `zoom`; o `Resized` consulta de novo.
             query_maximized(state, cx);
         }
         Effect::QueryMaximized => query_maximized(state, cx),
         Effect::StartDrag => {
+            // Windows: `start_window_move` nao e sobrescrito na plataforma (vale o default vazio
+            // de platform.rs:1461), logo nao faz nada. Tarefa 14: arrastar vem de
+            // `window_control_area(Drag)`, que o sistema resolve por hit-test (HTCAPTION).
             with_window(cx, |window, _| window.start_window_move());
         }
         Effect::After(duration, msg) => {
@@ -82,7 +89,7 @@ fn open_window(state: &Entity<HubState>, cx: &mut App) {
         return;
     }
     let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
-    let hub = state.clone();
+    let hub = cx.global::<root::HubGlobal>().0.clone();
     let opened = cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),

@@ -49,7 +49,7 @@ if ($proc.HasExited) {
 
 $logs = Join-Path $data 'logs'
 if (Test-Path $logs) {
-    $bad = Get-ChildItem $logs -Filter '*.log' | Select-String -Pattern 'ERROR|panicked'
+    $bad = Get-ChildItem $logs -Filter '*.log' | Select-String -CaseSensitive -Pattern 'ERROR|panicked'
     if ($bad) {
         $bad | Select-Object -First 5 | ForEach-Object { Write-Host $_.Line }
         $failed = $true
@@ -71,6 +71,7 @@ using System;
 using System.Runtime.InteropServices;
 public static class SmokeWin {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int hgt, bool repaint);
@@ -79,14 +80,21 @@ public static class SmokeWin {
         $proc.Refresh()
         $h = $proc.MainWindowHandle
         if ($h -eq 0) { throw 'sem janela' }
-        if ($Width -gt 0 -and $Height -gt 0) {
-            [void][SmokeWin]::MoveWindow($h, 50, 50, $Width, $Height, $true)
+        if ($Width -gt 0 -or $Height -gt 0) {
+            $cur = New-Object SmokeWin+RECT
+            [void][SmokeWin]::GetWindowRect($h, [ref]$cur)
+            $nw = if ($Width -gt 0) { $Width } else { $cur.Right - $cur.Left }
+            $nh = if ($Height -gt 0) { $Height } else { 900 }
+            [void][SmokeWin]::MoveWindow($h, 50, 50, $nw, $nh, $true)
             Start-Sleep -Seconds 1
         }
         [void][SmokeWin]::SetForegroundWindow($h)
         Start-Sleep -Milliseconds 800
         $r = New-Object SmokeWin+RECT
-        [void][SmokeWin]::GetWindowRect($h, [ref]$r)
+        # Limites visiveis (DWMWA_EXTENDED_FRAME_BOUNDS = 9): GetWindowRect inclui ~8 px de borda invisivel.
+        if ([SmokeWin]::DwmGetWindowAttribute($h, 9, [ref]$r, 16) -ne 0) {
+            [void][SmokeWin]::GetWindowRect($h, [ref]$r)
+        }
         $w = $r.Right - $r.Left
         $hg = $r.Bottom - $r.Top
         $bmp = New-Object System.Drawing.Bitmap $w, $hg

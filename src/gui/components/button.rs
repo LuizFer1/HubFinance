@@ -134,6 +134,7 @@ pub struct Button {
     tokens: &'static Tokens,
     ring_gap: Option<Hsla>,
     focus: Option<FocusHandle>,
+    forced: Option<State>,
     on_click: Option<Handler>,
 }
 
@@ -159,8 +160,16 @@ impl Button {
             tokens,
             ring_gap: None,
             focus: None,
+            forced: None,
             on_click: None,
         }
+    }
+
+    /// Vitrine: desenha o botao parado num estado (hover/pressionado dependem do mouse e nao
+    /// da para forca-los ao vivo). Telas nao usam.
+    pub fn forced_state(mut self, state: State) -> Button {
+        self.forced = Some(state);
+        self
     }
 
     pub fn size(mut self, size: Size) -> Button {
@@ -200,7 +209,7 @@ impl Button {
 impl RenderOnce for Button {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let t = self.tokens;
-        let rest = button_colors(self.variant, State::Rest, t);
+        let rest = button_colors(self.variant, self.forced.unwrap_or(State::Rest), t);
         let hover = button_colors(self.variant, State::Hover, t);
         let pressed = button_colors(self.variant, State::Pressed, t);
         let (pad, gap, font) = if filled(self.variant) {
@@ -228,7 +237,10 @@ impl RenderOnce for Button {
             .text_color(rest.fg)
             .when_some(rest.bg, |d, c| d.bg(c))
             .when_some(rest.border, |d, c| d.border_1().border_color(c))
-            .when_some(self.focus, |d, h| d.track_focus(&h))
+            // Desabilitado nao entra na ordem do Tab: pararia num alvo sem anel e sem acao.
+            .when_some(self.focus.clone().filter(|_| enabled), |d, h| {
+                d.track_focus(&h)
+            })
             .when(enabled, |d| {
                 d.cursor_pointer()
                     .hover(move |s| match hover.bg {
@@ -321,7 +333,8 @@ impl RenderOnce for IconButton {
             .justify_center()
             .size(px(36.0))
             .rounded_full()
-            .when_some(self.focus, |d, h| d.track_focus(&h))
+            // Desabilitado nao entra na ordem do Tab: pararia num alvo sem anel e sem acao.
+            .when_some(self.focus.filter(|_| enabled), |d, h| d.track_focus(&h))
             .when(enabled, |d| {
                 d.cursor_pointer()
                     .hover(move |s| match hover {
@@ -407,7 +420,18 @@ mod tests {
             );
             let c = button_colors(Variant::Danger, State::Rest, t);
             assert_eq!((c.bg, c.fg, c.border), (None, t.danger, Some(t.danger)));
-            assert!(button_colors(Variant::Danger, State::Hover, t).bg.is_some());
+            // Hover 12 % e pressionado 22 % do Perigo (contorno) sao PRESUNCAO: o design so
+            // define o repouso (texto e borda `danger`); os valores seguem a mesma ideia do
+            // destrutivo cheio, com `danger` translucido.
+            let d = |s| button_colors(Variant::Danger, s, t);
+            assert_eq!(d(State::Hover).bg, Some(t.danger.opacity(0.12)));
+            assert_eq!(d(State::Pressed).bg, Some(t.danger.opacity(0.22)));
+            for s in [State::Hover, State::Pressed, State::Disabled] {
+                assert_eq!((d(s).fg, d(s).border), (t.danger, Some(t.danger)), "{s:?}");
+            }
+            assert_eq!(d(State::Disabled), d(State::Rest));
+            let f = |s| button_colors(Variant::DangerFilled, s, t);
+            assert_eq!(f(State::Disabled), f(State::Rest));
         }
     }
 

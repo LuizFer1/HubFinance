@@ -1,17 +1,19 @@
 //! Vitrine de debug: `HUBFINANCE_DEMO=componentes` abre a janela direto aqui, com um exemplo de
 //! cada estado, para o dono comparar com o artboard Componentes. Nunca existe em release.
 //!
-//! Os estados hover e pressionado dependem do mouse e nao da para forca-los: a coluna mostra o
-//! componente vivo (passe o mouse) e o foco e simulado com o mesmo anel de `focus::ring`.
+//! Hover e pressionado dependem do mouse e foco do Tab (so ligado na Tarefa 13), entao a vitrine
+//! os desenha parados: `Button::forced_state` usa `button_colors(Hover/Pressed)` e o foco e o
+//! mesmo anel de `focus::ring`. As colunas seguem o artboard: Padrão, Hover, Pressionado, Foco,
+//! Desabilitado.
 
 use gpui::{AnyElement, Div, IntoElement, SharedString, div, prelude::*, px};
 
 use super::badge::Badge;
-use super::button::{Button, IconButton, Variant};
+use super::button::{Button, IconButton, State, Variant};
 use super::chip::{Chip, Pill};
 use super::focus;
 use super::radio::Radio;
-use super::segmented::{Segmented, Surface};
+use super::segmented::{Preview, Segmented, Surface};
 use super::switch::Switch;
 use crate::gui::fonts;
 use crate::gui::icons::Icon;
@@ -47,36 +49,46 @@ fn caption(text: &'static str, t: &'static Tokens) -> Div {
         .child(SharedString::from(text))
 }
 
-/// O botao com o anel de foco desenhado a forca (no `surface` do card).
-fn focused(el: impl IntoElement, t: &'static Tokens) -> AnyElement {
+/// O controle com o anel de foco desenhado a forca (`gap` = fundo atras dele).
+fn focused(el: impl IntoElement, t: &'static Tokens, gap: gpui::Hsla) -> AnyElement {
     div()
         .rounded_full()
-        .shadow(focus::ring(t, t.surface))
+        .shadow(focus::ring(t, gap))
         .child(el)
         .into_any_element()
 }
 
+const COL: f32 = 120.0;
+
 pub fn render(t: &'static Tokens) -> impl IntoElement {
     let gap = t.surface;
     let rows: [(&str, Variant); 5] = [
-        ("Primario", Variant::Primary),
+        ("Primário", Variant::Primary),
         ("Contorno", Variant::Outline),
         ("Fantasma", Variant::Ghost),
         ("Perigo", Variant::Danger),
         ("Destrutivo", Variant::DangerFilled),
     ];
-    let mut buttons = section("Botoes", t);
+    let mut buttons = section("Botões", t);
     buttons = buttons.child(
-        div().flex().gap(px(12.0)).children(
-            ["Padrao (passe o mouse)", "Foco", "Desabilitado"]
-                .map(|h| div().w(px(220.0)).child(caption(h, t))),
-        ),
+        div()
+            .flex()
+            .gap(px(12.0))
+            .child(div().w(px(100.0)))
+            .children(
+                ["Padrão", "Hover", "Pressionado", "Foco", "Desabilitado"]
+                    .map(|h| div().w(px(COL)).child(caption(h, t))),
+            ),
     );
     for (n, (name, v)) in rows.into_iter().enumerate() {
-        let mk = |id: String, disabled: bool| {
-            Button::new(SharedString::from(id), "Continuar", v, t)
+        let mk = |col: usize, state: Option<State>, disabled: bool| {
+            let b = Button::new(SharedString::from(format!("b{n}{col}")), "Continuar", v, t)
                 .ring_gap(gap)
-                .disabled(disabled)
+                .disabled(disabled);
+            match state {
+                Some(s) => b.forced_state(s),
+                None => b,
+            }
         };
         buttons = buttons.child(
             div()
@@ -90,13 +102,11 @@ pub fn render(t: &'static Tokens) -> impl IntoElement {
                         .text_color(t.muted)
                         .child(name),
                 )
-                .child(div().w(px(120.0)).child(mk(format!("b{n}a"), false)))
-                .child(
-                    div()
-                        .w(px(120.0))
-                        .child(focused(mk(format!("b{n}b"), false), t)),
-                )
-                .child(div().w(px(120.0)).child(mk(format!("b{n}c"), true))),
+                .child(div().w(px(COL)).child(mk(0, None, false)))
+                .child(div().w(px(COL)).child(mk(1, Some(State::Hover), false)))
+                .child(div().w(px(COL)).child(mk(2, Some(State::Pressed), false)))
+                .child(div().w(px(COL)).child(focused(mk(3, None, false), t, gap)))
+                .child(div().w(px(COL)).child(mk(4, None, true))),
         );
     }
     buttons = buttons.child(
@@ -105,8 +115,13 @@ pub fn render(t: &'static Tokens) -> impl IntoElement {
             .items_center()
             .gap(px(12.0))
             .child(IconButton::new("ib1", Icon::ChevronLeft, t).ring_gap(gap))
+            .child(focused(
+                IconButton::new("ib3", Icon::ChevronLeft, t).ring_gap(gap),
+                t,
+                gap,
+            ))
             .child(IconButton::new("ib2", Icon::ChevronRight, t).disabled(true))
-            .child(Button::new("bi", "Com icone", Variant::Outline, t).icon(Icon::Copy)),
+            .child(Button::new("bi", "Com ícone", Variant::Outline, t).icon(Icon::Copy)),
     );
 
     let controls = section("Controles", t)
@@ -125,8 +140,25 @@ pub fn render(t: &'static Tokens) -> impl IntoElement {
                     .width(210.0),
                 )
                 .child(
-                    Segmented::new("seg2", vec!["Mes".into(), "Ano".into()], 0, t)
+                    Segmented::new("seg2", vec!["Mês".into(), "Ano".into()], 0, t)
                         .surface(Surface::Raised)
+                        .width(210.0),
+                ),
+        )
+        .child(
+            // Hover num item inativo e foco num ativo (o ativo nao muda com o mouse).
+            div()
+                .flex()
+                .items_center()
+                .gap(px(24.0))
+                .child(
+                    Segmented::new("seg3", vec!["Escuro".into(), "Claro".into()], 0, t)
+                        .preview(1, Preview::Hover)
+                        .width(210.0),
+                )
+                .child(
+                    Segmented::new("seg4", vec!["Escuro".into(), "Claro".into()], 0, t)
+                        .preview(0, Preview::Focus)
                         .width(210.0),
                 ),
         )
@@ -138,18 +170,24 @@ pub fn render(t: &'static Tokens) -> impl IntoElement {
                 .child(Switch::new("sw1", true, t).ring_gap(gap))
                 .child(Switch::new("sw2", false, t))
                 .child(Switch::new("sw3", true, t).disabled(true))
+                .child(focused(Switch::new("sw4", true, t).ring_gap(gap), t, gap))
                 .child(div().w(px(24.0)))
                 .child(Radio::new("r1", false, t))
                 .child(Radio::new("r2", true, t))
-                .child(focused(Radio::new("r3", false, t), t)),
+                .child(focused(Radio::new("r3", false, t).ring_gap(gap), t, gap)),
         )
         .child(
             div()
                 .flex()
                 .items_center()
                 .gap(px(10.0))
-                .child(Chip::new("Ultimos 12 meses", t))
+                .child(Chip::new("Últimos 12 meses", t))
                 .child(Pill::new("pill", "12 meses", t).ring_gap(gap))
+                .child(focused(
+                    Pill::new("pill2", "12 meses", t).ring_gap(gap),
+                    t,
+                    gap,
+                ))
                 .child(Badge::new(2, t))
                 .child(Badge::new(2, t).dot()),
         );

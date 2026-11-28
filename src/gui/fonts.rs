@@ -36,7 +36,6 @@ pub fn register(cx: &mut App) {
 /// Peso do design para o mais proximo vendorizado (Light/Regular/Medium/SemiBold). O design usa
 /// 700 e 800 (badges, passos, "Desfazer"); sem `InterHub-Bold.ttf` o GPUI sintetizaria negrito
 /// por cima da SemiBold, borrado. Presuncao 12 da spec: 700 e 800 viram SemiBold.
-#[allow(dead_code)] // usado na Tarefa 11
 pub fn weight(w: u16) -> FontWeight {
     match w {
         0..=349 => FontWeight::LIGHT,

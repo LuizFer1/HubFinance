@@ -5,6 +5,8 @@
 param(
     [int]$Port = 47777,
     [switch]$Demo,
+    # Valor de HUBFINANCE_DEMO (ex.: componentes); implica -Demo. Sem ele, -Demo usa grafite.
+    [string]$DemoName = '',
     [switch]$Light,
     [switch]$Background,
     [int]$Width = 0,
@@ -32,7 +34,7 @@ $env:HUBFINANCE_UI = 'gpui'
 $env:HUBFINANCE_DATA_DIR = $data
 $env:HUBFINANCE_PORT = "$Port"
 $env:HUBFINANCE_BIND = '127.0.0.1'
-if ($Demo) { $env:HUBFINANCE_DEMO = 'grafite' } else { Remove-Item Env:HUBFINANCE_DEMO -ErrorAction SilentlyContinue }
+if ($DemoName) { $env:HUBFINANCE_DEMO = $DemoName } elseif ($Demo) { $env:HUBFINANCE_DEMO = 'grafite' } else { Remove-Item Env:HUBFINANCE_DEMO -ErrorAction SilentlyContinue }
 
 $exe = Join-Path (Get-Location) 'target\debug\hub_finance.exe'
 $argList = @()

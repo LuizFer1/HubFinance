@@ -7,8 +7,8 @@
 //! para o check fino de lista use `CheckW26`. Categorias do app continuam no Phosphor
 //! (`ui_model::icons`).
 
-// Usado pelas telas a partir da Tarefa 11.
-#![allow(dead_code)] // usado na Tarefa 11
+// Usado pelas telas a partir da Tarefa 15; ate la so parte das variantes tem uso.
+#![allow(dead_code)] // usado na Tarefa 15
 
 use gpui::{Hsla, Pixels, Styled as _, Svg, svg};
 

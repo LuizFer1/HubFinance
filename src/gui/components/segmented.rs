@@ -52,6 +52,13 @@ pub fn item_colors(active: bool, hover: bool, t: &Tokens) -> ItemColors {
 
 type Select = std::rc::Rc<dyn Fn(usize, &mut Window, &mut App) + 'static>;
 
+/// Vitrine: estado forcado de um item (hover e foco dependem de mouse/teclado ao vivo).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Preview {
+    Hover,
+    Focus,
+}
+
 #[derive(IntoElement)]
 pub struct Segmented {
     id: ElementId,
@@ -61,6 +68,7 @@ pub struct Segmented {
     tokens: &'static Tokens,
     width: Option<f32>,
     focus: Vec<FocusHandle>,
+    preview: Option<(usize, Preview)>,
     on_select: Option<Select>,
 }
 
@@ -79,6 +87,7 @@ impl Segmented {
             tokens,
             width: None,
             focus: Vec::new(),
+            preview: None,
             on_select: None,
         }
     }
@@ -97,6 +106,12 @@ impl Segmented {
     /// Um handle por item, na ordem; sem eles so o mouse seleciona.
     pub fn focus_handles(mut self, handles: Vec<FocusHandle>) -> Segmented {
         self.focus = handles;
+        self
+    }
+
+    /// So a vitrine usa: pinta o item `i` como se estivesse em hover ou com foco.
+    pub fn preview(mut self, i: usize, p: Preview) -> Segmented {
+        self.preview = Some((i, p));
         self
     }
 
@@ -129,7 +144,8 @@ impl RenderOnce for Segmented {
             .when_some(self.width, |d, w| d.w(px(w)));
         for (i, label) in self.items.into_iter().enumerate() {
             let active = i == self.selected;
-            let rest = item_colors(active, false, t);
+            let forced = self.preview.filter(|(n, _)| *n == i).map(|(_, p)| p);
+            let rest = item_colors(active, forced == Some(Preview::Hover), t);
             let hover = item_colors(active, true, t);
             let select = self.on_select.clone();
             let handle = self.focus.get(i).cloned();
@@ -148,6 +164,9 @@ impl RenderOnce for Segmented {
                     .text_color(rest.fg)
                     .font_weight(fonts::weight(if rest.bold { 600 } else { 400 }))
                     .when_some(rest.bg, |d, c| d.bg(c))
+                    .when(forced == Some(Preview::Focus), |d| {
+                        d.shadow(focus::ring(t, gap_color))
+                    })
                     .when_some(handle, |d, h| d.track_focus(&h))
                     .cursor_pointer()
                     .hover(move |s| match hover.bg {

@@ -78,7 +78,8 @@ impl RenderOnce for Switch {
             .rounded_full()
             .bg(track_color(self.on, t))
             .when(self.on, |d| d.justify_end())
-            .when_some(self.focus, |d, h| d.track_focus(&h))
+            // Desabilitado nao entra na ordem do Tab: pararia num alvo sem anel e sem acao.
+            .when_some(self.focus.filter(|_| enabled), |d, h| d.track_focus(&h))
             .when(enabled, |d| d.cursor_pointer().focus_visible(ring))
             .when(!enabled, |d| d.opacity(0.4))
             .when_some(handler.filter(|_| enabled), |d, f| {

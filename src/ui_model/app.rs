@@ -15,6 +15,7 @@ use crate::assistant::settings::ProviderChoice;
 use crate::config::{self, ThemeMode, UiPrefs};
 use crate::dashboard::contract::Book;
 use crate::dashboard::dataset::{Dataset, avatar_bytes};
+use crate::dashboard::desk::{DeskView, build_desk};
 use crate::dashboard::grafite::{GrafiteView, build_grafite};
 use crate::dashboard::list::{Filters, NONE_KEY, TypeFilter};
 use crate::dashboard::people::{DeviceInfo, Person, people};
@@ -229,6 +230,9 @@ pub struct App {
     /// Modelos de tela, recalculados so quando dados, mes, filtros ou "hoje" mudam: desenhar
     /// um quadro nunca percorre o dataset.
     pub(crate) dashboard: GrafiteView,
+    /// O Dashboard do redesenho (`dashboard::desk`), recalculado junto com `dashboard`: a tela
+    /// so le este modelo, nunca o dataset.
+    pub(crate) desk: DeskView,
     /// "Ver todas as N" de "Próximas saídas" abriu a lista no lugar. Volta a fechar ao trocar
     /// de mes ou de conta, nao a cada sync (fecharia na cara de quem esta lendo).
     pub(crate) upcoming_expanded: bool,
@@ -507,6 +511,7 @@ impl App {
             scope: Dataset::default(),
             filters: Filters::default(),
             dashboard: GrafiteView::default(),
+            desk: DeskView::default(),
             upcoming_expanded: false,
             transactions: TransactionsView::default(),
             reserves: ReservesView::default(),
@@ -763,6 +768,22 @@ impl App {
             &self.today,
             self.month(),
             self.book,
+            self.hide_values,
+        );
+        // O Dashboard do design e sempre da conta pessoal, com o card "Negocio" da comercial
+        // ao lado; `scope` ja e a pessoal quando e ela a escolhida, e so a outra e refeita.
+        let personal =
+            (self.book != Book::Personal).then(|| self.snapshot.dashboard.for_book(Book::Personal));
+        let business = self
+            .snapshot
+            .dashboard
+            .has_business_book()
+            .then(|| self.snapshot.dashboard.for_book(Book::Business));
+        self.desk = build_desk(
+            personal.as_ref().unwrap_or(&self.scope),
+            business.as_ref(),
+            &self.today,
+            self.month(),
             self.hide_values,
         );
     }
@@ -3483,6 +3504,27 @@ pub(crate) mod tests {
         app.set_today("2026-09-24".into());
         // O `_rx` cai aqui: nenhum teste deste grupo envia comando.
         (app, tx)
+    }
+
+    #[test]
+    fn desk_e_recalculado_com_o_mes_o_olho_e_a_conta_comercial() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), true, false);
+        assert_eq!(app.desk.month, app.month());
+        // A conta comercial existe: o card do Negocio aparece, na conta pessoal e na outra
+        // (o Dashboard do design e sempre o da pessoal com o PJ ao lado).
+        assert!(app.desk.business.is_some());
+        let personal_balance = app.desk.how_am_i.balance.clone();
+        let _ = update(&mut app, Msg::SelectBook(Book::Business));
+        assert_eq!(app.desk.how_am_i.balance, personal_balance);
+        let _ = update(&mut app, Msg::SelectBook(Book::Personal));
+        let _ = update(&mut app, Msg::PrevMonth);
+        assert_eq!(app.desk.month, app.month());
+        let _ = update(&mut app, Msg::ToggleHideValues);
+        assert!(app.desk.hidden);
+        // Sem conta comercial, sem card.
+        let (app, _tx) = app_with_business(dir.path(), false, false);
+        assert!(app.desk.business.is_none());
     }
 
     #[test]

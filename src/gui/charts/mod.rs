@@ -3,7 +3,7 @@
 //! Rotulos (eixo, valores, meses) sao texto GPUI por cima do canvas, nunca pintados: assim
 //! "Ocultar valores" so troca o texto e nao ha cache de desenho para invalidar (spec §8).
 //! Nenhum grafico formata dinheiro: os textos chegam prontos do `dashboard/`.
-#![allow(dead_code)] // usado na Tarefa 18
+#![allow(dead_code)] // usado na Tarefa 19 em diante (a 18 ja usa parte)
 
 pub mod bars;
 pub mod donut;

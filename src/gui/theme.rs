@@ -39,7 +39,7 @@ pub struct CardRing {
 
 // accent_300, accent_700, on_highlight_muted e chart so sao lidos nos testes; as telas de dados os
 // usam depois.
-#[allow(dead_code)] // usado na Tarefa 18
+#[allow(dead_code)] // usado na Tarefa 19 em diante (a 18 ja usa parte)
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tokens {
     pub dark: bool,

@@ -12,6 +12,7 @@ mod fonts;
 mod icons;
 mod motion;
 mod root;
+mod screens;
 mod shell;
 mod theme;
 

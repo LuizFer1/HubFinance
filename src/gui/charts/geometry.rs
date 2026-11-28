@@ -7,7 +7,7 @@
 //! `reserves::reserve_axis_top`), que e quem sabe o que e um teto; aqui so se aplica a escala.
 //! Nada aqui foi copiado de `ui/charts.rs` (iced, congelada ate a Tarefa 39a): aquele tem layout
 //! proprio, com margens de eixo; esta geometria foi escrita do zero para o design novo.
-#![allow(dead_code)] // usado na Tarefa 18
+#![allow(dead_code)] // usado na Tarefa 19 em diante (a 18 ja usa parte)
 
 use std::ops::Range;
 

@@ -17,7 +17,7 @@ use super::{effects, fonts};
 use crate::dashboard::dataset::Dataset;
 use crate::hub::HubHandle;
 use crate::hub::snapshot::Snapshot;
-use crate::ui_model::app::{App as Model, Msg, update};
+use crate::ui_model::app::{App as Model, Msg, Screen, update};
 use crate::ui_model::keys::{Key, KeyPress};
 use crate::ui_model::shell;
 use crate::ui_model::window::Size;
@@ -148,6 +148,7 @@ pub struct HubWindow {
     state: Entity<HubState>,
     focus: FocusHandle,
     shell_focus: super::shell::ShellFocus,
+    dash_focus: super::screens::dashboard::DashboardFocus,
     #[cfg(debug_assertions)]
     demo_fields: Option<super::components::showcase::Fields>,
 }
@@ -166,10 +167,12 @@ impl HubWindow {
         let demo_fields = super::components::showcase::requested()
             .then(|| super::components::showcase::Fields::new(window, cx));
         let shell_focus = super::shell::ShellFocus::new(cx);
+        let dash_focus = super::screens::dashboard::DashboardFocus::new(cx);
         HubWindow {
             state,
             focus,
             shell_focus,
+            dash_focus,
             #[cfg(debug_assertions)]
             demo_fields,
         }
@@ -270,7 +273,15 @@ impl Render for HubWindow {
                                 app,
                                 &state_for_shell,
                                 &self.shell_focus,
-                            )),
+                            ))
+                            .when(app.screen == Screen::Dashboard, |d| {
+                                d.child(super::screens::dashboard::render(
+                                    tokens,
+                                    app,
+                                    &state_for_shell,
+                                    &self.dash_focus,
+                                ))
+                            }),
                     ),
             )
             .into_any_element()

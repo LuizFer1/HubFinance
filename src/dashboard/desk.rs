@@ -9,7 +9,6 @@
 //!
 //! A parte 2 (Tarefa 17b) acrescenta "Para onde foi", "O que vem", "Recentes", "Pessoas" e o
 //! rodapé; o "Atualizado às …" do rodapé vem do snapshot, na tela.
-#![allow(dead_code)] // usado na Tarefa 18
 
 use super::aggregate::{
     NO_CATEGORY_COLOR, NO_CATEGORY_ICON, NO_CATEGORY_KEY, expense_by_category, in_month, recent,

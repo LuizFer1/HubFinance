@@ -29,15 +29,16 @@ pub fn rgba(r: u8, g: u8, b: u8, a: f32) -> Hsla {
     .into()
 }
 
-/// Borda de 1 px e sombra suave do card no tema claro (`--card-ring`). No escuro nao ha.
+/// `--card-ring` do tema claro: `0 0 0 1px #E9E9E9, 0 1px 2px rgba(0,0,0,.04)`. O anel e uma
+/// sombra com spread de 1 px (fora da caixa, sem ocupar layout), nao uma borda: com borda o
+/// card ficaria 1 px menor por dentro que no escuro. No escuro nao ha.
 #[allow(dead_code)] // usado na Tarefa 12
 #[derive(Debug, Clone, PartialEq)]
 pub struct CardRing {
-    pub border: Hsla,
-    pub shadow: BoxShadow,
+    pub shadows: [BoxShadow; 2],
 }
 
-#[allow(dead_code)] // usado na Tarefa 11 (campos restantes nas Tarefas 12 a 15)
+#[allow(dead_code)] // usado na Tarefa 15 (ultima a ler os campos)
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tokens {
     pub dark: bool,
@@ -161,14 +162,22 @@ fn light() -> Tokens {
             rgb(0x8A8A8A),
         ],
         card_ring: Some(CardRing {
-            border: rgb(0xE9E9E9),
-            shadow: BoxShadow {
-                color: rgba(0, 0, 0, 0.04),
-                offset: point(px(0.0), px(1.0)),
-                blur_radius: px(2.0),
-                spread_radius: px(0.0),
-                inset: false,
-            },
+            shadows: [
+                BoxShadow {
+                    color: rgb(0xE9E9E9),
+                    offset: point(px(0.0), px(0.0)),
+                    blur_radius: px(0.0),
+                    spread_radius: px(1.0),
+                    inset: false,
+                },
+                BoxShadow {
+                    color: rgba(0, 0, 0, 0.04),
+                    offset: point(px(0.0), px(1.0)),
+                    blur_radius: px(2.0),
+                    spread_radius: px(0.0),
+                    inset: false,
+                },
+            ],
         }),
         scrim: rgba(32, 32, 32, 0.35),
         dialog_shadow: dialog_shadow(),
@@ -308,10 +317,13 @@ mod tests {
         assert!((l.scrim.a - 0.35).abs() < 1e-6);
         assert!(d.card_ring.is_none());
         let ring = l.card_ring.as_ref().expect("o claro tem anel");
-        assert_eq!(hex(ring.border), 0xE9E9E9);
-        assert!((ring.shadow.color.a - 0.04).abs() < 1e-6);
-        assert_eq!(ring.shadow.offset.y, px(1.0));
-        assert_eq!(ring.shadow.blur_radius, px(2.0));
+        let [anel, suave] = &ring.shadows;
+        assert_eq!(hex(anel.color), 0xE9E9E9);
+        assert_eq!(anel.spread_radius, px(1.0));
+        assert_eq!(anel.blur_radius, px(0.0));
+        assert!((suave.color.a - 0.04).abs() < 1e-6);
+        assert_eq!(suave.offset.y, px(1.0));
+        assert_eq!(suave.blur_radius, px(2.0));
         for t in [d, l] {
             assert_eq!(t.dialog_shadow.offset.y, px(24.0));
             assert_eq!(t.dialog_shadow.blur_radius, px(64.0));

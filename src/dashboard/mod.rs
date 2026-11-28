@@ -7,6 +7,7 @@ pub mod cards;
 pub mod colors;
 pub mod contract;
 pub mod dataset;
+pub mod desk;
 pub mod grafite;
 pub mod ids;
 pub mod insights;

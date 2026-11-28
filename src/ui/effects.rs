@@ -45,7 +45,10 @@ pub(super) fn task(effect: Effect<Message>, app: &mut App) -> Task<Message> {
         Effect::CopyToClipboard(text) => iced::clipboard::write(text),
         Effect::OpenUrl(url) => {
             if let Err(err) = open::that_detached(url) {
+                // `that_detached`, e nao `that`: em alguns Linux o `xdg-open` so volta quando o
+                // navegador fecha, e a thread da janela nao pode esperar.
                 tracing::warn!("nao foi possivel abrir o navegador: {err}");
+                return Task::done(Message::OpenUrlFailed);
             }
             Task::none()
         }

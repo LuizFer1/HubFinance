@@ -391,6 +391,8 @@ pub enum Message {
     AnalysisTab(AnalysisTab),
     /// "Versoes no GitHub" de Ajustes > Sobre.
     OpenReleases,
+    /// O sistema recusou abrir o navegador (devolvida por `Effect::OpenUrl`).
+    OpenUrlFailed,
     HoverRow(String),
     UnhoverRow(String),
     AskRemove(String),
@@ -1591,12 +1593,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::OpenReleases => {
             // O navegador do usuario vai ao GitHub por um clique dele; este processo nao abre
-            // socket. `that_detached`, e nao `that`: em alguns Linux o `xdg-open` so volta
-            // quando o navegador fecha, e `update` roda na thread da janela.
-            if let Err(err) = open::that_detached(config::RELEASES_URL) {
-                tracing::warn!("nao foi possivel abrir o navegador: {err}");
-                app.releases_open_failed = true;
-            }
+            // socket. A falha volta como `OpenUrlFailed` para virar estado na tela.
+            effects::task(Effect::OpenUrl(config::RELEASES_URL), app)
+        }
+        Message::OpenUrlFailed => {
+            app.releases_open_failed = true;
             Task::none()
         }
         Message::CopyReply(id) => {

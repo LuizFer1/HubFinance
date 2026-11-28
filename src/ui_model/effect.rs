@@ -25,8 +25,7 @@ pub enum Effect<M> {
     After(Duration, M),
     SavePrefs(UiPrefs),
     CopyToClipboard(String),
-    /// Hoje o `update` abre o navegador na hora, porque a falha vira estado na tela.
-    #[allow(dead_code)] // usado na Tarefa 28
+    /// Abre a URL no navegador; se o sistema recusar, volta `Message::OpenUrlFailed`.
     OpenUrl(&'static str),
     #[allow(dead_code)] // usado na Tarefa 28
     OpenFolder(PathBuf),

@@ -58,6 +58,11 @@ pub trait Desktop {
     fn system_dark(&self) -> Option<bool> {
         appearance::system_dark()
     }
+    /// Tema da barra de tarefas (`true` = escura). O icone da bandeja depende dele, e ele muda
+    /// com o hub ligado: a UI confere a cada tique e reaplica o icone quando muda.
+    fn taskbar_dark(&self) -> Option<bool> {
+        appearance::taskbar_dark()
+    }
 }
 
 /// Linux, macOS, e Windows quando a bandeja nao subiu.
@@ -154,6 +159,8 @@ pub(crate) struct Fake {
     pub fail_autostart: std::cell::Cell<bool>,
     /// O tema do sistema que o teste escolhe; nunca le o registro da maquina.
     pub system_dark: std::cell::Cell<Option<bool>>,
+    /// Tema da barra que o teste escolhe.
+    pub taskbar_dark: std::cell::Cell<Option<bool>>,
 }
 
 #[cfg(test)]
@@ -168,6 +175,7 @@ impl Fake {
             autostart: std::cell::Cell::new(Some(false)),
             fail_autostart: Default::default(),
             system_dark: Default::default(),
+            taskbar_dark: Default::default(),
         }
     }
 }
@@ -201,6 +209,9 @@ impl Desktop for Fake {
     }
     fn system_dark(&self) -> Option<bool> {
         self.system_dark.get()
+    }
+    fn taskbar_dark(&self) -> Option<bool> {
+        self.taskbar_dark.get()
     }
 }
 

@@ -255,6 +255,9 @@ pub struct App {
     pub(crate) tooltip: String,
     /// Ultimo desenho mandado ao icone da bandeja; nasce `Normal`, que e o do `install`.
     pub(crate) tray_icon: crate::desktop::tray::TrayIcon,
+    /// Tema da barra com que `tray_icon` foi desenhado: trocar a barra de tema sem trocar o
+    /// estado deixaria o desenho claro sobre barra clara (quase invisivel).
+    tray_taskbar_dark: Option<bool>,
     /// As tres animacoes (scrim, toast, cursor) e o "Reduzir movimento".
     pub(crate) motion: Motion,
     /// "Iniciar com o Windows" como o sistema diz (cache do registro, lido no boot e depois de
@@ -474,6 +477,7 @@ impl App {
         // design) se nunca houve.
         let saved = prefs.theme != ThemeMode::System || prefs.system_dark;
         let system_dark = desktop.system_dark().unwrap_or(saved);
+        let taskbar_dark = desktop.taskbar_dark();
         let mut app = App {
             handle,
             snapshot,
@@ -530,6 +534,7 @@ impl App {
             desktop,
             tooltip: String::new(),
             tray_icon: crate::desktop::tray::TrayIcon::Normal,
+            tray_taskbar_dark: taskbar_dark,
             motion: Motion::new(prefs.reduce_motion, Instant::now()),
         };
         app.refresh_people();
@@ -595,8 +600,11 @@ impl App {
             self.tooltip = text;
         }
         let icon = crate::desktop::tray::icon_for(&self.snapshot.status);
-        if icon != self.tray_icon && self.desktop.set_icon(icon) {
+        let bar = self.desktop.taskbar_dark();
+        if (icon != self.tray_icon || bar != self.tray_taskbar_dark) && self.desktop.set_icon(icon)
+        {
             self.tray_icon = icon;
+            self.tray_taskbar_dark = bar;
         }
     }
 
@@ -3255,6 +3263,20 @@ pub(crate) mod tests {
             *fake.icons.borrow(),
             [TrayIcon::Attention, TrayIcon::Error, TrayIcon::Normal]
         );
+    }
+
+    #[test]
+    fn trocar_o_tema_da_barra_reaplica_o_icone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        let before = fake.icons.borrow().len();
+        let _ = update(&mut app, Msg::Tick);
+        assert_eq!(fake.icons.borrow().len(), before, "sem mudanca nao manda");
+        fake.taskbar_dark.set(Some(false));
+        let _ = update(&mut app, Msg::Tick);
+        assert_eq!(fake.icons.borrow().len(), before + 1);
+        let _ = update(&mut app, Msg::Tick);
+        assert_eq!(fake.icons.borrow().len(), before + 1);
     }
 
     #[test]

@@ -1,8 +1,10 @@
 //! Icones de traco do design (`assets/icons/*.svg`, gerados por `scripts/extract-icons.py`).
 //!
 //! Cada variante e um arquivo embutido em `assets`; a cor vem de `currentColor`, entao quem
-//! desenha escolhe. Variantes `W*` sao a mesma forma com outra espessura de traco: o GPUI nao
-//! muda a espessura na hora de desenhar. Categorias do app continuam no Phosphor
+//! desenha escolhe. O nome puro (`Close`) e a espessura mais usada do design; `W*` e a mesma
+//! forma com outra espessura (`CloseW4` = 4 px): o GPUI nao muda a espessura ao desenhar. O doc
+//! de cada variante traz a espessura e onde o design a usa. `Check` e 4 px (selos do assistente);
+//! para o check fino de lista use `CheckW26`. Categorias do app continuam no Phosphor
 //! (`ui_model::icons`).
 
 // Usado pelas telas a partir da Tarefa 11.
@@ -12,73 +14,141 @@ use gpui::{Hsla, Pixels, Styled as _, Svg, svg};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
+    /// Traco 2 px; 2 uso(s) no design, p.ex. Sistema, SistemaClaro.
     AlertCircle,
+    /// Traco 2 px; 7 uso(s) no design, p.ex. Reservas, Componentes, Lancamentos.
     ArrowDownLeft,
+    /// Traco 1.8 px; 3 uso(s) no design, p.ex. DashboardClaro, DashboardJanela1100, Main.
     ArrowDownLeftW18,
+    /// Traco 2 px; 4 uso(s) no design, p.ex. Reservas, Componentes, Lancamentos.
     ArrowUpRight,
+    /// Traco 2.2 px; 3 uso(s) no design, p.ex. DashboardClaro, DashboardJanela1100, Main.
     ArrowUpRightW22,
+    /// Traco 1.8 px; 2 uso(s) no design, p.ex. Estados, Reservas.
     ArrowsUpdown,
+    /// Traco 1.8 px; 2 uso(s) no design, p.ex. Estados, Reservas.
     Box,
+    /// Traco 2.4 px; 3 uso(s) no design, p.ex. DashboardClaro, DashboardJanela1100, Main.
     Briefcase,
+    /// Traco 1.8 px; 13 uso(s) no design, p.ex. Analise, AnaliseConversa, AnaliseConversaClaro.
     Bulb,
+    /// Traco 1.8 px; 5 uso(s) no design, p.ex. Componentes, DashboardClaro, DashboardJanela1100.
     Calendar,
+    /// Traco 1.8 px; 4 uso(s) no design, p.ex. DashboardClaro, DashboardJanela1100, Main.
     Car,
+    /// Traco 1.8 px; 3 uso(s) no design, p.ex. DashboardClaro, DashboardJanela1100, Main.
     Cart,
+    /// Traco 1.8 px; 3 uso(s) no design, p.ex. DashboardClaro, DashboardJanela1100, Main.
     ChartBars,
+    /// Traco 4 px; 43 uso(s) no design, p.ex. AssistenteVe, Analise, AnaliseConversa.
     Check,
+    /// Traco 2.6 px; 5 uso(s) no design, p.ex. Sistema, SistemaClaro, Componentes.
     CheckW26,
+    /// Traco 3 px; 5 uso(s) no design, p.ex. Componentes, DashboardClaro, DashboardJanela1100.
     CheckW3,
+    /// Traco 3.2 px; 6 uso(s) no design, p.ex. RemoverPasso3, Estados, RemoverPasso2.
     CheckW32,
+    /// Traco 2 px; 4 uso(s) no design, p.ex. AssistenteConfigurar, Componentes, Estados.
     ChevronDown,
+    /// Traco 2.4 px; 2 uso(s) no design, p.ex. Componentes, Conexao.
     ChevronDownW24,
+    /// Traco 2 px; 16 uso(s) no design, p.ex. AnaliseConversa, AnaliseConversaClaro, Estados.
     ChevronLeft,
+    /// Traco 2 px; 73 uso(s) no design, p.ex. AnaliseConversa, AnaliseConversaClaro, Analise.
     ChevronRight,
+    /// Traco 2 px; 8 uso(s) no design, p.ex. AssistenteConfigurar, AssistenteVe, Estados.
     Close,
-    CloseW2,
+    /// Traco 4 px; 5 uso(s) no design, p.ex. AssistenteVe, Ajustes.
+    CloseW4,
+    /// Traco 1.8 px; 5 uso(s) no design, p.ex. Ajustes, AnaliseConversa, AnaliseConversaClaro.
     Copy,
+    /// Traco 2 px; 2 uso(s) no design, p.ex. Conexao.
     CopyW2,
+    /// Traco 1.8 px; 1 uso(s) no design, p.ex. Reservas.
     CreditCard,
+    /// Traco 1.8 px; 11 uso(s) no design, p.ex. Ajustes, Analise, AnaliseConversa.
     Dashboard,
+    /// Traco 2 px; 1 uso(s) no design, p.ex. Ajustes.
     ExternalLink,
+    /// Traco 1.8 px; 11 uso(s) no design, p.ex. Analise, Ajustes, AnaliseConversa.
     Eye,
+    /// Traco 1.8 px; 11 uso(s) no design, p.ex. Ajustes, Analise, AnaliseConversa.
     EyeOff,
+    /// Traco 1.8 px; 1 uso(s) no design, p.ex. Estados.
     Filter,
+    /// Traco 1.8 px; 4 uso(s) no design, p.ex. Ajustes, Sistema, SistemaClaro.
     Folder,
+    /// Traco 1.8 px; 1 uso(s) no design, p.ex. Reservas.
     Gift,
+    /// Traco 1.8 px; 1 uso(s) no design, p.ex. Conexao.
     Globe,
+    /// Traco 2 px; 9 uso(s) no design, p.ex. Analise, AnaliseConversa, AnaliseConversaClaro.
     HalfCircleWarning,
+    /// Traco 1.8 px; 3 uso(s) no design, p.ex. DashboardClaro, DashboardJanela1100, Main.
     Heart,
+    /// Traco 2 px; 41 uso(s) no design, p.ex. Sistema, SistemaClaro, Componentes.
     Hub,
+    /// Traco 1.8 px; 6 uso(s) no design, p.ex. Ajustes, Componentes, Conexao.
     Info,
+    /// Traco 1.8 px; 16 uso(s) no design, p.ex. Componentes, Ajustes, Analise.
     List,
+    /// Traco 1.8 px; 4 uso(s) no design, p.ex. Ajustes, Analise, AnaliseConversa.
     Lock,
+    /// Traco 1.8 px; 11 uso(s) no design, p.ex. Ajustes, Analise, AnaliseConversa.
     Moon,
+    /// Traco 1.8 px; 1 uso(s) no design, p.ex. Ajustes.
     Palette,
+    /// Traco 1.8 px; 5 uso(s) no design, p.ex. Conexao, DashboardClaro, DashboardJanela1100.
     People,
+    /// Traco 1.8 px; 1 uso(s) no design, p.ex. Conexao.
     Phone,
+    /// Traco 1.8 px; 3 uso(s) no design, p.ex. DashboardClaro, DashboardJanela1100, Main.
     Pie,
+    /// Traco 1.8 px; 1 uso(s) no design, p.ex. Reservas.
     Plane,
+    /// Traco 2 px; 2 uso(s) no design, p.ex. AnaliseConversa, AnaliseConversaClaro.
     Plus,
+    /// Traco 1.8 px; 1 uso(s) no design, p.ex. Ajustes.
     Power,
+    /// Traco 1.8 px; 4 uso(s) no design, p.ex. Conexao, DashboardClaro, DashboardJanela1100.
     Pulse,
+    /// Traco 1.5 px; 1 uso(s) no design, p.ex. Estados.
     QrCode,
+    /// Traco 1.8 px; 3 uso(s) no design, p.ex. DashboardClaro, DashboardJanela1100, Main.
     Receipt,
+    /// Traco 2.2 px; 17 uso(s) no design, p.ex. DashboardClaro, DashboardJanela1100, Main.
     Repeat,
-    RepeatW22,
+    /// Traco 2 px; 1 uso(s) no design, p.ex. Componentes.
+    RepeatW2,
+    /// Traco 2 px; 1 uso(s) no design, p.ex. Lancamentos.
     Scale,
+    /// Traco 1.8 px; 13 uso(s) no design, p.ex. Analise, AnaliseConversa, AnaliseConversaClaro.
     Settings,
+    /// Traco 1.8 px; 16 uso(s) no design, p.ex. DashboardClaro, DashboardJanela1100, Main.
     Shield,
+    /// Traco 1.8 px; 1 uso(s) no design, p.ex. Conexao.
     ShieldCheck,
+    /// Traco 2 px; 2 uso(s) no design, p.ex. Estados, Reservas.
     ShieldW2,
+    /// Traco 2 px; 10 uso(s) no design, p.ex. AnaliseConversa, AnaliseConversaClaro, Analise.
     Sparkle,
-    SparkleW2,
+    /// Traco 1.8 px; 3 uso(s) no design, p.ex. Ajustes, Analise, Estados.
+    SparkleW18,
+    /// Traco 1.8 px; 11 uso(s) no design, p.ex. Ajustes, Analise, AnaliseConversa.
     Sun,
+    /// Traco 2 px; 10 uso(s) no design, p.ex. Ajustes, Analise, AnaliseConversa.
     Sync,
+    /// Traco 1.8 px; 2 uso(s) no design, p.ex. Componentes, Estados.
     SyncW18,
+    /// Traco 2 px; 1 uso(s) no design, p.ex. Conexao.
     Timer,
+    /// Traco 1.8 px; 2 uso(s) no design, p.ex. Analise.
     Trash,
+    /// Traco 1.8 px; 2 uso(s) no design, p.ex. Estados, Reservas.
     TrendUp,
+    /// Traco 2 px; 1 uso(s) no design, p.ex. RemoverPasso3.
     Warning,
+    /// Traco 1.8 px; 11 uso(s) no design, p.ex. Ajustes, Analise, AnaliseConversa.
     Wifi,
 }
 
@@ -106,7 +176,7 @@ impl Icon {
         Icon::ChevronLeft,
         Icon::ChevronRight,
         Icon::Close,
-        Icon::CloseW2,
+        Icon::CloseW4,
         Icon::Copy,
         Icon::CopyW2,
         Icon::CreditCard,
@@ -136,14 +206,14 @@ impl Icon {
         Icon::QrCode,
         Icon::Receipt,
         Icon::Repeat,
-        Icon::RepeatW22,
+        Icon::RepeatW2,
         Icon::Scale,
         Icon::Settings,
         Icon::Shield,
         Icon::ShieldCheck,
         Icon::ShieldW2,
         Icon::Sparkle,
-        Icon::SparkleW2,
+        Icon::SparkleW18,
         Icon::Sun,
         Icon::Sync,
         Icon::SyncW18,
@@ -178,7 +248,7 @@ impl Icon {
             Icon::ChevronLeft => "icons/chevron-left.svg",
             Icon::ChevronRight => "icons/chevron-right.svg",
             Icon::Close => "icons/close.svg",
-            Icon::CloseW2 => "icons/close-w2.svg",
+            Icon::CloseW4 => "icons/close-w4.svg",
             Icon::Copy => "icons/copy.svg",
             Icon::CopyW2 => "icons/copy-w2.svg",
             Icon::CreditCard => "icons/credit-card.svg",
@@ -208,14 +278,14 @@ impl Icon {
             Icon::QrCode => "icons/qr-code.svg",
             Icon::Receipt => "icons/receipt.svg",
             Icon::Repeat => "icons/repeat.svg",
-            Icon::RepeatW22 => "icons/repeat-w2_2.svg",
+            Icon::RepeatW2 => "icons/repeat-w2.svg",
             Icon::Scale => "icons/scale.svg",
             Icon::Settings => "icons/settings.svg",
             Icon::Shield => "icons/shield.svg",
             Icon::ShieldCheck => "icons/shield-check.svg",
             Icon::ShieldW2 => "icons/shield-w2.svg",
             Icon::Sparkle => "icons/sparkle.svg",
-            Icon::SparkleW2 => "icons/sparkle-w2.svg",
+            Icon::SparkleW18 => "icons/sparkle-w1_8.svg",
             Icon::Sun => "icons/sun.svg",
             Icon::Sync => "icons/sync.svg",
             Icon::SyncW18 => "icons/sync-w1_8.svg",

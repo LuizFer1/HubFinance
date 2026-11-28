@@ -100,8 +100,8 @@ pub const FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../assets/icons/close.svg"),
     ),
     (
-        "icons/close-w2.svg",
-        include_bytes!("../../assets/icons/close-w2.svg"),
+        "icons/close-w4.svg",
+        include_bytes!("../../assets/icons/close-w4.svg"),
     ),
     (
         "icons/copy.svg",
@@ -220,8 +220,8 @@ pub const FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../assets/icons/repeat.svg"),
     ),
     (
-        "icons/repeat-w2_2.svg",
-        include_bytes!("../../assets/icons/repeat-w2_2.svg"),
+        "icons/repeat-w2.svg",
+        include_bytes!("../../assets/icons/repeat-w2.svg"),
     ),
     (
         "icons/scale.svg",
@@ -248,8 +248,8 @@ pub const FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../assets/icons/sparkle.svg"),
     ),
     (
-        "icons/sparkle-w2.svg",
-        include_bytes!("../../assets/icons/sparkle-w2.svg"),
+        "icons/sparkle-w1_8.svg",
+        include_bytes!("../../assets/icons/sparkle-w1_8.svg"),
     ),
     (
         "icons/sun.svg",

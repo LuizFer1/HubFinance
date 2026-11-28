@@ -11,8 +11,8 @@ use gpui::{App, FontWeight};
 /// "Inter Hub", nao "Inter": a familia foi renomeada ao congelar `tnum`, para nunca disputar
 /// com uma Inter instalada no sistema.
 pub const FAMILY: &str = "Inter Hub";
-// Usado pelos icones de categoria (Tarefa 9).
-#[allow(dead_code)] // usado na Tarefa 9
+// Usado pelo CategoryTile (Tarefa 12): o glifo de categoria e `ui_model::icons::glyph` nessa fonte.
+#[allow(dead_code)] // usado na Tarefa 12
 pub const ICON_FAMILY: &str = "Phosphor";
 
 const LIGHT: &[u8] = include_bytes!("../../assets/fonts/InterHub-Light.ttf");

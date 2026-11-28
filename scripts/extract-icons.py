@@ -3,12 +3,15 @@
 Geracao offline: o resultado (`assets/icons/*.svg`) e commitado e o build nao roda isto.
 Uso: python -I scripts/extract-icons.py "<pasta do design>"
 
-Cada forma unica vira um arquivo. A mesma forma com espessura de traco diferente (o check de
-4 px do seletor, o de 2.6 px da lista) vira outro arquivo, `<nome>-w<espessura>`, porque o
-GPUI nao muda a espessura de um SVG na hora de desenhar. Linecap/linejoin sao sempre `round`
-(o design usa so isso; os poucos sem o atributo eram o padrao `butt` por omissao e nao se
-distinguem a 18 px). Tamanho e cor saem do arquivo: a cor e `currentColor` e quem desenha
-escolhe. Forma sem nome na tabela: o script avisa (com o texto em volta) e nao grava.
+Cada forma unica vira um arquivo. O nome puro (`close.svg`) fica com a espessura canonica da
+forma: a mais usada no design (empate: a mais perto de 2, depois a menor). As outras viram
+`<nome>-w<espessura>` (o check de 4 px do seletor, o de 2.6 px da lista), porque o GPUI nao
+muda a espessura de um SVG na hora de desenhar. Linecap/linejoin saem sempre `round`. No
+design, uns 110 de ~490 SVG nao trazem `stroke-linejoin` (cai em `miter`) e uns 40 nao trazem
+`stroke-linecap` (`butt`); normalizar nao mexe na forma, so nas pontas e quinas do traco, e a
+18-24 px com traco de 1.8-2 px a diferenca fica abaixo de um pixel. Se uma tela exigir a ponta
+quadrada, guarde o atributo aqui e crie a variante. Tamanho e cor saem do arquivo: a cor e
+`currentColor` e quem desenha escolhe. Forma sem nome na tabela: o script avisa (com o texto em volta) e nao grava.
 """
 
 import collections
@@ -101,8 +104,10 @@ def text_around(text, m):
     return (" ".join(before.split())[-30:] + " >< " + " ".join(after.split())[:30]).strip()
 
 
-def main(folder, out):
+def main(folder, out, manifest=None):
     shapes = collections.OrderedDict()  # (nome, espessura) -> corpo
+    uses = collections.Counter()  # (nome, espessura) -> usos no design
+    where = collections.defaultdict(collections.Counter)  # (nome, espessura) -> artboard -> usos
     unnamed = {}
     for path in sorted(pathlib.Path(folder).glob("*.dc.html")):
         text = path.read_text(encoding="utf-8")
@@ -113,12 +118,15 @@ def main(folder, out):
                 unnamed.setdefault(body, (path.name, text_around(text, m)))
                 continue
             shapes.setdefault((name, width), body)
+            uses[(name, width)] += 1
+            where[(name, width)][path.name.removesuffix(".dc.html")] += 1
     for n, (body, (src, ctx)) in enumerate(unnamed.items(), 1):
         print(f"AVISO sem nome (icon-{n:02}): {src}: {ctx!r}: {body[:60]}", file=sys.stderr)
-    # A espessura que o design usa primeiro leva o nome puro; as outras, o sufixo -w<espessura>.
+    # A espessura mais usada leva o nome puro; as outras, o sufixo -w<espessura>.
     default = {}
-    for name, width in shapes:
-        default.setdefault(name, width)
+    for name in {n for n, _ in shapes}:
+        widths = [w for n, w in shapes if n == name]
+        default[name] = min(widths, key=lambda w: (-uses[(name, w)], abs(float(w) - 2), float(w)))
     out = pathlib.Path(out)
     out.mkdir(parents=True, exist_ok=True)
     written = set()
@@ -135,11 +143,23 @@ def main(folder, out):
     for old in out.glob("*.svg"):
         if old.name not in written:
             old.unlink()
+    if manifest:
+        import json
+
+        rows = {
+            (n if w == default[n] else f"{n}-w{w.replace('.', '_')}"): {
+                "width": w,
+                "uses": uses[(n, w)],
+                "where": [a for a, _ in where[(n, w)].most_common(3)],
+            }
+            for (n, w) in shapes
+        }
+        pathlib.Path(manifest).write_text(json.dumps(rows, indent=1), encoding="utf-8")
     print(f"{len(written)} icones em {out}")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit('uso: python -I scripts/extract-icons.py "<pasta do design>"')
+    if len(sys.argv) not in (2, 3):
+        sys.exit('uso: python -I scripts/extract-icons.py "<pasta do design>" [manifesto.json]')
     root = pathlib.Path(__file__).resolve().parent.parent
-    main(sys.argv[1], root / "assets" / "icons")
+    main(sys.argv[1], root / "assets" / "icons", sys.argv[2] if len(sys.argv) == 3 else None)

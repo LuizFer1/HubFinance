@@ -105,7 +105,12 @@ pub fn render(
     let ring = focus::style(t, t.bg);
     // Com "Ver detalhes" o card nao e alvo de clique: dois destinos (Conexao e Ajustes) no mesmo
     // retangulo, e o clique do botao subiria ate o card.
-    let clickable = card.action.is_none();
+    // No trilho nao ha link: o card inteiro e o unico caminho e dispara a acao (com foco e nome).
+    let clickable = rail || card.action.is_none();
+    let press = match card.action {
+        Some(action) if rail => action.msg(),
+        _ => status_card_press(),
+    };
     let base = div()
         .id("status-card")
         .role(Role::Status)
@@ -115,14 +120,14 @@ pub fn render(
             d.track_focus(focus)
                 .focus_visible(ring)
                 .cursor_pointer()
-                .on_click(send(state, status_card_press))
+                .on_click(send(state, move || press.clone()))
         })
         .when_some(t.card_ring.as_ref(), |d, r| d.shadow(r.shadows.to_vec()));
     if rail {
         let tip = label.clone();
         return base
-            .size(px(44.0))
-            .rounded_full()
+            .p(px(14.0))
+            .rounded(px(18.0))
             .flex()
             .items_center()
             .justify_center()

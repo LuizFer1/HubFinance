@@ -7,7 +7,7 @@
 //!
 //! O modulo inteiro e anotado com `dead_code`: so a vitrine de debug os usa ate as telas
 //! (Tarefas 15 em diante) chegarem.
-#![allow(dead_code)] // usado nas telas (Tarefa 17 em diante)
+#![allow(dead_code)] // usado na Tarefa 17
 
 pub mod avatar;
 pub mod badge;

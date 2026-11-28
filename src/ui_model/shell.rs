@@ -456,7 +456,8 @@ fn last_sync(snapshot: &Snapshot) -> Option<(OffsetDateTime, &str)> {
 }
 
 /// Titulo e subtitulo do cabecalho da interface GPUI, exatamente como nos artboards (spec §5).
-/// O "Parcial" nao entra: e um chip a parte. Fica separado de `titles`, que a iced ainda usa.
+/// O "Parcial" nao entra: e um chip a parte (`header_chip`). Fica separado de `titles`, que a
+/// interface antiga ainda usa.
 pub fn header_texts(app: &App) -> (&'static str, &'static str) {
     match app.screen {
         Screen::Dashboard => (
@@ -480,6 +481,15 @@ pub fn header_texts(app: &App) -> (&'static str, &'static str) {
         Screen::Connection => ("Conexão", "Pareie aparelhos e acompanhe o hub"),
         Screen::Settings => ("Ajustes", "Preferências deste computador"),
     }
+}
+
+/// O chip "Parcial · ate 27 nov" da interface GPUI: aparece junto do seletor de mes em todas as
+/// telas que o tem (artboards Dashboard, Lancamentos, Reservas e Analise). Fica separado de
+/// `partial_chip`, que segue com a regra antiga de duas telas.
+pub fn header_chip(app: &App) -> Option<&str> {
+    has_month_picker(app.screen)
+        .then_some(app.dashboard.header.partial.as_deref())
+        .flatten()
 }
 
 /// Telas com seletor de mes no cabecalho (as que leem um mes escolhido).
@@ -710,6 +720,28 @@ mod tests {
         let (mut empty, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
         empty.set_today("2026-09-24".into());
         assert_eq!(partial_chip(&empty), None);
+    }
+
+    #[test]
+    fn chip_do_cabecalho_gpui_acompanha_o_seletor_de_mes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = crate::ui_model::app::tests::app_with_fixtures(dir.path());
+        for screen in [
+            Screen::Dashboard,
+            Screen::Transactions,
+            Screen::Reserves,
+            Screen::Analysis,
+        ] {
+            app.screen = screen;
+            assert_eq!(header_chip(&app), Some("Parcial · até 24 set"));
+        }
+        for screen in [Screen::Connection, Screen::Settings] {
+            app.screen = screen;
+            assert_eq!(header_chip(&app), None);
+        }
+        app.screen = Screen::Reserves;
+        let _ = crate::ui_model::app::update(&mut app, Msg::PrevMonth);
+        assert_eq!(header_chip(&app), None);
     }
 
     #[test]

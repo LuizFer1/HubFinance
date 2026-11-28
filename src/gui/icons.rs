@@ -8,7 +8,7 @@
 //! (`ui_model::icons`).
 
 // Usado pelas telas a partir da Tarefa 15; ate la so parte das variantes tem uso.
-#![allow(dead_code)] // usado nas telas (Tarefa 17 em diante)
+#![allow(dead_code)] // usado na Tarefa 17
 
 use gpui::{Hsla, Pixels, Styled as _, Svg, svg};
 
@@ -134,11 +134,11 @@ pub enum Icon {
     Sparkle,
     /// Traco 1.8 px; 3 uso(s) no design, p.ex. Ajustes, Analise, Estados.
     SparkleW18,
-    /// Traco 1.8 px; 11 uso(s) no design, p.ex. Ajustes, Analise, AnaliseConversa.
     /// Anel de 16 px so com o arco de cima (traco 2 px); o "Iniciando"/"Desligando" do card.
     StatusArc,
     /// Losango de 11 px com raio 2 (preenchido); o "Sem rede local" do card.
     StatusDiamond,
+    /// Traco 1.8 px; 11 uso(s) no design, p.ex. Ajustes, Analise, AnaliseConversa.
     Sun,
     /// Traco 2 px; 10 uso(s) no design, p.ex. Ajustes, Analise, AnaliseConversa.
     Sync,

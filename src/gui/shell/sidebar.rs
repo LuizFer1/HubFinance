@@ -102,9 +102,13 @@ fn nav_link(
         Some(count) => format!("{label}, {}", shell::plural(count, "alerta", "alertas")),
         None => label.to_string(),
     };
-    let hover_bg = t.surface;
+    // `.nav:not([aria-current]):hover`: fundo surface-2 e texto/icone em `text`.
+    let hover_bg = t.surface_2;
+    let hover_fg = t.text;
+    let group = SharedString::from(format!("nav-{index}"));
     let el = div()
         .id(("nav", index as u64))
+        .group(group.clone())
         .role(Role::Button)
         .aria_label(SharedString::from(name))
         .track_focus(handle)
@@ -119,9 +123,13 @@ fn nav_link(
         .font_weight(fonts::weight(weight))
         .text_color(fg)
         .when_some(bg, |d, c| d.bg(c))
-        .when(!active, |d| d.hover(move |s| s.bg(hover_bg)))
+        .when(!active, |d| {
+            d.hover(move |s| s.bg(hover_bg).text_color(hover_fg))
+        })
         .on_click(send(state, move || Msg::SelectScreen(screen)))
-        .child(icon(glyph, px(18.0), fg));
+        .child(icon(glyph, px(18.0), fg).when(!active, |i| {
+            i.group_hover(group, move |s| s.text_color(hover_fg))
+        }));
     let tooltip = if rail {
         format!("{label} · {shortcut}")
     } else {
@@ -133,8 +141,8 @@ fn nav_link(
             d.child(
                 div()
                     .absolute()
-                    .top(px(9.0))
-                    .right(px(9.0))
+                    .top(px(7.0))
+                    .right(px(7.0))
                     .child(Badge::new(0, t).dot()),
             )
         })
@@ -185,16 +193,36 @@ fn theme_switch(
     let dark = app.theme.is_dark(app.system_dark);
     let state = state.clone();
     if rail {
-        // Um botao so: alterna para o outro tema, e o nome diz para qual.
-        let (glyph, name, target) = if dark {
-            (Icon::Sun, "Usar tema claro", ThemeMode::Light)
-        } else {
-            (Icon::Moon, "Usar tema escuro", ThemeMode::Dark)
-        };
-        return IconButton::new("theme-rail", glyph, t)
-            .aria_label(name)
-            .focus(&focus.theme_rail)
-            .on_click(move |_, cx| dispatch_later(&state, Msg::SetTheme(target), cx))
+        // `.tg` em coluna: os dois botoes de 40 px (raio 24) um sobre o outro; o ativo e o
+        // `accent_900`/`accent_200` do segmentado.
+        let choices = [
+            (0, Icon::Moon, "Tema escuro", ThemeMode::Dark),
+            (1, Icon::Sun, "Tema claro", ThemeMode::Light),
+        ];
+        let buttons = choices.map(|(i, glyph, name, mode)| {
+            let active = usize::from(!dark) == i;
+            let state = state.clone();
+            let b = IconButton::new(("theme-rail", i as u64), glyph, t)
+                .box_size(40.0)
+                .glyph_size(15.0)
+                .aria_label(name)
+                .focus(&focus.theme[i])
+                .on_click(move |_, cx| dispatch_later(&state, Msg::SetTheme(mode), cx));
+            if active {
+                b.bg(t.accent_900).glyph_color(t.accent_200)
+            } else {
+                b.glyph_color(t.muted)
+            }
+        });
+        return div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .p(px(4.0))
+            .rounded(px(24.0))
+            .bg(t.surface)
+            .when_some(t.card_ring.as_ref(), |d, r| d.shadow(r.shadows.to_vec()))
+            .children(buttons)
             .into_any_element();
     }
     Segmented::new(
@@ -245,8 +273,8 @@ pub fn render(
         .flex()
         .flex_col()
         .gap(px(24.0))
-        .py(px(24.0))
-        .px(px(16.0))
+        .py(px(if rail { 20.0 } else { 24.0 }))
+        .px(px(if rail { 12.0 } else { 16.0 }))
         .when(rail, |d| d.items_center())
         .border_r_1()
         .border_color(t.divider)

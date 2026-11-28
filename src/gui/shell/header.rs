@@ -57,7 +57,7 @@ pub fn render(
         .justify_end()
         .gap(px(10.0));
     if shell::has_month_picker(app.screen) {
-        if let Some(partial) = shell::partial_chip(app) {
+        if let Some(partial) = shell::header_chip(app) {
             controls = controls.child(PartialChip::new(partial.to_string(), t));
         }
         let shown = month_label_capitalized(app.month());

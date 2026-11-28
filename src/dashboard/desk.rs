@@ -16,7 +16,7 @@ use super::business::business_panel;
 use super::dataset::Dataset;
 use super::grafite::{LabeledValue, Tone};
 use super::insights::{HistoryRow, history};
-use super::money::{AXIS_MASK, BigMoney, MINUS, Money, axis_label, group_thousands};
+use super::money::{AXIS_MASK, BigMoney, MASK, MINUS, Money, axis_label, group_thousands};
 use super::periods::{
     days_in_month, month_long, month_of, month_short, partial_label, shift_month,
 };
@@ -123,7 +123,7 @@ pub struct DeskBar {
 pub struct DeskReserve {
     pub title: String,
     pub emergency: Option<DeskEmergency>,
-    /// "Ainda não há reserva de emergência" quando não há.
+    /// "Reserva de emergência não configurada" quando não há.
     pub empty: Option<String>,
     /// "Total separado": soma de todas as reservas vivas, hoje.
     pub total: LabeledValue,
@@ -406,7 +406,11 @@ fn business_card(b: &Dataset, today: &str, month: &str, m: Money) -> DeskBusines
         let avg = sum / closed.len() as i64;
         // `axis` descarta o sinal (unsigned_abs): sem pôr à mão, prejuízo médio leria como lucro.
         // Oculto não leva sinal, só a máscara.
-        if avg < 0 && !m.hidden {
+        // Oculto: a média é `.v` (dinheiro) no design, então leva `MASK` ("R$ •••••"), não a
+        // máscara de eixo (`.v.n`).
+        if m.hidden {
+            MASK.to_string()
+        } else if avg < 0 {
             format!("{MINUS}{}", m.axis(avg))
         } else {
             m.axis(avg)
@@ -516,7 +520,7 @@ fn reserve_card(ds: &Dataset, today: &str, month: &str, m: Money) -> DeskReserve
         title: "Reserva".to_string(),
         empty: block
             .is_none()
-            .then(|| "Ainda não há reserva de emergência".to_string()),
+            .then(|| "Reserva de emergência não configurada".to_string()),
         emergency: block,
         total: lv("Total separado", m.brl(total)),
         month_flow: match saved.cmp(&0) {
@@ -899,6 +903,10 @@ mod tests {
             true,
         );
         assert!(hidden.business.is_some());
+        assert_eq!(
+            hidden.business.as_ref().and_then(|b| b.average.as_deref()),
+            Some(MASK)
+        );
         assert_eq!(leaks(&format!("{:?}", hidden.business)), None);
         // Forma continua visível: barras e porcentagem não são valores.
         assert!(v.history.months[5].income > 0.0);

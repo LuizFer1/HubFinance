@@ -86,6 +86,10 @@ def parse(svg):
     m = re.match(r"<svg\b([^>]*)>(.*)</svg>", svg, re.S)
     attrs = dict(re.findall(r'([\w-]+)="([^"]*)"', m.group(1)))
     body = m.group(2).strip()
+    if "stroke" not in attrs:
+        # Raiz sem traco: so o que declara o proprio stroke desenha linha. O resto (so fill)
+        # nao pode herdar o traco que o arquivo gravado poe na raiz, senao engorda a forma.
+        body = re.sub(r"<(\w+)\b(?![^>]*\bstroke=)([^>]*)>", r'<\1 stroke="none"\2>', body)
     return attrs.get("stroke-width", "2"), body
 
 

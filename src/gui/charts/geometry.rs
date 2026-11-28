@@ -163,15 +163,6 @@ pub fn single_bars(
         .collect()
 }
 
-/// Media dos meses que existem (arredondada para baixo); sem nenhum -> `None`.
-pub fn average(months: &[Option<i64>]) -> Option<i64> {
-    let (sum, n) = months
-        .iter()
-        .flatten()
-        .fold((0i64, 0i64), |(s, n), v| (s.saturating_add(*v), n + 1));
-    (n > 0).then(|| sum / n)
-}
-
 /// Fatia da rosca em graus, 0 = 12 horas, sentido horario.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Slice {
@@ -431,12 +422,6 @@ mod tests {
         // Coluna estreita: nunca abaixo de 2 px.
         let narrow = single_bars(&[Some(1); 400], 1, PLOT, 28.0, MINI_RADII);
         assert_eq!(narrow[0].unwrap().rect.w, 2.0);
-    }
-
-    #[test]
-    fn media_ignora_mes_inexistente() {
-        assert_eq!(average(&[Some(10), None, Some(21)]), Some(15));
-        assert_eq!(average(&[None, None]), None);
     }
 
     #[test]

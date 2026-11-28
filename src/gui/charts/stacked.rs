@@ -90,6 +90,16 @@ impl StackedArea {
     }
 }
 
+/// Pontos da borda de cima de um poligono (metade; a outra volta pela base).
+fn top_edge_len(poly_len: usize) -> usize {
+    poly_len / 2
+}
+
+/// Area e linha precisam de ao menos 2 pontos na borda de cima; com 1 so o ponto e pintado.
+fn has_area(top_len: usize) -> bool {
+    top_len >= 2
+}
+
 impl RenderOnce for StackedArea {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let StackedArea {
@@ -106,25 +116,33 @@ impl RenderOnce for StackedArea {
             move |bounds, _, window, _| {
                 let polys = geometry::stacked_polygons(&series, top, plot_of(bounds));
                 for (poly, color) in polys.iter().zip(colors.iter()) {
-                    if poly.len() < 4 {
+                    let top_len = top_edge_len(poly.len());
+                    if top_len == 0 {
                         continue;
                     }
-                    let mut fill = PathBuilder::fill();
-                    let pts: Vec<_> = poly.iter().map(|p| at(bounds.origin, *p)).collect();
-                    fill.add_polygon(&pts, true);
-                    // Gradiente vertical do design: 0,26 no topo, 0,02 na base.
-                    paint(
-                        window,
-                        fill,
-                        linear_gradient(
-                            180.0,
-                            linear_color_stop(color.opacity(0.26), 0.0),
-                            linear_color_stop(color.opacity(0.02), 1.0),
-                        ),
-                    );
                     // Borda de cima: a primeira metade do poligono (a outra volta pela base).
-                    let top_edge: &[Pt] = &poly[..poly.len() / 2];
-                    let (solid, dashed) = geometry::partial_segments(top_edge.len(), partial);
+                    let top_edge: &[Pt] = &poly[..top_len];
+                    // Um mes so: sem area nem linha (nao ha segmento), mas o marcador final fica.
+                    if has_area(top_len) {
+                        let mut fill = PathBuilder::fill();
+                        let pts: Vec<_> = poly.iter().map(|p| at(bounds.origin, *p)).collect();
+                        fill.add_polygon(&pts, true);
+                        // Gradiente vertical do design: 0,26 no topo, 0,02 na base.
+                        paint(
+                            window,
+                            fill,
+                            linear_gradient(
+                                180.0,
+                                linear_color_stop(color.opacity(0.26), 0.0),
+                                linear_color_stop(color.opacity(0.02), 1.0),
+                            ),
+                        );
+                    }
+                    let (solid, dashed) = if has_area(top_len) {
+                        geometry::partial_segments(top_len, partial)
+                    } else {
+                        (0..0, None)
+                    };
                     let line = |range: std::ops::Range<usize>, dash: bool| {
                         let mut b = stroke(dash);
                         let pts: Vec<_> = top_edge[range]
@@ -134,9 +152,11 @@ impl RenderOnce for StackedArea {
                         b.add_polygon(&pts, false);
                         b
                     };
-                    paint(window, line(solid, false), *color);
-                    if let Some(d) = dashed {
-                        paint(window, line(d, true), *color);
+                    if has_area(top_len) {
+                        paint(window, line(solid, false), *color);
+                        if let Some(d) = dashed {
+                            paint(window, line(d, true), *color);
+                        }
                     }
                     // Pontos (r 3, miolo surface, traco accent 2) e marcador final (r 6, accent,
                     // traco surface 3).
@@ -160,5 +180,19 @@ impl RenderOnce for StackedArea {
             .w_full()
             .h(px(height))
             .child(layer)
+    }
+}
+
+#[cfg(test)]
+mod pintura_tests {
+    use super::*;
+
+    #[test]
+    fn um_mes_pinta_so_o_marcador() {
+        // stacked_polygons devolve 2 pontos para n == 1.
+        assert_eq!(top_edge_len(2), 1);
+        assert!(!has_area(top_edge_len(2)));
+        assert_eq!(top_edge_len(0), 0);
+        assert!(has_area(top_edge_len(6)));
     }
 }

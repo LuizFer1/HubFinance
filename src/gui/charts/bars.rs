@@ -1,5 +1,5 @@
 //! Barras do design: `GroupedBars` (Historico: receita x despesa por mes, com hover) e
-//! `MiniBars` (Negocio: uma barra por mes, com media). Cada uma so le a geometria de
+//! `MiniBars` (Negocio: uma barra por mes). Cada uma so le a geometria de
 //! `geometry` e pinta; nenhuma conta de layout mora aqui.
 
 use gpui::{

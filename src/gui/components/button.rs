@@ -284,6 +284,8 @@ pub struct IconButton {
     hover_bg: Option<Hsla>,
     disabled_opacity: f32,
     glyph_size: f32,
+    box_size: f32,
+    glyph_color: Option<Hsla>,
 }
 
 impl IconButton {
@@ -299,6 +301,8 @@ impl IconButton {
             hover_bg: None,
             disabled_opacity: 0.4,
             glyph_size: 18.0,
+            box_size: 36.0,
+            glyph_color: None,
         }
     }
 
@@ -311,6 +315,18 @@ impl IconButton {
 
     pub fn glyph_size(mut self, size: f32) -> IconButton {
         self.glyph_size = size;
+        self
+    }
+
+    /// Lado do botao (padrao 36). O toast usa 32, medida do artboard Estados.
+    pub fn box_size(mut self, size: f32) -> IconButton {
+        self.box_size = size;
+        self
+    }
+
+    /// Cor do glifo (padrao `text`). Sobre fundo invertido, como o do toast, `text` some.
+    pub fn glyph_color(mut self, color: Hsla) -> IconButton {
+        self.glyph_color = Some(color);
         self
     }
 
@@ -354,7 +370,7 @@ impl RenderOnce for IconButton {
             .flex_none()
             .items_center()
             .justify_center()
-            .size(px(36.0))
+            .size(px(self.box_size))
             .rounded_full()
             // Desabilitado nao entra na ordem do Tab: pararia num alvo sem anel e sem acao.
             .when_some(self.focus.filter(|_| enabled), |d, h| d.track_focus(&h))
@@ -374,7 +390,11 @@ impl RenderOnce for IconButton {
             .when_some(handler.filter(|_| enabled), |d, f| {
                 d.on_click(move |_: &ClickEvent, window, cx| f(window, cx))
             })
-            .child(icon(self.glyph, px(self.glyph_size), t.text))
+            .child(icon(
+                self.glyph,
+                px(self.glyph_size),
+                self.glyph_color.unwrap_or(t.text),
+            ))
     }
 }
 

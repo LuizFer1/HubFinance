@@ -245,6 +245,11 @@ pub struct Fields {
     input: gpui::Entity<gpui_component::input::InputState>,
     secret: gpui::Entity<gpui_component::input::InputState>,
     area: gpui::Entity<gpui_component::input::TextareaState>,
+    // Handles com `tab_stop(true)`, criados uma vez: sem eles so os campos entram no Tab.
+    button: gpui::FocusHandle,
+    modal: gpui::FocusHandle,
+    modal_close: gpui::FocusHandle,
+    toast: super::toast::ToastFocus,
 }
 
 impl Fields {
@@ -254,6 +259,10 @@ impl Fields {
             input: new_input(window, cx, "Modelo", false, |_, _| {}),
             secret: new_input(window, cx, "Chave da API", true, |_, _| {}),
             area: new_area(window, cx, "Pergunte sobre os achados…", |_, _| {}, |_| {}),
+            button: cx.focus_handle().tab_stop(true),
+            modal: cx.focus_handle(),
+            modal_close: cx.focus_handle().tab_stop(true),
+            toast: super::toast::ToastFocus::new(cx),
         }
     }
 }
@@ -277,6 +286,11 @@ fn interaction_section(t: &'static Tokens, f: &Fields) -> impl IntoElement {
         )
         .child(Stepper::new(["Confirmar", "Dados", "Revisar"], 1, t))
         .child(
+            Button::new("demo-continuar", "Continuar", Variant::Primary, t)
+                .ring_gap(t.surface)
+                .focus(&f.button),
+        )
+        .child(
             div()
                 .relative()
                 .w_full()
@@ -288,6 +302,8 @@ fn interaction_section(t: &'static Tokens, f: &Fields) -> impl IntoElement {
                         .header(Stepper::new(["Confirmar", "Dados", "Revisar"], 0, t))
                         .title("Remover Lucas do hub?")
                         .reduce_motion(true)
+                        .focus(&f.modal)
+                        .close_focus(&f.modal_close)
                         .on_close(|_, _| {})
                         .child(
                             div()
@@ -298,12 +314,16 @@ fn interaction_section(t: &'static Tokens, f: &Fields) -> impl IntoElement {
                 ),
         )
         .child(
-            Toast::new("demo-toast", "Lucas foi removido do hub", t)
-                .detail("44\u{a0}itens apagados")
-                .action("Desfazer", |_, _| {})
-                .seconds_left(6)
-                .bar(0.62)
-                .on_close(|_, _| {}),
+            // O toast se posiciona no ancestral relativo: aqui, uma faixa so para ele.
+            div().relative().w_full().h(px(110.0)).child(
+                Toast::new("demo-toast", "Lucas foi removido do hub", t)
+                    .detail("44\u{a0}itens apagados")
+                    .action("Desfazer", |_, _| {})
+                    .seconds_left(6)
+                    .bar(0.62)
+                    .focus(&f.toast)
+                    .on_close(|_, _| {}),
+            ),
         )
 }
 

@@ -13,6 +13,7 @@ use gpui::{
 };
 
 use super::button::IconButton;
+use super::focus;
 use crate::gui::fonts;
 use crate::gui::icons::{Icon, icon};
 use crate::gui::motion;
@@ -20,6 +21,10 @@ use crate::gui::theme::{Tokens, rgba};
 
 pub const MIN_WIDTH: f32 = 400.0;
 pub const MAX_WIDTH: f32 = 520.0;
+/// Distancia do toast ate a borda de baixo da area de conteudo.
+pub const BOTTOM: f32 = 24.0;
+/// Lado do X do toast (artboard Estados).
+pub const CLOSE_SIZE: f32 = 32.0;
 
 type Action = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
 type Pause = Rc<dyn Fn(bool, &mut Window, &mut App) + 'static>;
@@ -44,6 +49,25 @@ pub fn watch_focus(
     ]
 }
 
+/// Os tres focos do toast: o corpo (para `watch_focus` saber que o foco esta dentro) e os dois
+/// controles. Quem monta o toast cria uma vez e guarda: handle novo a cada quadro perderia o foco.
+#[derive(Clone)]
+pub struct ToastFocus {
+    pub root: FocusHandle,
+    pub action: FocusHandle,
+    pub close: FocusHandle,
+}
+
+impl ToastFocus {
+    pub fn new(cx: &mut App) -> ToastFocus {
+        ToastFocus {
+            root: cx.focus_handle(),
+            action: cx.focus_handle().tab_stop(true),
+            close: cx.focus_handle().tab_stop(true),
+        }
+    }
+}
+
 #[derive(IntoElement)]
 pub struct Toast {
     id: ElementId,
@@ -58,6 +82,7 @@ pub struct Toast {
     reduce_motion: bool,
     /// `Some(true)` sobe, `Some(false)` desce; `None` = parado (sem animacao).
     entering: Option<bool>,
+    focus: Option<ToastFocus>,
 }
 
 impl Toast {
@@ -78,6 +103,7 @@ impl Toast {
             on_pause: None,
             reduce_motion: false,
             entering: None,
+            focus: None,
         }
     }
 
@@ -123,6 +149,12 @@ impl Toast {
         self
     }
 
+    /// Focos do corpo, da acao e do X. Passe `focus.root` a `watch_focus` para pausar o prazo.
+    pub fn focus(mut self, focus: &ToastFocus) -> Toast {
+        self.focus = Some(focus.clone());
+        self
+    }
+
     pub fn entering(mut self, rising: bool) -> Toast {
         self.entering = Some(rising);
         self
@@ -159,10 +191,14 @@ impl RenderOnce for Toast {
             });
 
         let secs = self.seconds_left;
+        let focus = self.focus;
+        let ring = focus::style(t, t.toast_bg);
         let action = self.action.map(|(label, f)| {
-            div()
-                .id("toast-action")
-                .flex()
+            let mut d = div().id("toast-action");
+            if let Some(f) = &focus {
+                d = d.track_focus(&f.action);
+            }
+            d.flex()
                 .items_center()
                 .h(px(40.0))
                 .px(px(14.0))
@@ -173,6 +209,7 @@ impl RenderOnce for Toast {
                 .text_color(t.toast_accent)
                 .whitespace_nowrap()
                 .hover(|s| s.bg(t.toast_fg.opacity(0.10)))
+                .focus_visible(ring)
                 .on_click(move |_: &ClickEvent, window, cx| f(window, cx))
                 .child(label)
                 .when_some(secs, |d, s| {
@@ -186,8 +223,15 @@ impl RenderOnce for Toast {
         });
 
         let mut close = IconButton::new("toast-close", Icon::Close, t)
+            .box_size(CLOSE_SIZE)
             .glyph_size(16.0)
+            // Sobre o fundo invertido do toast `text` some; o design pinta o X em `toast_muted`.
+            .glyph_color(t.toast_muted)
+            .hover_bg(t.toast_fg.opacity(0.10))
             .ring_gap(t.toast_bg);
+        if let Some(f) = &focus {
+            close = close.focus(&f.close);
+        }
         if let Some(f) = self.on_close {
             close = close.on_click(move |window, cx| f(window, cx));
         }
@@ -234,6 +278,7 @@ impl RenderOnce for Toast {
                 spread_radius: px(0.0),
                 inset: false,
             }])
+            .when_some(focus.as_ref(), |d, f| d.track_focus(&f.root))
             .when_some(pause, |d, f| {
                 d.on_hover(move |hovered: &bool, window, cx| f(*hovered, window, cx))
             })
@@ -243,10 +288,20 @@ impl RenderOnce for Toast {
             .child(close)
             .children(bar);
 
-        match self.entering {
-            Some(rising) => motion::toast_slide(body, "toast-motion", self.reduce_motion, rising),
+        let body = match self.entering {
+            Some(rising) => motion::toast_slide(body, self.reduce_motion, rising),
             None => body.into_any_element(),
-        }
+        };
+        // Posicao e de quem desenha o toast: fixo embaixo, centrado na area de conteudo (o
+        // ancestral posicionado). O invólucro nao captura o mouse fora do corpo.
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom(px(BOTTOM))
+            .flex()
+            .justify_center()
+            .child(body)
     }
 }
 

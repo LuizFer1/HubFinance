@@ -40,9 +40,16 @@ where
     }
 }
 
+/// Id da animacao por direcao. O gpui guarda o inicio da animacao por id global: com o mesmo id
+/// na subida e na descida, o toast que ja terminou de subir acharia a animacao concluida
+/// (delta 1) ao trocar para descer e sumiria sem animar.
+pub fn toast_motion_id(rising: bool) -> &'static str {
+    if rising { "toast-in" } else { "toast-out" }
+}
+
 /// Toast subindo da borda de baixo (`rising`) ou descendo ao sair. Quem o monta decide quando
 /// remover o elemento: depois dos `TOAST` ms da descida.
-pub fn toast_slide<E>(el: E, id: impl Into<ElementId>, reduce: bool, rising: bool) -> AnyElement
+pub fn toast_slide<E>(el: E, reduce: bool, rising: bool) -> AnyElement
 where
     E: IntoElement + Styled + 'static,
 {
@@ -50,7 +57,7 @@ where
         None => el.into_any_element(),
         Some(dur) => el
             .with_animation(
-                id,
+                toast_motion_id(rising),
                 Animation::new(dur).with_easing(|x| Easing::EaseOutCubic.apply(x)),
                 move |el, delta| {
                     let progress = if rising { delta } else { 1.0 - delta };
@@ -72,6 +79,13 @@ mod tests {
         assert_eq!(duration(true, SCRIM_IN), None);
         assert_eq!(duration(false, SCRIM_IN), Some(SCRIM_IN));
         assert_eq!(duration(false, TOAST), Some(TOAST));
+    }
+
+    #[test]
+    fn subida_e_descida_tem_ids_diferentes() {
+        assert_ne!(toast_motion_id(true), toast_motion_id(false));
+        assert_eq!(toast_motion_id(true), "toast-in");
+        assert_eq!(toast_motion_id(false), "toast-out");
     }
 
     #[test]

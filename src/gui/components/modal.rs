@@ -34,6 +34,7 @@ pub struct Modal {
     on_close: Option<Close>,
     reduce_motion: bool,
     focus: Option<FocusHandle>,
+    close_focus: Option<FocusHandle>,
     children: Vec<AnyElement>,
 }
 
@@ -47,6 +48,7 @@ impl Modal {
             on_close: None,
             reduce_motion: false,
             focus: None,
+            close_focus: None,
             children: Vec::new(),
         }
     }
@@ -76,6 +78,14 @@ impl Modal {
     /// Foco do dialogo: sem ele o Esc so chega se um filho (campo, botao) estiver focado.
     pub fn focus(mut self, handle: &FocusHandle) -> Modal {
         self.focus = Some(handle.clone());
+        self
+    }
+}
+
+impl Modal {
+    /// Foco do X ("Fechar e cancelar"): crie com `tab_stop(true)` para o Tab chegar nele.
+    pub fn close_focus(mut self, handle: &FocusHandle) -> Modal {
+        self.close_focus = Some(handle.clone());
         self
     }
 }
@@ -110,6 +120,9 @@ impl RenderOnce for Modal {
         let mut close = IconButton::new("modal-close", Icon::Close, t)
             .glyph_size(18.0)
             .ring_gap(t.surface);
+        if let Some(h) = &self.close_focus {
+            close = close.focus(h);
+        }
         if let Some(f) = close_on_x {
             close = close.on_click(move |window, cx| f(window, cx));
         }

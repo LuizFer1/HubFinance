@@ -16,7 +16,7 @@ use super::business::business_panel;
 use super::dataset::Dataset;
 use super::grafite::{LabeledValue, Tone};
 use super::insights::history;
-use super::money::{AXIS_MASK, BigMoney, MINUS, Money};
+use super::money::{AXIS_MASK, BigMoney, MINUS, Money, group_thousands};
 use super::periods::{
     days_in_month, month_long, month_of, month_short, partial_label, shift_month,
 };
@@ -226,6 +226,13 @@ fn axis_plain(m: Money, minor: i64) -> String {
     m.axis(minor).trim_start_matches("R$ ").to_string()
 }
 
+/// Valor da sobra em milhares com uma casa fixa ("3,0 mil", "0,4 mil"): ao contrario do eixo
+/// ("15 mil"), o design desenha a sobra sempre com decimal, inclusive abaixo de R$ 1.000.
+fn surplus_thousands(minor: i64) -> String {
+    let tenths = (minor.unsigned_abs() + 5_000) / 10_000;
+    format!("{},{} mil", group_thousands(tenths / 10), tenths % 10)
+}
+
 /// "+2,5 mil" / "−1,2 mil" / "0" embaixo de cada mês do Histórico.
 fn surplus_label(m: Money, minor: i64) -> String {
     if m.hidden {
@@ -233,8 +240,8 @@ fn surplus_label(m: Money, minor: i64) -> String {
     }
     match minor.cmp(&0) {
         std::cmp::Ordering::Equal => "0".to_string(),
-        std::cmp::Ordering::Greater => format!("+{}", axis_plain(m, minor)),
-        std::cmp::Ordering::Less => format!("{MINUS}{}", axis_plain(m, minor)),
+        std::cmp::Ordering::Greater => format!("+{}", surplus_thousands(minor)),
+        std::cmp::Ordering::Less => format!("{MINUS}{}", surplus_thousands(minor)),
     }
 }
 
@@ -768,6 +775,16 @@ mod tests {
         assert!(u.over);
         assert_eq!(u.fill, 1.0);
         assert_eq!(u.percent, "150,0%");
+    }
+
+    #[test]
+    fn sobra_sempre_com_uma_casa() {
+        let m = Money { hidden: false };
+        assert_eq!(surplus_label(m, 300_000), "+3,0 mil");
+        assert_eq!(surplus_label(m, 295_000), "+3,0 mil");
+        assert_eq!(surplus_label(m, 38_600), "+0,4 mil");
+        assert_eq!(surplus_label(m, -125_000), format!("{MINUS}1,3 mil"));
+        assert_eq!(surplus_label(m, 0), "0");
     }
 
     #[test]

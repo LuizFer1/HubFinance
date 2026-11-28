@@ -601,7 +601,8 @@ impl App {
         }
         let icon = crate::desktop::tray::icon_for(&self.snapshot.status);
         let bar = self.desktop.taskbar_dark();
-        if (icon != self.tray_icon || bar != self.tray_taskbar_dark) && self.desktop.set_icon(icon)
+        if (icon != self.tray_icon || bar != self.tray_taskbar_dark)
+            && self.desktop.set_icon(icon, bar)
         {
             self.tray_icon = icon;
             self.tray_taskbar_dark = bar;
@@ -3275,6 +3276,11 @@ pub(crate) mod tests {
         fake.taskbar_dark.set(Some(false));
         let _ = update(&mut app, Msg::Tick);
         assert_eq!(fake.icons.borrow().len(), before + 1);
+        assert_eq!(
+            fake.icon_bars.borrow().last().map(|(_, bar)| *bar),
+            Some(Some(false)),
+            "a variante clara foi pedida, nao so uma nova chamada"
+        );
         let _ = update(&mut app, Msg::Tick);
         assert_eq!(fake.icons.borrow().len(), before + 1);
     }

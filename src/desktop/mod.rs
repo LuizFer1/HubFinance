@@ -46,8 +46,9 @@ pub trait Desktop {
     /// `false` = o sistema recusou e a UI tenta de novo depois (ela so guarda o que foi aceito).
     fn set_tooltip(&self, text: &str) -> bool;
     /// Troca o desenho do icone. A UI so chama quando o estado muda, ou quando a ultima troca
-    /// falhou. `false` = recusado.
-    fn set_icon(&self, icon: tray::TrayIcon) -> bool;
+    /// falhou. `taskbar_dark` e o tema da barra que a UI leu (e guardou); o desenho sai nesse
+    /// tema, para o que a UI compara ser o que a bandeja usa. `false` = recusado.
+    fn set_icon(&self, icon: tray::TrayIcon, taskbar_dark: Option<bool>) -> bool;
     /// Copia para a area de transferencia sem depender da janela (ver `tray::copy_text`).
     fn copy_text(&self, text: &str) -> Result<(), String>;
     /// `None` = sistema sem a opcao (a linha nao aparece no card).
@@ -76,7 +77,7 @@ impl Desktop for Headless {
     fn set_tooltip(&self, _text: &str) -> bool {
         true
     }
-    fn set_icon(&self, _icon: tray::TrayIcon) -> bool {
+    fn set_icon(&self, _icon: tray::TrayIcon, _taskbar_dark: Option<bool>) -> bool {
         true
     }
     /// Sem bandeja nao ha menu que peca a copia; a janela copia pelo iced.
@@ -96,7 +97,7 @@ impl Desktop for Headless {
 /// motivo vai para o log.
 #[cfg(windows)]
 pub fn install(events: EventSender) -> Rc<dyn Desktop> {
-    match tray::install(events) {
+    match tray::install(events, appearance::taskbar_dark()) {
         Ok(tray) => Rc::new(Windows { tray }),
         Err(e) => {
             tracing::warn!("sem bandeja: {e}");
@@ -125,8 +126,8 @@ impl Desktop for Windows {
     fn set_tooltip(&self, text: &str) -> bool {
         self.tray.set_tooltip(text)
     }
-    fn set_icon(&self, icon: tray::TrayIcon) -> bool {
-        self.tray.set_icon(icon)
+    fn set_icon(&self, icon: tray::TrayIcon, taskbar_dark: Option<bool>) -> bool {
+        self.tray.set_icon(icon, taskbar_dark)
     }
     fn copy_text(&self, text: &str) -> Result<(), String> {
         tray::copy_text(text)
@@ -151,6 +152,8 @@ pub(crate) struct Fake {
     pub tooltip: std::cell::RefCell<String>,
     /// Cada troca de icone pedida, na ordem: o teste confere que a UI nao repete.
     pub icons: std::cell::RefCell<Vec<tray::TrayIcon>>,
+    /// Os mesmos pedidos com o tema da barra recebido, para provar que a UI o repassa.
+    pub icon_bars: std::cell::RefCell<Vec<(tray::TrayIcon, Option<bool>)>>,
     /// O que foi copiado pela bandeja, na ordem.
     pub copied: std::cell::RefCell<Vec<String>>,
     /// A bandeja recusa tooltip e icone (o pedido fica registrado, mas a resposta e `false`).
@@ -170,6 +173,7 @@ impl Fake {
             tray: true,
             tooltip: Default::default(),
             icons: Default::default(),
+            icon_bars: Default::default(),
             copied: Default::default(),
             fail_tray: Default::default(),
             autostart: std::cell::Cell::new(Some(false)),
@@ -189,8 +193,9 @@ impl Desktop for Fake {
         *self.tooltip.borrow_mut() = text.to_string();
         !self.fail_tray.get()
     }
-    fn set_icon(&self, icon: tray::TrayIcon) -> bool {
+    fn set_icon(&self, icon: tray::TrayIcon, taskbar_dark: Option<bool>) -> bool {
         self.icons.borrow_mut().push(icon);
+        self.icon_bars.borrow_mut().push((icon, taskbar_dark));
         !self.fail_tray.get()
     }
     fn copy_text(&self, text: &str) -> Result<(), String> {
@@ -235,7 +240,7 @@ mod tests {
         assert_eq!(d.system_dark(), None);
         assert!(d.set_autostart(true).is_err());
         assert!(d.set_tooltip("ignorado"));
-        assert!(d.set_icon(tray::TrayIcon::Error));
+        assert!(d.set_icon(tray::TrayIcon::Error, None));
         assert!(d.copy_text("x").is_err());
     }
 
@@ -257,9 +262,9 @@ mod tests {
     #[test]
     fn fake_guarda_icones_e_copias_na_ordem() {
         let d = Fake::with_tray();
-        assert!(d.set_icon(tray::TrayIcon::Attention));
+        assert!(d.set_icon(tray::TrayIcon::Attention, None));
         d.fail_tray.set(true);
-        assert!(!d.set_icon(tray::TrayIcon::Normal));
+        assert!(!d.set_icon(tray::TrayIcon::Normal, None));
         assert!(!d.set_tooltip("y"));
         assert_eq!(
             *d.icons.borrow(),

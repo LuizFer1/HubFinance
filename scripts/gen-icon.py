@@ -7,7 +7,7 @@ roda este script. Uso, da raiz do repo:
 
 Requer Pillow (testado com 12.x).
 
-- `icon.ico` e copia de `assets/brand/hub-windows/hubfinance.ico` (o pacote ja traz as camadas certas).
+- `icon.ico` e copia de `assets/brand/hubfinance.ico` (o pacote ja traz as camadas certas).
 - `32/64/128/256/512x512.png` sao reducoes (LANCZOS) de `hubfinance-512.png`; `icon.icns` sai
   do mesmo 512.
 - `tray-{on,error,offline,off}-{light,dark}.png` (32 px): `-light` = para barra de tarefas
@@ -25,7 +25,6 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parent.parent
 BRAND = ROOT / "assets" / "brand"
 OUT = ROOT / "assets" / "icon"
-EXPORT = BRAND / "hub-windows"
 
 SIZES = (32, 64, 128, 256, 512)
 TRAY = 32
@@ -43,14 +42,18 @@ DOT_CENTER = (TRAY - 8, TRAY - 8)
 
 
 def with_dot(base: Image.Image, color: tuple[int, int, int], theme: str) -> Image.Image:
-    big = base.resize((TRAY * SS, TRAY * SS), Image.LANCZOS)
-    draw = ImageDraw.Draw(big)
+    # Anel e ponto numa camada transparente em escala SS; so ela e reduzida, e entra sobre a
+    # base intacta. Reamostrar a base junto borraria a logo fora do ponto.
+    layer = Image.new("RGBA", (TRAY * SS, TRAY * SS), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
     cx, cy = (c * SS for c in DOT_CENTER)
     ring = (DOT_R + RING) * SS
     draw.ellipse((cx - ring, cy - ring, cx + ring, cy + ring), fill=(*BAR_BG[theme], 255))
     r = DOT_R * SS
     draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(*color, 255))
-    return big.resize((TRAY, TRAY), Image.LANCZOS)
+    out = base.copy()
+    out.alpha_composite(layer.resize((TRAY, TRAY), Image.LANCZOS))
+    return out
 
 
 def faded(base: Image.Image, opacity: float) -> Image.Image:
@@ -65,15 +68,15 @@ def main() -> None:
     for old in ("1024x1024.png", "tray-attention.png", "tray-error.png"):
         (OUT / old).unlink(missing_ok=True)
 
-    shutil.copyfile(EXPORT / "hubfinance.ico", OUT / "icon.ico")
-    master = Image.open(EXPORT / "hubfinance-512.png").convert("RGBA")
+    shutil.copyfile(BRAND / "hubfinance.ico", OUT / "icon.ico")
+    master = Image.open(BRAND / "hubfinance-512.png").convert("RGBA")
     for size in SIZES:
         img = master if size == 512 else master.resize((size, size), Image.LANCZOS)
         img.save(OUT / f"{size}x{size}.png", optimize=True)
     master.save(OUT / "icon.icns", format="ICNS")
 
     for theme in ("light", "dark"):
-        base = Image.open(EXPORT / f"bandeja-32-para-tema-{'claro' if theme == 'light' else 'escuro'}.png").convert("RGBA")
+        base = Image.open(BRAND / f"bandeja-32-para-tema-{'claro' if theme == 'light' else 'escuro'}.png").convert("RGBA")
         base.save(OUT / f"tray-on-{theme}.png", optimize=True)
         with_dot(base, ERROR[theme], theme).save(OUT / f"tray-error-{theme}.png", optimize=True)
         with_dot(base, OFFLINE[theme], theme).save(OUT / f"tray-offline-{theme}.png", optimize=True)

@@ -150,14 +150,14 @@ mod win {
     /// Chamar na thread principal, antes de `iced::daemon(..).run()`: a crate cria um HWND
     /// oculto na thread chamadora e as mensagens dele sao entregues pelo laco do winit, que
     /// roda nessa mesma thread. Os handlers rodam dentro desse laco e so empurram no canal.
-    pub fn install(tx: EventSender) -> Result<Tray, String> {
+    pub fn install(tx: EventSender, taskbar_dark: Option<bool>) -> Result<Tray, String> {
         let icons = PNGS
             .iter()
             .map(|(name, bytes)| decode(bytes).map(|icon| (*name, icon)))
             .collect::<Result<Vec<_>, _>>()?;
         // Mesmo criterio do `set_icon`: o primeiro desenho ja sai no tema da barra, pois so ha
         // nova troca quando o estado muda.
-        let first = super::icon_file(Kind::Normal, crate::desktop::appearance::taskbar_dark());
+        let first = super::icon_file(Kind::Normal, taskbar_dark);
         let normal = icons
             .iter()
             .find(|(name, _)| *name == first)
@@ -226,10 +226,10 @@ mod win {
         }
 
         /// `false` = o sistema recusou (Explorer reiniciando, por exemplo).
-        pub fn set_icon(&self, kind: Kind) -> bool {
-            // Lido a cada troca: a barra pode mudar de tema com o hub ligado, e o proximo
-            // estado ja sai no tema certo.
-            let name = super::icon_file(kind, crate::desktop::appearance::taskbar_dark());
+        pub fn set_icon(&self, kind: Kind, taskbar_dark: Option<bool>) -> bool {
+            // Tema recebido da UI, que o le a cada tique: a barra pode mudar de tema com o hub
+            // ligado, e reler aqui deixaria o que a UI compara diferente do que desenhamos.
+            let name = super::icon_file(kind, taskbar_dark);
             let Some((_, icon)) = self.icons.iter().find(|(n, _)| *n == name) else {
                 return false;
             };

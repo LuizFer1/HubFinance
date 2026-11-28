@@ -13,12 +13,13 @@ use iced::{Alignment, Color, Element, Length, Padding};
 use super::app::{AnalysisTab, App, CopyTarget, Message, awaiting_cloud_consent};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, radius, size, space, type_scale};
 use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
-use super::{fonts, icons, rows, shell, time, widgets};
+use super::{fonts, icons, rows, shell, widgets};
 use crate::advisor::{FigureValue, Finding, FindingKind, Severity};
 use crate::assistant::prompt::{OPENING_REQUEST, Role};
 use crate::assistant::settings::{ProviderChoice, Settings};
 use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
 use crate::dashboard::money::{MASK, MASK_DIGITS, MINUS, group_thousands};
+use crate::ui_model::time;
 
 /// Entre os cards da tela.
 const GAP: f32 = space::BETWEEN_CARDS;

@@ -12,14 +12,32 @@ use iced::{Subscription, Task};
 
 use super::app::{App, Message, Screen};
 use super::{analysis_view, connection_view, shell};
+use crate::ui_model::keys::{Key as MKey, KeyPress};
 
-/// Tecla pressionada que sobrou para a janela, com o que o atalho precisa saber.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct KeyPress {
-    pub key: Key,
-    pub physical: Physical,
-    pub modifiers: Modifiers,
-    pub repeat: bool,
+/// Traduz a tecla do iced para o `KeyPress` do `ui_model`. A posicao fisica e o caractere
+/// sao resolvidos aqui (ver `ui_model::keys::Key`), para a decisao do atalho nao conhecer
+/// o iced.
+pub fn convert(key: &Key, physical: Physical, modifiers: Modifiers, repeat: bool) -> KeyPress {
+    let resolved = match key {
+        Key::Named(Named::Escape) => MKey::Escape,
+        Key::Named(Named::Tab) => MKey::Tab,
+        Key::Named(Named::ArrowLeft) => MKey::ArrowLeft,
+        Key::Named(Named::ArrowRight) => MKey::ArrowRight,
+        _ => match digit(key, physical) {
+            Some(n) => MKey::Digit(n),
+            None => match key.to_latin(physical) {
+                Some(c) => MKey::Letter(c),
+                None => MKey::Other,
+            },
+        },
+    };
+    KeyPress {
+        key: resolved,
+        ctrl: modifiers.control(),
+        shift: modifiers.shift(),
+        alt: modifiers.alt(),
+        repeat,
+    }
 }
 
 pub fn subscription() -> Subscription<Message> {
@@ -30,12 +48,12 @@ pub fn subscription() -> Subscription<Message> {
             modifiers,
             repeat,
             ..
-        } => Some(Message::KeyPressed(KeyPress {
-            key,
-            physical: physical_key,
+        } => Some(Message::KeyPressed(convert(
+            &key,
+            physical_key,
             modifiers,
             repeat,
-        })),
+        ))),
         _ => None,
     })
 }
@@ -59,36 +77,35 @@ pub fn subscription() -> Subscription<Message> {
 /// Repeticao (tecla segurada) so vale para Tab e para as setas: Ctrl+H segurado gravaria o
 /// `ui.json` a cada repeticao e piscaria os valores.
 pub fn shortcut(app: &App, press: &KeyPress) -> Option<Message> {
-    let mods = press.modifiers;
-    if press.key == Key::Named(Named::Escape) {
+    if press.key == MKey::Escape {
         return escape(app);
     }
     if app.any_dialog_open() {
         return None;
     }
-    if press.key == Key::Named(Named::Tab) && !mods.control() && !mods.alt() {
-        return Some(if mods.shift() {
+    if press.key == MKey::Tab && !press.ctrl && !press.alt {
+        return Some(if press.shift {
             Message::FocusPrevious
         } else {
             Message::FocusNext
         });
     }
-    if mods.alt() && !mods.control() && !mods.shift() {
+    if press.alt && !press.ctrl && !press.shift {
         let month_screen = matches!(app.screen, Screen::Dashboard | Screen::Transactions);
-        return match &press.key {
-            Key::Named(Named::ArrowLeft) if month_screen => Some(Message::PrevMonth),
-            Key::Named(Named::ArrowRight) if month_screen => Some(Message::NextMonth),
+        return match press.key {
+            MKey::ArrowLeft if month_screen => Some(Message::PrevMonth),
+            MKey::ArrowRight if month_screen => Some(Message::NextMonth),
             _ => None,
         };
     }
-    if mods.control() && !mods.alt() && !mods.shift() && !press.repeat {
-        if let Some(n) = digit(press) {
+    if press.ctrl && !press.alt && !press.shift && !press.repeat {
+        if let MKey::Digit(n) = press.key {
             let entries = shell::nav_entries(app);
-            let screen = entries.get(n.checked_sub(1)?)?.screen;
+            let screen = entries.get(usize::from(n).checked_sub(1)?)?.screen;
             // A mesma tela: nada a fazer (e nao manda a remocao pendente antes da hora).
             return (screen != app.screen).then_some(Message::SelectScreen(screen));
         }
-        if app.screen.shows_values() && press.key.to_latin(press.physical) == Some('h') {
+        if app.screen.shows_values() && press.key == MKey::Letter('h') {
             return Some(Message::ToggleHideValues);
         }
     }
@@ -120,8 +137,8 @@ fn escape(app: &App) -> Option<Message> {
 ///
 /// O teclado numerico so conta quando a tecla e mesmo o digito: com o NumLock desligado o
 /// Numpad1 e End e o Numpad7 e Home, e Ctrl+End nao pode trocar de tela.
-fn digit(press: &KeyPress) -> Option<usize> {
-    let code = match press.physical {
+fn digit(key: &Key, physical: Physical) -> Option<u8> {
+    let code = match physical {
         Physical::Code(code) => code,
         Physical::Unidentified(_) => return None,
     };
@@ -146,7 +163,7 @@ fn digit(press: &KeyPress) -> Option<usize> {
         Code::Numpad9 => (9, true),
         _ => return None,
     };
-    if numpad && press.key != Key::Character(n.to_string().into()) {
+    if numpad && *key != Key::Character(n.to_string().into()) {
         return None;
     }
     Some(n)
@@ -170,12 +187,7 @@ mod tests {
     use crate::store::erase::AreaSet;
 
     fn press(key: Key, physical: Code, modifiers: Modifiers) -> KeyPress {
-        KeyPress {
-            key,
-            physical: Physical::Code(physical),
-            modifiers,
-            repeat: false,
-        }
+        convert(&key, Physical::Code(physical), modifiers, false)
     }
 
     fn esc() -> KeyPress {
@@ -207,6 +219,30 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
         (app, dir)
+    }
+
+    #[test]
+    fn conversao_resolve_posicao_fisica_e_modificadores() {
+        let p = ctrl_digit('&', Code::Digit1);
+        assert_eq!(p.key, MKey::Digit(1));
+        assert!(p.ctrl && !p.shift && !p.alt && !p.repeat);
+        assert_eq!(esc().key, MKey::Escape);
+        assert_eq!(tab(true).key, MKey::Tab);
+        assert!(tab(true).shift);
+        assert_eq!(ctrl_h().key, MKey::Letter('h'));
+        let cyrillic = press(Key::Character("р".into()), Code::KeyH, Modifiers::CTRL);
+        assert_eq!(cyrillic.key, MKey::Letter('h'));
+        let numpad = press(Key::Character("3".into()), Code::Numpad3, Modifiers::CTRL);
+        assert_eq!(numpad.key, MKey::Digit(3));
+        let end = press(Key::Named(Named::End), Code::Numpad1, Modifiers::CTRL);
+        assert_eq!(end.key, MKey::Other);
+        let held = convert(
+            &Key::Named(Named::Tab),
+            Physical::Code(Code::Tab),
+            Modifiers::ALT,
+            true,
+        );
+        assert!(held.alt && held.repeat);
     }
 
     fn is(m: Option<Message>, want: &str) -> bool {

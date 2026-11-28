@@ -25,12 +25,13 @@ use super::charts::{
 use super::shell::Arrival;
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
 use super::widgets::{Bar, CompactTone};
-use super::{fonts, icons, shell, time, widgets};
+use super::{fonts, icons, shell, widgets};
 use crate::dashboard::grafite::{
     BusinessBlock, EmergencyBlock, HistoryBody, Line, Section, Tone, UpcomingLine,
 };
 use crate::dashboard::money::group_thousands;
 use crate::hub::snapshot::Status;
+use crate::ui_model::time;
 
 /// Espaco entre blocos (o `gap: 16px` do `main`).
 const GAP: f32 = 16.0;

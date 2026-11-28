@@ -14,13 +14,14 @@ use super::theme::{self, ButtonKind, ButtonSize, Tokens, space};
 use super::widgets::{SegmentedSize, SegmentedVariant};
 use super::{
     analysis_view, assistant_settings_view, connection_view, dashboard_view, fonts, icons,
-    remove_view, reserves_view, settings_view, time, transactions_view, widgets,
+    remove_view, reserves_view, settings_view, transactions_view, widgets,
 };
 use crate::advisor::Severity;
 use crate::dashboard::contract::Book;
 use crate::dashboard::money::group_thousands;
 use crate::dashboard::periods::month_long;
 use crate::hub::snapshot::Status;
+use crate::ui_model::time;
 
 /// Id da rolagem do conteudo: sem ele o iced guarda a posicao pela arvore e a tela nova abria
 /// no meio, onde a anterior estava. `SelectScreen` volta este id ao topo.

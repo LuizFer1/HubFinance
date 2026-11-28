@@ -466,7 +466,7 @@ pub enum Message {
     /// "x", Esc ou clique no scrim: fecha o dialogo e cancela o codigo pendente.
     ConnectClose,
     /// Tecla que nenhum widget consumiu; `keys::shortcut` decide o que ela faz.
-    KeyPressed(super::keys::KeyPress),
+    KeyPressed(crate::ui_model::keys::KeyPress),
     /// Tab e Shift+Tab entre os campos de texto.
     FocusNext,
     FocusPrevious,
@@ -5027,10 +5027,11 @@ pub(super) mod tests {
     fn a_chave_digitada_e_limpa_ao_fechar_por_qualquer_caminho() {
         use crate::assistant::secret::Secret;
         let dir = tempfile::tempdir().unwrap();
-        let esc = super::super::keys::KeyPress {
-            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-            physical: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Escape),
-            modifiers: iced::keyboard::Modifiers::empty(),
+        let esc = crate::ui_model::keys::KeyPress {
+            key: crate::ui_model::keys::Key::Escape,
+            ctrl: false,
+            shift: false,
+            alt: false,
             repeat: false,
         };
         let closes = [

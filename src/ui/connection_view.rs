@@ -15,10 +15,11 @@ use iced::{Alignment, Border, Element, Length, Padding, Theme};
 use super::app::{App, CopyTarget, Message, Screen};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, radius, size, space, type_scale};
 use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
-use super::{fonts, icons, measure, rows, shell, time, widgets};
+use super::{fonts, icons, rows, shell, widgets};
 use crate::dashboard::people::{Person, presence};
 use crate::dashboard::periods::paired_label;
 use crate::hub::snapshot::{ActivityKind, Snapshot, Status};
+use crate::ui_model::{measure, time};
 
 /// Largura minima de cada card da grade antes de empilhar (`minmax(420px, 1fr)`). Na janela
 /// minima (1024) o conteudo tem 728 e fica numa coluna so, com o endereco primeiro.

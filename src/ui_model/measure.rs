@@ -1,7 +1,7 @@
 //! Largura estimada de texto na Inter Hub Medium, para escolher tamanho de fonte antes do
 //! layout.
 //!
-//! O iced nao mede texto na hora de montar a tela (e o canvas nao mede nunca), entao a escolha
+//! O toolkit nao mede texto na hora de montar a tela (e o canvas nao mede nunca), entao a escolha
 //! entre "cabe a 15" e "desce para 14" sai de uma tabela de avancos lida da propria fonte
 //! (`fontTools`, `hmtx` de `assets/fonts/InterHub-Medium.ttf`, 2048 unidades por em). So os
 //! caracteres de valores e enderecos estao na tabela; qualquer outro conta como o glifo mais

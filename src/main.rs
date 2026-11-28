@@ -17,6 +17,7 @@ mod server;
 mod store;
 mod tls;
 mod ui;
+mod ui_model;
 
 fn main() -> std::process::ExitCode {
     // Lido antes de criar qualquer thread: em Unix o `time` so le o fuso com um unico thread

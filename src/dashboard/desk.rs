@@ -84,7 +84,7 @@ pub struct DeskUsage {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DeskBusiness {
-    /// "Negócio · PJ".
+    /// "NEGÓCIO · PJ" (pílula do design, texto literal em caixa alta).
     pub title: String,
     pub result: LabeledValue,
     pub result_negative: bool,
@@ -417,7 +417,7 @@ fn business_card(b: &Dataset, today: &str, month: &str, m: Money) -> DeskBusines
         }
     });
     DeskBusiness {
-        title: "Negócio · PJ".to_string(),
+        title: "NEGÓCIO · PJ".to_string(),
         result: lv("Resultado do mês", m.signed(p.result_minor)),
         result_negative: p.result_minor < 0,
         delta,
@@ -449,16 +449,12 @@ fn business_card(b: &Dataset, today: &str, month: &str, m: Money) -> DeskBusines
                 .filter(|r| r.existed)
                 .map(|r| spoken_thousands(r.surplus_minor))
                 .collect();
-            let avg = average
-                .as_deref()
-                .filter(|_| !m.hidden)
-                .map(|a| {
-                    format!(
-                        "; média {}",
-                        a.trim_start_matches("R$ ").replace(' ', "\u{a0}")
-                    )
-                })
-                .unwrap_or_default();
+            let avg = if m.hidden || closed.is_empty() {
+                String::new()
+            } else {
+                let sum = closed.iter().fold(0i64, |a, v| a.saturating_add(*v));
+                format!("; média {}", spoken_thousands(sum / closed.len() as i64))
+            };
             format!(
                 "Resultado PJ de {} a {}: {}{}{avg}",
                 rows.first().map_or("", |r| month_long(&r.month)),
@@ -938,17 +934,12 @@ mod tests {
         let b = v.business.expect("negocio");
         assert_eq!(
             b.bars_label,
-            "Resultado PJ de junho a novembro: 0,6\u{a0}mil e 0,5\u{a0}mil (novembro parcial); média 600"
+            "Resultado PJ de junho a novembro: 0,6\u{a0}mil e 0,5\u{a0}mil (novembro parcial); média 0,6\u{a0}mil"
         );
-        assert!(
-            v.history
-                .chart_label
-                .starts_with("Receitas e despesas de junho a novembro. Sobras: ")
+        assert_eq!(
+            v.history.chart_label,
+            "Receitas e despesas de junho a novembro. Sobras: 1,4\u{a0}mil e 0,4\u{a0}mil (novembro parcial)."
         );
-        assert!(v.history.chart_label.ends_with(" (novembro parcial)."));
-        assert!(
-            v.history.chart_label.contains("+1,4\u{a0}mil")
-                || v.history.chart_label.contains("1,4\u{a0}mil")
-        );
+        assert!(!v.history.chart_label.contains('+'));
     }
 }

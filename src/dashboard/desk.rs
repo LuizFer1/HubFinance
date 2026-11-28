@@ -47,8 +47,13 @@ pub struct DeskHowAmI {
     pub balance_label: String,
     pub balance: BigMoney,
     pub balance_negative: bool,
-    /// "+R$ 611,75" "vs. out"; `None` sem mês anterior com história ("Primeiro mês").
+    /// "+R$ 611,75" "vs. out"; `None` sem mês anterior com história (ver `first_month`).
     pub delta: Option<DeskDelta>,
+    /// "Primeiro mês" quando não há lançamento antes do mês (no lugar do delta); a tela não
+    /// escreve texto, só mostra este.
+    pub first_month: Option<String>,
+    /// "Ver lançamentos" (cabeçalho do card).
+    pub link: String,
     /// Barra "Despesas já usaram 75,6% das receitas"; `None` sem receita (não há base).
     pub usage: Option<DeskUsage>,
     pub income: LabeledValue,
@@ -89,7 +94,7 @@ pub struct DeskBusiness {
     pub income: LabeledValue,
     /// "Despesas PJ".
     pub expense: LabeledValue,
-    /// "Resultado PJ · 6 meses · média".
+    /// "Resultado PJ · 6 meses · média" (sem o "· média" quando `average` é `None`).
     pub bars_title: String,
     /// "R$ 6,3 mil": média dos meses fechados; `None` sem mês fechado com dado.
     pub average: Option<String>,
@@ -127,7 +132,7 @@ pub struct DeskReserve {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DeskEmergency {
-    /// "Emergência coberta" com a meta alcançada; "Cobertura da emergência" antes disso.
+    /// "Emergência coberta" com a meta alcançada; "Ainda não coberta" antes disso (Estados.dc.html).
     pub headline: String,
     /// "6,2" ou "—".
     pub coverage: String,
@@ -311,6 +316,8 @@ fn how_am_i(ds: &Dataset, today: &str, month: &str, m: Money) -> DeskHowAmI {
         balance: m.big(t.balance_minor),
         balance_negative: t.balance_minor < 0,
         delta,
+        first_month: (!had_previous).then(|| "Primeiro mês".to_string()),
+        link: "Ver lançamentos".to_string(),
         usage,
         income: lv("Receitas", m.brl(t.income_minor)),
         expense: lv("Despesas", m.brl(t.expense_minor)),
@@ -347,7 +354,14 @@ fn business_card(b: &Dataset, today: &str, month: &str, m: Money) -> DeskBusines
         .collect();
     let average = (!closed.is_empty()).then(|| {
         let sum = closed.iter().fold(0i64, |a, v| a.saturating_add(*v));
-        m.axis(sum / closed.len() as i64)
+        let avg = sum / closed.len() as i64;
+        // `axis` descarta o sinal (unsigned_abs): sem pôr à mão, prejuízo médio leria como lucro.
+        // Oculto não leva sinal, só a máscara.
+        if avg < 0 && !m.hidden {
+            format!("{MINUS}{}", m.axis(avg))
+        } else {
+            m.axis(avg)
+        }
     });
     DeskBusiness {
         title: "Negócio · PJ".to_string(),
@@ -356,7 +370,12 @@ fn business_card(b: &Dataset, today: &str, month: &str, m: Money) -> DeskBusines
         delta,
         income: lv("Faturado", m.brl(p.income_minor)),
         expense: lv("Despesas PJ", m.brl(p.expense_minor)),
-        bars_title: "Resultado PJ · 6 meses · média".to_string(),
+        // Sem mês fechado não há média: o sufixo ficaria pendurado sem valor.
+        bars_title: if average.is_some() {
+            format!("Resultado PJ · {DESK_MONTHS} meses · média")
+        } else {
+            format!("Resultado PJ · {DESK_MONTHS} meses")
+        },
         average,
         bars: rows
             .iter()
@@ -387,7 +406,7 @@ fn reserve_card(ds: &Dataset, today: &str, month: &str, m: Money) -> DeskReserve
             headline: if reached {
                 "Emergência coberta"
             } else {
-                "Cobertura da emergência"
+                "Ainda não coberta"
             }
             .to_string(),
             unit: if v.coverage_label == "1,0" {
@@ -488,11 +507,7 @@ fn history_card(ds: &Dataset, today: &str, month: &str, m: Money) -> DeskHistory
                 },
                 surplus_negative: r.existed && r.surplus_minor < 0,
                 tip: r.existed.then(|| DeskTip {
-                    title: format!(
-                        "{} {}",
-                        capitalized(month_short(&r.month)),
-                        r.month.get(..4).unwrap_or("")
-                    ),
+                    title: capitalized(month_long(&r.month)),
                     rows: vec![
                         lv("Receitas", m.brl(r.income_minor)),
                         lv("Despesas", m.brl(r.expense_minor)),
@@ -535,7 +550,7 @@ mod tests {
     }
 
     /// Fixture: novembro (até o dia 19) tem receitas de R$ 3.500,00 e despesas de R$ 3.113,41;
-    /// outubro fechou com sobra de R$ 1.410,29 (a mesma "sobra média" que o Grafite pina).
+    /// outubro fechou com sobra de R$ 1.410,29 (a mesma "sobra média" que o Grafite fixa).
     #[test]
     fn como_estou_da_fixture() {
         let c = nov().how_am_i;
@@ -546,6 +561,8 @@ mod tests {
             ("386", ",59")
         );
         assert!(!c.balance_negative);
+        assert_eq!(c.first_month, None);
+        assert_eq!(c.link, "Ver lançamentos");
         // 386,59 - 1.410,29 = -1.023,70.
         let d = c.delta.expect("delta");
         assert_eq!(
@@ -571,20 +588,24 @@ mod tests {
         assert_eq!(v.how_am_i.daily_average.value, "R$ 118,13");
     }
 
-    #[test]
-    fn negocio_some_sem_conta_comercial_e_calcula_com_ela() {
-        assert_eq!(nov().business, None);
+    /// Conta comercial: novembro com 800 de venda e 300 de despesa; outubro com `oct` (positivo
+    /// é venda, negativo vira despesa, para fechar o mês no prejuízo; `None` sem lançamento).
+    fn negocio_fixture(oct: Option<i64>) -> (Dataset, Dataset) {
         let mut rows = grafite_rows();
         rows.push((
             BOOKS,
             "BK".to_string(),
             json!({ "kind": "business", "name": "Padaria", "color": "amber", "icon": "s" }),
         ));
-        for (id, kind, amount, on) in [
+        let mut txs = vec![
             ("1110-1-VENDA", "income", 80_000, "2026-11-10"),
             ("1111-1-FARINHA", "expense", 30_000, "2026-11-11"),
-            ("1010-1-VENDA", "income", 40_000, "2026-10-10"),
-        ] {
+        ];
+        if let Some(v) = oct {
+            let kind = if v >= 0 { "income" } else { "expense" };
+            txs.push(("1010-1-VENDA", kind, v.abs(), "2026-10-10"));
+        }
+        for (id, kind, amount, on) in txs {
             rows.push((
                 TRANSACTIONS,
                 id.to_string(),
@@ -594,6 +615,13 @@ mod tests {
         }
         let all = dataset_from(rows);
         let biz = all.for_book(Book::Business);
+        (all, biz)
+    }
+
+    #[test]
+    fn negocio_some_sem_conta_comercial_e_calcula_com_ela() {
+        assert_eq!(nov().business, None);
+        let (all, biz) = negocio_fixture(Some(40_000));
         let v = build_desk(
             &all.for_book(Book::Personal),
             Some(&biz),
@@ -610,6 +638,7 @@ mod tests {
         assert_eq!((d.value.as_str(), d.suffix.as_str()), ("+25%", "vs. out"));
         // Só outubro está fechado: média R$ 400.
         assert_eq!(b.average.as_deref(), Some("R$ 400"));
+        assert_eq!(b.bars_title, "Resultado PJ · 6 meses · média");
         assert_eq!(b.bars.len(), 6);
         assert_eq!(b.bars[5].label, "Nov*");
         assert_eq!(b.bars[5].value, 1.0);
@@ -628,14 +657,56 @@ mod tests {
     }
 
     #[test]
+    fn negocio_com_mes_fechado_negativo_mantem_o_sinal_da_media() {
+        let (all, biz) = negocio_fixture(Some(-40_000));
+        let v = build_desk(
+            &all.for_book(Book::Personal),
+            Some(&biz),
+            GRAFITE_TODAY,
+            "2026-11",
+            false,
+        );
+        let b = v.business.expect("negocio");
+        // Só outubro está fechado, com resultado de -R$ 400.
+        assert_eq!(b.average.as_deref(), Some("\u{2212}R$ 400"));
+    }
+
+    #[test]
+    fn negocio_sem_mes_fechado_tira_o_sufixo_media_do_titulo() {
+        let (all, biz) = negocio_fixture(None);
+        let v = build_desk(
+            &all.for_book(Book::Personal),
+            Some(&biz),
+            GRAFITE_TODAY,
+            "2026-11",
+            false,
+        );
+        let b = v.business.expect("negocio");
+        assert_eq!(b.average, None);
+        assert_eq!(b.bars_title, "Resultado PJ · 6 meses");
+    }
+
+    #[test]
+    fn primeiro_mes_sem_lancamento_anterior() {
+        // A fixture só tem lançamento a partir de outubro: outubro é o primeiro mês.
+        let v = build_desk(&fixtures_grafite(), None, GRAFITE_TODAY, "2026-10", false);
+        assert_eq!(v.how_am_i.delta, None);
+        assert_eq!(v.how_am_i.first_month.as_deref(), Some("Primeiro mês"));
+    }
+
+    #[test]
     fn reserva_da_fixture() {
         let r = nov().reserve;
         let e = r.emergency.expect("emergencia");
+        // Cobertura = reserva de emergência / custo essencial = 350 / 2.500 = 0,14 -> "0,1".
         assert_eq!(e.coverage, "0,1");
+        assert_eq!(e.headline, "Ainda não coberta");
         assert_eq!(e.caption, "de custo essencial guardados · meta: 6 meses");
         assert!(!e.reached);
         assert_eq!(e.balance.value, "R$ 350,00");
         assert_eq!(e.essential.expect("custo").value, "R$ 2.500,00/mês");
+        // Todas as reservas vivas: emergência 550 + 100 - 300 = 350 e a caixinha Casamento
+        // com 150 -> 500.
         assert_eq!(r.total.value, "R$ 500,00");
         // Só há uma retirada de R$ 200 em novembro.
         let f = r.month_flow.expect("movimento");
@@ -665,12 +736,24 @@ mod tests {
         );
         let tip = h.months[4].tip.as_ref().expect("tip");
         assert_eq!(tip.rows[2].value, "R$ 1.410,29");
+        assert_eq!(tip.title, "Outubro");
     }
 
     #[test]
     fn oculto_nao_vaza_digito() {
         let v = build_desk(&fixtures_grafite(), None, GRAFITE_TODAY, "2026-11", true);
         assert_eq!(leaks(&format!("{v:?}")), None);
+        // Card Negócio (resultado, faturado, despesas PJ, média) também mascara.
+        let (all, biz) = negocio_fixture(Some(-40_000));
+        let hidden = build_desk(
+            &all.for_book(Book::Personal),
+            Some(&biz),
+            GRAFITE_TODAY,
+            "2026-11",
+            true,
+        );
+        assert!(hidden.business.is_some());
+        assert_eq!(leaks(&format!("{:?}", hidden.business)), None);
         // Forma continua visível: barras e porcentagem não são valores.
         assert!(v.history.months[5].income > 0.0);
         assert!(v.how_am_i.usage.is_some());

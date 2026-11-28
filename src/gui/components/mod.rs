@@ -17,6 +17,7 @@ pub mod category_tile;
 pub mod chip;
 pub mod empty;
 pub mod focus;
+pub mod modal;
 pub mod money;
 pub mod month_picker;
 pub mod progress;
@@ -26,7 +27,10 @@ pub mod segmented;
 pub mod showcase;
 pub mod stat;
 pub mod status_chip;
+pub mod stepper;
 pub mod switch;
+pub mod text_field;
+pub mod toast;
 pub mod tooltip;
 
 use gpui::{Hsla, Rgba};

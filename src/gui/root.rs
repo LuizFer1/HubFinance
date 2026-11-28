@@ -143,6 +143,8 @@ pub fn key_press(keystroke: &Keystroke, repeat: bool) -> KeyPress {
 pub struct HubWindow {
     state: Entity<HubState>,
     focus: FocusHandle,
+    #[cfg(debug_assertions)]
+    demo_fields: Option<super::components::showcase::Fields>,
 }
 
 impl HubWindow {
@@ -155,7 +157,15 @@ impl HubWindow {
         .detach();
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        HubWindow { state, focus }
+        #[cfg(debug_assertions)]
+        let demo_fields = super::components::showcase::requested()
+            .then(|| super::components::showcase::Fields::new(window, cx));
+        HubWindow {
+            state,
+            focus,
+            #[cfg(debug_assertions)]
+            demo_fields,
+        }
     }
 }
 
@@ -185,7 +195,10 @@ impl Render for HubWindow {
                 .bg(tokens.bg)
                 .text_color(tokens.text)
                 .font_family(fonts::FAMILY)
-                .child(super::components::showcase::render(tokens))
+                .child(super::components::showcase::render(
+                    tokens,
+                    self.demo_fields.as_ref(),
+                ))
                 .into_any_element();
         }
         div()

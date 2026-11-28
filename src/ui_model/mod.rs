@@ -8,6 +8,7 @@ pub mod analysis;
 pub mod app;
 pub mod assistant_setup;
 pub mod connect;
+pub mod countdown;
 pub mod effect;
 pub mod icons;
 pub mod keys;

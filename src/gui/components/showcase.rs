@@ -82,7 +82,7 @@ fn focused(el: impl IntoElement, t: &'static Tokens, gap: gpui::Hsla) -> AnyElem
 
 const COL: f32 = 120.0;
 
-pub fn render(t: &'static Tokens) -> AnyElement {
+pub fn render(t: &'static Tokens, fields: Option<&Fields>) -> AnyElement {
     let gap = t.surface;
     let rows: [(&str, Variant); 5] = [
         ("Primário", Variant::Primary),
@@ -235,7 +235,76 @@ pub fn render(t: &'static Tokens) -> AnyElement {
         .child(buttons)
         .child(controls)
         .child(data)
+        .children(fields.map(|f| interaction_section(t, f)))
         .into_any_element()
+}
+
+/// Estados dos campos da vitrine: criados uma vez com a janela (um `InputState` e uma entidade
+/// e nao pode nascer a cada quadro).
+pub struct Fields {
+    input: gpui::Entity<gpui_component::input::InputState>,
+    secret: gpui::Entity<gpui_component::input::InputState>,
+    area: gpui::Entity<gpui_component::input::TextareaState>,
+}
+
+impl Fields {
+    pub fn new(window: &mut gpui::Window, cx: &mut gpui::App) -> Fields {
+        use super::text_field::{new_area, new_input};
+        Fields {
+            input: new_input(window, cx, "Modelo", false, |_, _| {}),
+            secret: new_input(window, cx, "Chave da API", true, |_, _| {}),
+            area: new_area(window, cx, "Pergunte sobre os achados…", |_, _| {}, |_| {}),
+        }
+    }
+}
+
+/// Campos, etapas, dialogo e toast.
+fn interaction_section(t: &'static Tokens, f: &Fields) -> impl IntoElement {
+    use super::modal::Modal;
+    use super::stepper::Stepper;
+    use super::text_field::{TextArea, TextField};
+    use super::toast::Toast;
+    section("Campos, diálogo e aviso", t)
+        .child(TextField::new(&f.input, t).mono(true).ring_gap(t.surface))
+        .child(TextField::new(&f.secret, t).mono(true).ring_gap(t.surface))
+        .child(
+            div()
+                .flex()
+                .px(px(14.0))
+                .rounded(px(12.0))
+                .bg(t.surface_2)
+                .child(TextArea::new(&f.area, t)),
+        )
+        .child(Stepper::new(["Confirmar", "Dados", "Revisar"], 1, t))
+        .child(
+            div()
+                .relative()
+                .w_full()
+                .h(px(420.0))
+                .overflow_hidden()
+                .rounded(px(16.0))
+                .child(
+                    Modal::new("demo-modal", t)
+                        .header(Stepper::new(["Confirmar", "Dados", "Revisar"], 0, t))
+                        .title("Remover Lucas do hub?")
+                        .reduce_motion(true)
+                        .on_close(|_, _| {})
+                        .child(
+                            div()
+                                .text_size(px(14.0))
+                                .text_color(t.muted)
+                                .child("O celular deixa de sincronizar com este hub na hora."),
+                        ),
+                ),
+        )
+        .child(
+            Toast::new("demo-toast", "Lucas foi removido do hub", t)
+                .detail("44\u{a0}itens apagados")
+                .action("Desfazer", |_, _| {})
+                .seconds_left(6)
+                .bar(0.62)
+                .on_close(|_, _| {}),
+        )
 }
 
 /// Componentes de dado: cards, valores (visivel e oculto), avatares, tiles, chips, seletor de

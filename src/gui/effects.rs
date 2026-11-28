@@ -74,9 +74,17 @@ pub fn run(effect: Effect, state: &Entity<HubState>, cx: &mut App) {
                 tracing::warn!("nao foi possivel abrir a pasta {}: {err}", path.display());
             }
         }
-        // Sem campos de texto nem rolagem propria ainda: Tab e "voltar ao topo" ficam sem
-        // efeito ate as tarefas de campos (13) e de casca (15).
-        Effect::FocusNext | Effect::FocusPrevious | Effect::ScrollToTop => {}
+        // Tab/Shift+Tab percorrem os controles com `track_focus` na ordem de leitura. O campo de
+        // texto do `gpui-component` e o botao entram na mesma cadeia de foco; sem isto o atalho
+        // do `ui_model` nao teria efeito na janela.
+        Effect::FocusNext => {
+            with_window(cx, |window, cx| window.focus_next(cx));
+        }
+        Effect::FocusPrevious => {
+            with_window(cx, |window, cx| window.focus_prev(cx));
+        }
+        // Sem rolagem propria ainda: "voltar ao topo" fica para a casca (Tarefa 15).
+        Effect::ScrollToTop => {}
         Effect::Exit => cx.quit(),
     }
 }

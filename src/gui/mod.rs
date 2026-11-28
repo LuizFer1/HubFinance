@@ -9,6 +9,7 @@ mod components;
 mod effects;
 mod fonts;
 mod icons;
+mod motion;
 mod root;
 mod theme;
 

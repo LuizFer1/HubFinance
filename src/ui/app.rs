@@ -1009,23 +1009,6 @@ impl App {
         self.copied
             .is_some_and(|(t, until)| t == target && Instant::now() < until)
     }
-
-    /// Acao sobre a janela; sem id ainda, nada (com um aviso so, para nao inundar o log).
-    pub(super) fn with_window(
-        &mut self,
-        action: impl FnOnce(window::Id) -> Task<Message>,
-    ) -> Task<Message> {
-        match self.window {
-            Some(id) => action(id),
-            None => {
-                if !self.warned_no_window {
-                    self.warned_no_window = true;
-                    tracing::warn!("janela sem id: botoes da barra de titulo sem efeito");
-                }
-                Task::none()
-            }
-        }
-    }
 }
 
 pub fn boot(
@@ -1067,24 +1050,13 @@ pub fn boot(
     }
 }
 
-/// Abre a janela e guarda o id na hora: os botoes da barra de titulo nao precisam esperar
-/// o `WindowOpened`.
-fn open_window_task() -> Vec<Effect<Message>> {
-    vec![Effect::OpenWindow]
-}
-
 /// Abre ou traz a janela. Com janela: desminimiza e pede foco (clique na bandeja e segunda
 /// execucao dao ao processo o direito de foco; se o Windows recusar, o botao pisca).
 fn open_or_focus(app: &App) -> Vec<Effect<Message>> {
     match app.window {
         Some(_) => vec![Effect::FocusWindow],
-        None => open_window_task(),
+        None => vec![Effect::OpenWindow],
     }
-}
-
-/// Encerra o processo; o porque do "despertador" esta em `effects::task`.
-fn exit() -> Vec<Effect<Message>> {
-    vec![Effect::Exit]
 }
 
 /// Desligamento com ordem (o `CloseRequested` da 1.0.0): remocao pendente, `Shutdown`,
@@ -1098,7 +1070,7 @@ fn begin_shutdown(app: &mut App) -> Vec<Effect<Message>> {
     app.commit_pending();
     // Nucleo ja parado (ou morto): nao ha por que esperar o snapshot `Stopped`.
     if app.handle.commands.send(Command::Shutdown).is_err() {
-        return exit();
+        return vec![Effect::Exit];
     }
     // Garantia: se o nucleo travar, o processo sai mesmo assim em 5 s.
     vec![Effect::After(Duration::from_secs(5), Message::ForceExit)]
@@ -1211,7 +1183,7 @@ fn handle(app: &mut App, message: Message) -> Vec<Effect<Message>> {
             }
             app.sync_tray();
             if stopped && app.closing {
-                return exit();
+                return vec![Effect::Exit];
             }
             // Boot por `--autostart` que falhou (porta ocupada, banco): sem janela ninguem
             // veria; o tooltip diz "com erro" e a janela abre sozinha. So na transicao para
@@ -1349,7 +1321,8 @@ fn handle(app: &mut App, message: Message) -> Vec<Effect<Message>> {
             }
             vec![]
         }
-        Message::ForceExit => exit(),
+        // O porque do "despertador" esta em `effects::task`.
+        Message::ForceExit => vec![Effect::Exit],
         Message::WindowOpened(id) => {
             if app.window == Some(id) {
                 vec![Effect::QueryMaximized]

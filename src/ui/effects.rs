@@ -27,15 +27,15 @@ pub(super) fn task(effect: Effect<Message>, app: &mut App) -> Task<Message> {
             Some(id) => Task::batch([window::minimize(id, false), window::gain_focus(id)]),
             None => Task::none(),
         },
-        Effect::CloseWindow => app.with_window(window::close),
-        Effect::Minimize => app.with_window(|id| window::minimize(id, true)),
-        Effect::ToggleMaximize => app.with_window(|id| {
+        Effect::CloseWindow => with_window(app, window::close),
+        Effect::Minimize => with_window(app, |id| window::minimize(id, true)),
+        Effect::ToggleMaximize => with_window(app, |id| {
             window::toggle_maximize(id).chain(window::is_maximized(id).map(Message::Maximized))
         }),
         Effect::QueryMaximized => {
-            app.with_window(|id| window::is_maximized(id).map(Message::Maximized))
+            with_window(app, |id| window::is_maximized(id).map(Message::Maximized))
         }
-        Effect::StartDrag => app.with_window(window::drag),
+        Effect::StartDrag => with_window(app, window::drag),
         Effect::After(duration, message) => {
             Task::perform(delay(duration), move |_| message.clone())
         }
@@ -79,7 +79,7 @@ pub(super) fn task(effect: Effect<Message>, app: &mut App) -> Task<Message> {
 /// Arrastar a borda para redimensionar e coisa so do iced (o GPUI usa o teste de posicao do
 /// sistema), por isso nao e um `Effect`; some com a iced.
 pub(super) fn resize(app: &mut App, direction: window::Direction) -> Task<Message> {
-    app.with_window(|id| window::drag_resize(id, direction))
+    with_window(app, |id| window::drag_resize(id, direction))
 }
 
 /// Grava o `ui.json` fora da thread da UI (disco lento nao trava a janela). Falha so vira
@@ -124,4 +124,18 @@ fn delay(duration: Duration) -> futures::channel::oneshot::Receiver<()> {
         let _ = tx.send(());
     });
     rx
+}
+
+/// Acao sobre a janela; sem id ainda, nada (com um aviso so, para nao inundar o log).
+fn with_window(app: &mut App, action: impl FnOnce(window::Id) -> Task<Message>) -> Task<Message> {
+    match app.window {
+        Some(id) => action(id),
+        None => {
+            if !app.warned_no_window {
+                app.warned_no_window = true;
+                tracing::warn!("janela sem id: botoes da barra de titulo sem efeito");
+            }
+            Task::none()
+        }
+    }
 }

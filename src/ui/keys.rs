@@ -17,6 +17,10 @@ use crate::ui_model::keys::{Key as MKey, KeyPress};
 /// Traduz a tecla do iced para o `KeyPress` do `ui_model`. A posicao fisica e o caractere
 /// sao resolvidos aqui (ver `ui_model::keys::Key`), para a decisao do atalho nao conhecer
 /// o iced.
+///
+/// `Key::Letter` vem de `Key::to_latin` do iced: devolve o caractere digitado quando ele e
+/// latino (< U+0370) e so recorre a posicao fisica em layout nao latino. Por isso o valor
+/// pode nao ser letra. O conversor do GPUI deve reproduzir essa regra.
 pub fn convert(key: &Key, physical: Physical, modifiers: Modifiers, repeat: bool) -> KeyPress {
     let resolved = match key {
         Key::Named(Named::Escape) => MKey::Escape,

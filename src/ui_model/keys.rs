@@ -16,8 +16,11 @@ pub enum Key {
     /// tecla produz mesmo o digito (NumLock desligado: Numpad1 e End, e Ctrl+End nao troca
     /// de tela).
     Digit(u8),
-    /// Letra latina pela posicao fisica: layout nao latino (cirilico) continua acionando
-    /// Ctrl+H pela tecla do H.
+    /// O caractere latino que a tecla produz (o DIGITADO: em Dvorak, Ctrl+H e a tecla cujo
+    /// "h" logico sai ali, nao a posicao fisica do H). So quando o layout nao e latino
+    /// (cirilico etc.) a posicao fisica entra como recurso, para Ctrl+H seguir na tecla do
+    /// H. O valor pode nao ser letra ('0', 'a com crase', '-'): quem decide o atalho
+    /// compara com os caracteres que usa e ignora o resto.
     Letter(char),
     /// Qualquer outra tecla: nenhum atalho a usa.
     Other,

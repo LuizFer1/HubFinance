@@ -26,7 +26,7 @@ use crate::ui_model::window::Size;
 
 pub(super) use crate::ui_model::analysis::awaiting_cloud_consent;
 pub(super) use crate::ui_model::app::{
-    AnalysisTab, CopyTarget, INITIAL_SIZE, Msg, PendingRemoval, RemoveStep, Screen,
+    AnalysisTab, CopyTarget, INITIAL_SIZE, Msg, RemoveStep, Screen,
 };
 
 /// O que o `daemon` do iced guarda: o modelo (sem tipo de toolkit) e o que so existe por causa
@@ -78,8 +78,8 @@ impl State {
             // As cores dos graficos estao gravadas na geometria em cache.
             iced.clear_charts();
         }
-        if iced.charts_seen != model.charts_epoch.get() {
-            iced.charts_seen = model.charts_epoch.get();
+        if iced.charts_seen != model.charts_epoch {
+            iced.charts_seen = model.charts_epoch;
             iced.clear_charts();
         }
         iced.sync_replies(model);
@@ -263,8 +263,8 @@ pub(super) mod tests {
     use crate::ui_model::app::tests as m;
     use crate::ui_model::app::tests::wait_prefs;
     use crate::ui_model::app::tests::{
-        awaiting_conv, configured, conversation_ids, data, deliver, drain, local_settings, msg,
-        open_conv, phone, running_with, setup, summary, view as device_view,
+        awaiting_conv, configured, data, drain, local_settings, msg, open_conv, phone,
+        running_with, setup, summary, view as device_view,
     };
     use crate::ui_model::connect::{self, ConnectFlow};
     use crate::ui_model::motion::{self, Scene};
@@ -868,7 +868,7 @@ pub(super) mod tests {
         assert_eq!(app.transactions.list.count, 1);
         assert_eq!(super::super::shell::transactions_count(&app), 1);
         assert_eq!(
-            super::super::shell::titles(&app).1,
+            crate::ui_model::shell::titles(&app).1,
             "Padaria · somente leitura · dados do último sync"
         );
         let _ = update(&mut app, Msg::SelectBook(Book::Personal));
@@ -959,74 +959,22 @@ pub(super) mod tests {
         );
     }
 
+    /// So a montagem da view em dois passos; a navegacao e a gravacao no ultimo botao vivem em
+    /// `ui_model::app` (`dialogo_anda_pelos_passos_e_so_grava_no_ultimo_botao`).
     #[test]
-    fn dialogo_anda_pelos_passos_e_so_grava_no_ultimo_botao() {
-        use crate::ui_model::assistant_setup::SetupStep;
+    fn dialogo_do_assistente_monta_nos_passos() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx) = assistant_app(dir.path(), Settings::default());
+        let (mut app, _rx) = assistant_app(dir.path(), Settings::default());
         let _ = update(&mut app, Msg::ConfigureAssistant);
-        assert_eq!(setup(&app).step, SetupStep::Where);
-        assert_eq!(setup(&app).draft.choice, ProviderChoice::None);
-        // Escolher no passo 1 nao grava nada.
         let _ = update(&mut app, Msg::SetupChoice(ProviderChoice::Local));
-        assert!(drain(&mut rx).is_empty());
-        // Entrar no passo do Ollama ja testa a porta do campo.
+        let _ = super::super::shell::root(&app);
         let _ = update(&mut app, Msg::SetupNext);
-        assert_eq!(setup(&app).step, SetupStep::Details);
-        assert_eq!(
-            drain(&mut rx),
-            vec![Command::Assistant(AssistantCommand::ListModels(11434))]
-        );
-        let _ = update(&mut app, Msg::SetupBack);
-        assert_eq!(setup(&app).step, SetupStep::Where);
-        let _ = update(&mut app, Msg::SetupNext);
-        let _ = drain(&mut rx);
-        // A porta filtra digitos e o teste usa a porta do campo, sem gravar.
-        let _ = update(&mut app, Msg::SetupPort("11a5b00".into()));
-        assert_eq!(setup(&app).draft.port_input, "11500");
-        let _ = update(&mut app, Msg::SetupTest);
-        assert_eq!(
-            drain(&mut rx),
-            vec![Command::Assistant(AssistantCommand::ListModels(11500))]
-        );
-        // Testando: o botao nao manda outro pedido.
         app.snapshot.assistant.listing = true;
-        let _ = update(&mut app, Msg::SetupTest);
-        assert!(drain(&mut rx).is_empty());
         let _ = super::super::shell::root(&app);
         app.snapshot.assistant.listing = false;
-        // Porta invalida nao testa.
-        let _ = update(&mut app, Msg::SetupPort("0".into()));
-        let _ = update(&mut app, Msg::SetupTest);
-        assert!(drain(&mut rx).is_empty());
-        let _ = update(&mut app, Msg::SetupPort("11500".into()));
         app.snapshot.assistant.models = Some(Ok(vec!["llama3.1:8b".into()]));
-        app.snapshot.assistant.models_port = Some(11500);
-        // Sem modelo escolhido o ultimo botao nao grava.
-        let _ = update(&mut app, Msg::SetupFinish);
-        assert!(drain(&mut rx).is_empty());
         let _ = update(&mut app, Msg::SetupLocalModel("llama3.1:8b".into()));
         let _ = super::super::shell::root(&app);
-        let _ = update(&mut app, Msg::SetupFinish);
-        let mut expected = local_settings(Some("llama3.1:8b"));
-        expected.local.port = 11500;
-        assert_eq!(
-            drain(&mut rx),
-            vec![Command::Assistant(AssistantCommand::Configure {
-                settings: expected.clone(),
-                key: None,
-            })]
-        );
-        // Espera o nucleo: aberto e "Salvando..." ate o snapshot com a gravacao.
-        assert_eq!(setup(&app).saving, Some(1));
-        let _ = update(&mut app, Msg::SetupFinish);
-        assert!(
-            drain(&mut rx).is_empty(),
-            "um clique a mais nao grava de novo"
-        );
-        let done = configured(&app, Some(&expected), None);
-        let _ = update(&mut app, done);
-        assert!(app.assistant_setup.is_none());
     }
 
     #[test]
@@ -1061,77 +1009,33 @@ pub(super) mod tests {
         let _ = super::super::shell::root(&app);
     }
 
+    /// So a montagem da view: a chave limpa na hora e o comando vivem em
+    /// `ui_model::app` (`nuvem_leva_a_chave_digitada_no_mesmo_comando_e_a_limpa_na_hora`).
     #[test]
-    fn nuvem_leva_a_chave_digitada_no_mesmo_comando_e_a_limpa_na_hora() {
-        use crate::assistant::secret::Secret;
+    fn nuvem_monta() {
+        use crate::assistant::settings::ProviderChoice;
         let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx) = assistant_app(dir.path(), Settings::default());
+        let (mut app, _rx) = assistant_app(dir.path(), Settings::default());
         let _ = update(&mut app, Msg::ConfigureAssistant);
         let _ = update(&mut app, Msg::SetupChoice(ProviderChoice::Cloud));
         let _ = update(&mut app, Msg::SetupNext);
-        // A nuvem nao lista modelos (seria trafego antes de pergunta).
-        assert!(drain(&mut rx).is_empty());
         let _ = super::super::shell::root(&app);
-        // Sem chave nenhuma o ultimo botao nao grava.
-        let _ = update(&mut app, Msg::SetupFinish);
-        assert!(drain(&mut rx).is_empty());
-        let _ = update(&mut app, Msg::KeyInput(Secret::new("sk-or-segredo".into())));
-        assert!(drain(&mut rx).is_empty(), "digitar nao salva");
-        let _ = update(&mut app, Msg::SetupCloudModel(" openai/gpt-4o ".into()));
-        let _ = update(&mut app, Msg::SetupDeny(false));
-        let _ = update(&mut app, Msg::SetupFinish);
-        assert!(
-            app.key_input.is_empty(),
-            "a chave nao fica no estado da tela"
-        );
-        let mut expected = Settings {
-            provider: ProviderChoice::Cloud,
-            ..Settings::default()
-        };
-        expected.cloud.enabled = true;
-        expected.cloud.model = "openai/gpt-4o".into();
-        expected.cloud.deny_data_collection = false;
-        let sent = drain(&mut rx);
-        assert_eq!(
-            sent,
-            vec![Command::Assistant(AssistantCommand::Configure {
-                settings: expected,
-                key: Some(Secret::new("sk-or-segredo".into())),
-            })]
-        );
-        // O Debug do que foi mandado (e de qualquer mensagem) nunca mostra a chave.
-        assert!(!format!("{sent:?}").contains("segredo"));
-        let typed = Msg::KeyInput(Secret::new("sk-or-segredo".into()));
-        assert!(!format!("{typed:?}").contains("segredo"));
     }
 
+    /// So a montagem da view: o "Salvando" que nao fica preso vive em `ui_model::app`
+    /// (`hub_fora_do_ar_nao_deixa_o_salvando_preso`).
     #[test]
-    fn hub_fora_do_ar_nao_deixa_o_salvando_preso() {
+    fn hub_fora_do_ar_monta() {
+        use crate::assistant::settings::ProviderChoice;
         let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
         let _ = update(&mut app, Msg::ConfigureAssistant);
         let _ = update(&mut app, Msg::SetupChoice(ProviderChoice::None));
         let _ = update(&mut app, Msg::SetupFinish);
-        assert_eq!(setup(&app).saving, Some(1));
-        let _ = drain(&mut rx);
-        // O nucleo caiu antes de responder.
         let mut down = app.snapshot.clone();
         down.status = Status::Failed("porta ocupada".into());
         let _ = update(&mut app, Msg::Snapshot(Box::new(down)));
-        assert_eq!(setup(&app).saving, None);
-        assert_eq!(
-            setup(&app).error.as_deref(),
-            Some(crate::ui_model::app::HUB_DOWN_SAVE)
-        );
         let _ = super::super::shell::root(&app);
-        // Tentar de novo com ele fora: nao manda nada e o erro continua.
-        let _ = update(&mut app, Msg::SetupFinish);
-        assert!(drain(&mut rx).is_empty());
-        assert_eq!(setup(&app).saving, None);
-        assert_eq!(
-            setup(&app).error.as_deref(),
-            Some(crate::ui_model::app::HUB_DOWN_SAVE)
-        );
     }
 
     #[test]
@@ -1313,105 +1217,29 @@ pub(super) mod tests {
         );
     }
 
+    /// So a montagem da view: o toast do "Desfazer" monta pela raiz; o comportamento vive em
+    /// `ui_model::app` (`apagar_conversa_some_na_hora_e_desfazer_nao_envia_nada`).
     #[test]
-    fn previa_presa_a_outra_conversa_nao_aprova_a_aberta() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx) = cloud_app(dir.path());
-        app.snapshot.assistant.open = Some(awaiting_conv(app.book, "ENV"));
-        app.consent_preview = Some("C0".into());
-        assert!(crate::ui_model::analysis::shown_consent(&app).is_none());
-        let _ = update(&mut app, Msg::ApproveCloudSend);
-        assert!(drain(&mut rx).is_empty());
-        // Um snapshot depois, a previa da conversa que saiu da tela fecha.
-        let snap = Msg::Snapshot(Box::new(app.snapshot.clone()));
-        let _ = update(&mut app, snap);
-        assert!(app.consent_preview.is_none());
-    }
-
-    #[test]
-    fn lista_de_conversas_e_so_da_conta_aberta() {
+    fn apagar_conversa_monta() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
-        app.snapshot.assistant.conversations = vec![
-            summary("P1", Book::Personal),
-            summary("B1", Book::Business),
-            summary("P2", Book::Personal),
-        ];
-        let ids = |app: &App| {
-            crate::ui_model::analysis::conversations_of_book(app)
-                .iter()
-                .map(|c| c.id.clone())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(ids(&app), ["P1", "P2"]);
-        app.book = Book::Business;
-        assert_eq!(ids(&app), ["B1"]);
-    }
-
-    #[test]
-    fn apagar_conversa_some_na_hora_e_desfazer_nao_envia_nada() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
         app.snapshot.assistant.conversations =
             vec![summary("P1", Book::Personal), summary("P2", Book::Personal)];
         let _ = update(&mut app, Msg::AskDeleteConversation("P1".into()));
-        assert_eq!(conversation_ids(&app), ["P2"]);
-        assert!(drain(&mut rx).is_empty());
-        // O toast monta pela raiz e o pendente nao esconde nenhum aparelho.
         let _ = super::super::shell::root(&app);
-        assert_eq!(app.pending_removal.as_ref().unwrap().device_id(), None);
-        let _ = update(&mut app, Msg::UndoRemove);
-        assert_eq!(conversation_ids(&app), ["P1", "P2"]);
-        assert!(drain(&mut rx).is_empty());
-        assert_eq!(app.pending_removal, None);
     }
 
+    /// So a montagem da Analise sem a conversa escondida; o Desfazer vive em `ui_model::app`
+    /// (`apagar_a_conversa_aberta_so_a_esconde_e_desfazer_a_mostra_de_novo`).
     #[test]
-    fn apagar_a_conversa_aberta_so_a_esconde_e_desfazer_a_mostra_de_novo() {
+    fn apagar_a_conversa_aberta_monta() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
         let open = open_conv(Book::Personal, vec![]);
         let id = open.id.clone();
         app.snapshot.assistant.open = Some(open);
         let _ = update(&mut app, Msg::AskDeleteConversation(id));
-        assert!(crate::ui_model::analysis::open_conversation(&app).is_none());
         let _ = super::super::analysis_view::view(&app);
-        // Nada sai antes do prazo: nem `Close`, que interromperia a resposta.
-        assert!(drain(&mut rx).is_empty());
-        let _ = update(&mut app, Msg::UndoRemove);
-        assert!(crate::ui_model::analysis::open_conversation(&app).is_some());
-        assert!(drain(&mut rx).is_empty());
-    }
-
-    #[test]
-    fn conversa_apagada_continua_escondida_ate_o_snapshot_sem_ela() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
-        let open = open_conv(Book::Personal, vec![]);
-        let id = open.id.clone();
-        app.snapshot.assistant.open = Some(open);
-        app.snapshot.assistant.conversations =
-            vec![summary(&id, Book::Personal), summary("P2", Book::Personal)];
-        let _ = update(&mut app, Msg::AskDeleteConversation(id.clone()));
-        app.pending_removal.as_mut().unwrap().deadline = Instant::now();
-        let _ = update(&mut app, Msg::Tick);
-        assert_eq!(
-            drain(&mut rx),
-            [Command::Assistant(AssistantCommand::Delete(id.clone()))]
-        );
-        // O nucleo ainda nao processou: o snapshot traz a conversa, e ela segue fora da tela.
-        assert_eq!(conversation_ids(&app), ["P2"]);
-        assert!(crate::ui_model::analysis::open_conversation(&app).is_none());
-        deliver(&mut app, |_| {});
-        assert_eq!(conversation_ids(&app), ["P2"]);
-        assert!(crate::ui_model::analysis::open_conversation(&app).is_none());
-        // Snapshot sem ela: o id sai do conjunto.
-        deliver(&mut app, |s| {
-            s.assistant.open = None;
-            s.assistant.conversations.retain(|c| c.id != id);
-        });
-        assert!(app.deleting.is_empty());
-        assert_eq!(conversation_ids(&app), ["P2"]);
     }
 
     #[test]
@@ -1423,60 +1251,6 @@ pub(super) mod tests {
         app.snapshot.assistant.conversations = vec![dated, summary("P2", Book::Personal)];
         app.hover_row = Some("P1".into());
         let _ = super::super::analysis_view::view(&app);
-    }
-
-    #[test]
-    fn conversa_de_outra_conta_nao_aparece_como_aberta() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
-        app.snapshot.assistant.open = Some(open_conv(Book::Business, vec![]));
-        assert!(crate::ui_model::analysis::open_conversation(&app).is_none());
-        app.book = Book::Business;
-        assert!(crate::ui_model::analysis::open_conversation(&app).is_some());
-    }
-
-    #[test]
-    fn aviso_de_dados_mudados_compara_o_envelope_da_conversa_com_o_de_agora() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
-        let changed = crate::ui_model::analysis::data_changed;
-        assert!(!changed(&app), "sem conversa aberta nao ha aviso");
-
-        // O nucleo publica a conversa com o envelope que a UI mandou.
-        let mut open = open_conv(app.book, vec![]);
-        open.envelope = app.current_envelope();
-        app.snapshot.assistant.open = Some(open);
-        assert!(!changed(&app));
-
-        // Sync que nao mexe nos numeros desta conta (outro `Arc`, mesmo conteudo): sem aviso.
-        let mut snap = app.snapshot.clone();
-        snap.dashboard = std::sync::Arc::new(crate::dashboard::fixtures());
-        let _ = update(&mut app, Msg::Snapshot(Box::new(snap)));
-        assert!(!changed(&app));
-
-        // Dados que mudam o envelope: aviso.
-        let before = app.current_envelope();
-        let mut snap = app.snapshot.clone();
-        snap.dashboard = std::sync::Arc::new(crate::dashboard::fixtures_grafite());
-        let _ = update(&mut app, Msg::Snapshot(Box::new(snap)));
-        assert_ne!(
-            app.current_envelope(),
-            before,
-            "o teste precisa de dados que mudem o envelope"
-        );
-        assert!(changed(&app));
-
-        // Conversa antiga reaberta, de quando os dados eram outros: aviso tambem.
-        let mut old = open_conv(app.book, vec![]);
-        old.envelope = "envelope antigo".into();
-        app.snapshot.assistant.open = Some(old);
-        assert!(changed(&app));
-
-        // Conversa da outra conta nao e mostrada, entao nao avisa.
-        let mut other = open_conv(Book::Business, vec![]);
-        other.envelope = "envelope antigo".into();
-        app.snapshot.assistant.open = Some(other);
-        assert!(!changed(&app));
     }
 
     #[test]

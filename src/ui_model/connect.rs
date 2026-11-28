@@ -218,4 +218,48 @@ mod tests {
         assert!(PAIR_STEPS[0].contains("Sincronizar com o hub"));
         assert!(PAIR_STEPS[1].contains("QR"));
     }
+
+    fn running(devices: Vec<crate::hub::snapshot::DeviceView>) -> Snapshot {
+        Snapshot {
+            status: crate::hub::snapshot::Status::Running,
+            addresses: vec![Ipv4Addr::new(192, 168, 0, 12)],
+            https_port: 7777,
+            http_port: 7778,
+            devices,
+            ..Snapshot::default()
+        }
+    }
+
+    fn device(id: &str) -> crate::hub::snapshot::DeviceView {
+        crate::hub::snapshot::DeviceView {
+            device_id: id.into(),
+            name: "Pixel 8".into(),
+            paired_at: "2026-10-03T10:00:00Z".into(),
+            ..crate::hub::snapshot::DeviceView::default()
+        }
+    }
+
+    #[test]
+    fn sem_aparelho_o_fluxo_ocupa_a_tela_e_com_aparelho_vira_dialogo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) =
+            crate::ui_model::app::tests::app_with(running(vec![]), dir.path().to_path_buf());
+        app.refresh_people();
+        app.screen = Screen::Connection;
+        assert!(shows_in_screen_flow(&app));
+        assert!(!dialog_open(&app));
+
+        // No boot (`Starting`) a lista vazia ainda nao quer dizer nada.
+        app.snapshot.status = Status::Starting;
+        assert!(!shows_in_screen_flow(&app));
+
+        app.snapshot = running(vec![device("D1")]);
+        app.refresh_people();
+        assert!(!shows_in_screen_flow(&app));
+        app.connect = Some(ConnectFlow::new(true));
+        assert!(dialog_open(&app));
+        // Em outra tela o dialogo nao aparece.
+        app.screen = Screen::Dashboard;
+        assert!(!dialog_open(&app));
+    }
 }

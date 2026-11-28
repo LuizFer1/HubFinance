@@ -2,10 +2,12 @@
 //! item da navegacao e qual estado uma tela sem dados mostra. Sem toolkit, para as duas
 //! interfaces e os testes dizerem a mesma coisa.
 
+use crate::advisor::Severity;
 use crate::dashboard::money::group_thousands;
 use crate::dashboard::periods::month_long;
 use crate::hub::snapshot::Status;
-use crate::ui_model::app::{App, Screen};
+use crate::ui_model::app::{App, Msg, Screen};
+use crate::ui_model::time;
 
 /// A versao precisa de um lugar sempre a vista (Ajustes > Sobre so aparece a quem abre a
 /// tela), e o subtitulo curto nao quebra em duas linhas. "Somente leitura" ficou fora dela de
@@ -130,9 +132,202 @@ pub const NAV_ORDER: [Screen; 6] = [
     Screen::Settings,
 ];
 
+/// Para onde o card de status leva: Aparelhos, onde estao o endereco e quem esta conectado.
+pub const STATUS_CARD_TARGET: Screen = Screen::Connection;
+
+/// Achados de severidade "alerta" da conta aberta, do mesmo modelo que a Analise desenha.
+/// Zero nao aparece: um "0" na lateral seria ruido.
+pub fn alert_count(app: &App) -> Option<usize> {
+    let n = app
+        .analysis
+        .findings
+        .iter()
+        .filter(|f| f.severity == Severity::Alert)
+        .count();
+    (n > 0).then_some(n)
+}
+
+/// Lancamentos vivos da conta escolhida (do modelo do Dashboard, que ja os contou).
+pub fn transactions_count(app: &App) -> usize {
+    app.dashboard.sidebar.transactions
+}
+
+/// Aparelhos ativos: e o numero de linhas da lista "Usuarios conectados" (sem a remocao
+/// pendente, que ja sumiu da tela).
+pub fn active_devices(app: &App) -> usize {
+    active_device_names(app).len()
+}
+
+/// Nomes dos aparelhos ativos, na ordem do snapshot. A mesma regra de `active_devices`, para o
+/// "Aguardando o primeiro sync de ..." nunca citar um aparelho que a contagem nao conta.
+pub fn active_device_names(app: &App) -> Vec<&str> {
+    let pending = app
+        .pending_removal
+        .as_ref()
+        .and_then(crate::ui_model::app::PendingRemoval::device_id);
+    app.snapshot
+        .devices
+        .iter()
+        .filter(|d| !d.revoked && Some(d.device_id.as_str()) != pending)
+        .map(|d| d.name.as_str())
+        .collect()
+}
+
+/// Algum aparelho ativo (a regra de `active_device_names`) ja fez um envio ou recebimento.
+pub fn any_active_synced(app: &App) -> bool {
+    let pending = app
+        .pending_removal
+        .as_ref()
+        .and_then(crate::ui_model::app::PendingRemoval::device_id);
+    app.snapshot.devices.iter().any(|d| {
+        !d.revoked
+            && Some(d.device_id.as_str()) != pending
+            && (d.last_push_at.is_some() || d.last_pull_at.is_some())
+    })
+}
+
+/// Ha alguma linha viva no hub, em qualquer conta: lancamento ou reserva. E o que separa o hub
+/// que nunca recebeu um sync (passos, espera) da tela que so esta vazia nesta conta.
+pub fn hub_has_rows(app: &App) -> bool {
+    let ds = &app.snapshot.dashboard;
+    !ds.is_empty() || ds.has_reserves()
+}
+
+/// O estado de uma tela de dados que tem (ou nao) o que mostrar.
+pub fn screen_arrival(app: &App, screen_has_data: bool) -> Arrival {
+    arrival(
+        &app.snapshot.status,
+        screen_has_data,
+        hub_has_rows(app),
+        &active_device_names(app),
+        any_active_synced(app),
+    )
+}
+
+/// Endereco principal e porta HTTPS; sem rede, so a porta.
+pub fn address(app: &App) -> Option<String> {
+    app.snapshot
+        .addresses
+        .first()
+        .map(|ip| format!("{ip}:{}", app.snapshot.https_port))
+}
+
+/// Ha lancamento ou reserva viva no hub: uma casa que so sincronizou reservas tem dados.
+pub fn has_data(app: &App) -> bool {
+    has_transactions(app) || app.scope.has_reserves()
+}
+
+/// Ha lancamento vivo: o estado vazio do Dashboard e de Lancamentos e sobre lancamentos.
+pub fn has_transactions(app: &App) -> bool {
+    app.dashboard.sidebar.has_data
+}
+
+/// "Último sync há 2 min · Pixel da Ana": o maior entre envio e recebimento de todos os
+/// aparelhos. RFC 3339 em UTC compara como string, entao nao precisa parsear para escolher.
+pub fn last_sync_line(app: &App) -> String {
+    let latest = app
+        .snapshot
+        .devices
+        .iter()
+        .flat_map(|d| {
+            [d.last_push_at.as_deref(), d.last_pull_at.as_deref()]
+                .into_iter()
+                .flatten()
+                .map(move |at| (at, d.name.as_str()))
+        })
+        .max_by(|a, b| a.0.cmp(b.0));
+    match latest {
+        Some((at, name)) => format!("Último sync {} · {name}", time::relative(Some(at))),
+        None => "Nenhum sync ainda".into(),
+    }
+}
+
+/// A mensagem do clique no card, a unica que `status_card` usa.
+pub fn status_card_press() -> Msg {
+    Msg::SelectScreen(STATUS_CARD_TARGET)
+}
+
+/// A tela atual gerencia a propria rolagem? Lancamentos (B7: so as linhas rolam) e Analise
+/// (8.5: cada painel com a sua), e so quando aparecem de fato: com o hub em erro o card de falha
+/// entra no lugar e volta a rolagem geral.
+pub fn owns_scroll(app: &App) -> bool {
+    matches!(app.screen, Screen::Transactions | Screen::Analysis) && failure(app).is_none()
+}
+
+/// "Parcial · até 19 nov": so nas telas com seletor de mes, no mes corrente e com dados (o
+/// modelo ja decide as duas ultimas). Vira a linha do cabecalho (`header_line`).
+pub fn partial_chip(app: &App) -> Option<&str> {
+    matches!(app.screen, Screen::Dashboard | Screen::Transactions)
+        .then_some(app.dashboard.header.partial.as_deref())
+        .flatten()
+}
+
+/// Titulo e subtitulo de cada tela. O do Dashboard vem pronto do modelo Grafite ("Resumo da
+/// casa"); a navegacao diz so "Resumo".
+pub fn titles(app: &App) -> (&str, String) {
+    let empty = !has_transactions(app);
+    // No boot o vazio ainda nao quer dizer nada: "Nada sincronizado ainda" la seria o mesmo
+    // vazio falso do corpo. A linha volta ao que a tela e; o corpo diz que esta abrindo.
+    let opening = app.snapshot.status == Status::Starting;
+    match app.screen {
+        Screen::Dashboard => (
+            app.dashboard.header.title.as_str(),
+            if opening && app.dashboard.is_empty {
+                DASHBOARD_LINE.into()
+            } else {
+                app.dashboard.header.subtitle.clone()
+            },
+        ),
+        Screen::Transactions => (
+            "Lançamentos",
+            if empty && !opening {
+                "Nada sincronizado ainda".into()
+            } else {
+                transactions_question(&app.transactions.month)
+            },
+        ),
+        Screen::Reserves => (
+            "Reservas",
+            if app.reserves.is_empty && !opening {
+                "Nada sincronizado ainda".into()
+            } else {
+                RESERVES_QUESTION.into()
+            },
+        ),
+        Screen::Analysis => ("Análise", crate::ui_model::analysis::QUESTION.into()),
+        Screen::Connection => ("Aparelhos", "Quem sincroniza com esta casa?".into()),
+        Screen::Settings => ("Ajustes", "Preferências deste computador".into()),
+    }
+}
+
+/// Titulo e a linha de baixo do cabecalho. A regra, igual nas telas de dados:
+/// - mes corrente com dados, nas telas com seletor de mes: o "Parcial · até 24 set" do modelo
+///   ganha da pergunta, porque e o que muda a leitura dos numeros (o mes ainda nao fechou) e o
+///   Resumo ja faz assim. Em Lancamentos ele leva tambem quantos aparelhos enviaram ("· 2
+///   aparelhos"): sao eles que ainda podem mandar o resto do mes;
+/// - fora disso, o subtitulo de `titles`, que nas telas de dados e a pergunta que a tela
+///   responde ("O que entrou e saiu em agosto?", "Quanto está guardado, e para quê?");
+/// - sem nada sincronizado, "Nada sincronizado ainda": uma pergunta sobre dado que nao existe
+///   nao faz sentido.
+pub fn header_line(app: &App) -> (&str, String) {
+    let (title, subtitle) = titles(app);
+    let Some(partial) = partial_chip(app) else {
+        return (title, subtitle);
+    };
+    let devices = app.transactions.synced_devices;
+    let line = if app.screen == Screen::Transactions && devices > 0 {
+        format!("{partial} · {}", plural(devices, "aparelho", "aparelhos"))
+    } else {
+        partial.to_string()
+    };
+    (title, line)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hub::snapshot::Snapshot;
+    use crate::ui_model::app::tests::app_with;
 
     #[test]
     fn marca_mostra_a_versao_numa_linha_curta() {
@@ -228,5 +423,223 @@ mod tests {
             "Aguardando o primeiro sync de 2 celulares"
         );
         assert_eq!(waiting_line(&[]), "Aguardando o primeiro sync");
+    }
+
+    fn device(
+        name: &str,
+        push: Option<&str>,
+        pull: Option<&str>,
+        revoked: bool,
+    ) -> crate::hub::snapshot::DeviceView {
+        crate::hub::snapshot::DeviceView {
+            device_id: format!("ID-{name}"),
+            name: name.into(),
+            paired_at: "2026-09-01T10:00:00Z".into(),
+            last_seen_at: None,
+            last_push_at: push.map(Into::into),
+            last_pull_at: pull.map(Into::into),
+            revoked,
+            user_id: None,
+            ..crate::hub::snapshot::DeviceView::default()
+        }
+    }
+
+    #[test]
+    fn ultimo_sync_e_o_maior_entre_envio_e_recebimento() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        assert_eq!(last_sync_line(&app), "Nenhum sync ainda");
+        app.snapshot.devices = vec![
+            device("iPhone do Luiz", Some("2026-09-01T10:00:00Z"), None, false),
+            device("Pixel da Ana", None, Some("2026-09-02T10:00:00Z"), false),
+        ];
+        assert!(
+            last_sync_line(&app).ends_with("· Pixel da Ana"),
+            "{}",
+            last_sync_line(&app)
+        );
+    }
+
+    #[test]
+    fn contagem_de_aparelhos_ignora_revogados() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        app.snapshot.devices = vec![
+            device("A", None, None, false),
+            device("B", None, None, true),
+        ];
+        assert_eq!(active_devices(&app), 1);
+    }
+
+    #[test]
+    fn subtitulo_dos_lancamentos_e_a_pergunta_do_mes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = crate::ui_model::app::tests::app_with_fixtures(dir.path());
+        app.screen = Screen::Transactions;
+        assert_eq!(titles(&app).1, "O que entrou e saiu em setembro?");
+        // A pergunta acompanha o mes escolhido.
+        let _ = crate::ui_model::app::update(&mut app, Msg::PrevMonth);
+        assert_eq!(titles(&app).1, "O que entrou e saiu em agosto?");
+        app.screen = Screen::Dashboard;
+        assert_eq!(titles(&app).1, "Somente leitura · dados do último sync");
+    }
+
+    #[test]
+    fn subtitulos_das_reservas() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        app.screen = Screen::Reserves;
+        // Boot: a pergunta da tela, nunca o vazio.
+        assert_eq!(titles(&app).1, "Quanto está guardado, e para quê?");
+        app.snapshot.status = Status::Running;
+        assert_eq!(
+            titles(&app),
+            ("Reservas", "Nada sincronizado ainda".to_string())
+        );
+        app.screen = Screen::Transactions;
+        assert_eq!(titles(&app).1, "Nada sincronizado ainda");
+        app.snapshot.status = Status::Starting;
+        assert!(titles(&app).1.starts_with("O que entrou e saiu em "));
+        let (mut app, _rx, _tx) = crate::ui_model::app::tests::app_with_reserves(dir.path());
+        app.screen = Screen::Reserves;
+        assert_eq!(
+            titles(&app),
+            ("Reservas", "Quanto está guardado, e para quê?".to_string())
+        );
+        assert_eq!(app.dashboard.sidebar.reserves, 6);
+    }
+
+    #[test]
+    fn chip_parcial_so_no_mes_corrente_com_dados() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = crate::ui_model::app::tests::app_with_fixtures(dir.path());
+        assert_eq!(partial_chip(&app), Some("Parcial · até 24 set"));
+        assert_eq!(app.dashboard.header.month_label, "Set 2026");
+        app.screen = Screen::Transactions;
+        assert_eq!(partial_chip(&app), Some("Parcial · até 24 set"));
+        // Reservas e Aparelhos nao tem seletor de mes.
+        app.screen = Screen::Reserves;
+        assert_eq!(partial_chip(&app), None);
+        app.screen = Screen::Connection;
+        assert_eq!(partial_chip(&app), None);
+
+        app.screen = Screen::Dashboard;
+        let _ = crate::ui_model::app::update(&mut app, Msg::PrevMonth);
+        assert_eq!(partial_chip(&app), None);
+        assert_eq!(app.dashboard.header.month_label, "Ago 2026");
+
+        let (mut empty, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        empty.set_today("2026-09-24".into());
+        assert_eq!(partial_chip(&empty), None);
+    }
+
+    #[test]
+    fn parcial_vira_a_linha_do_cabecalho() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = crate::ui_model::app::tests::app_with_fixtures(dir.path());
+        assert_eq!(
+            header_line(&app),
+            ("Resumo da casa", "Parcial · até 24 set".to_string())
+        );
+        app.screen = Screen::Transactions;
+        assert_eq!(
+            header_line(&app),
+            (
+                "Lançamentos",
+                "Parcial · até 24 set · 1 aparelho".to_string()
+            )
+        );
+        app.transactions.synced_devices = 2;
+        assert_eq!(header_line(&app).1, "Parcial · até 24 set · 2 aparelhos");
+        // Nenhum aparelho conhecido: sem o "· 0 aparelhos".
+        app.transactions.synced_devices = 0;
+        assert_eq!(header_line(&app).1, "Parcial · até 24 set");
+        // Mes fechado: volta o subtitulo.
+        let _ = crate::ui_model::app::update(&mut app, Msg::PrevMonth);
+        assert_eq!(header_line(&app), titles(&app));
+        // Telas sem seletor de mes: sempre o subtitulo.
+        for screen in [
+            Screen::Reserves,
+            Screen::Analysis,
+            Screen::Connection,
+            Screen::Settings,
+        ] {
+            app.screen = screen;
+            assert_eq!(header_line(&app), titles(&app));
+        }
+    }
+
+    #[test]
+    fn subtitulos() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        // No boot o vazio nao e verdade ainda: a linha nao diz "Nada sincronizado", nem promete
+        // "dados do último sync" antes de o banco abrir.
+        assert_eq!(titles(&app).1, "Somente leitura");
+        app.snapshot.status = Status::Running;
+        assert_eq!(titles(&app).1, "Nada sincronizado ainda");
+        app.screen = Screen::Connection;
+        assert_eq!(
+            titles(&app),
+            ("Aparelhos", "Quem sincroniza com esta casa?".to_string())
+        );
+    }
+
+    #[test]
+    fn titulo_do_dashboard_e_resumo_da_casa_e_a_nav_diz_resumo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, _rx, _tx) = crate::ui_model::app::tests::app_with_fixtures(dir.path());
+        assert_eq!(
+            titles(&app),
+            (
+                "Resumo da casa",
+                "Somente leitura · dados do último sync".to_string()
+            )
+        );
+        let snap = Snapshot {
+            status: Status::Running,
+            ..Snapshot::default()
+        };
+        let (empty, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
+        assert_eq!(
+            titles(&empty),
+            ("Resumo da casa", "Nada sincronizado ainda".to_string())
+        );
+    }
+
+    #[test]
+    fn hub_com_erro_cobre_as_telas_menos_ajustes() {
+        let dir = tempfile::tempdir().unwrap();
+        let snap = Snapshot {
+            status: Status::Failed("Porta 7777 em uso".into()),
+            ..Snapshot::default()
+        };
+        let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
+        for screen in NAV_ORDER {
+            app.screen = screen;
+            let want = (screen != Screen::Settings).then_some("Porta 7777 em uso");
+            assert_eq!(failure(&app), want, "{screen:?}");
+        }
+        app.snapshot.status = Status::Running;
+        app.screen = Screen::Dashboard;
+        assert_eq!(failure(&app), None);
+    }
+
+    #[test]
+    fn lancamentos_e_analise_rolam_por_conta_propria_e_o_erro_devolve_a_rolagem_geral() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = crate::ui_model::app::tests::app_with_fixtures(dir.path());
+        for screen in NAV_ORDER {
+            app.screen = screen;
+            assert_eq!(
+                owns_scroll(&app),
+                matches!(screen, Screen::Transactions | Screen::Analysis),
+                "{screen:?}"
+            );
+        }
+        // Hub em erro: o card de falha entra no lugar e precisa da rolagem da casca.
+        app.screen = Screen::Transactions;
+        app.snapshot.status = Status::Failed("Porta 7777 em uso".into());
+        assert!(!owns_scroll(&app));
     }
 }

@@ -3,6 +3,8 @@
 //! tudo, a mascara de "Ocultar valores" (que precisa ser uma so para as duas interfaces: um
 //! valor que vaza numa delas anula a promessa da outra).
 
+use std::borrow::Cow;
+
 use crate::advisor::{FigureValue, Finding, FindingKind, Severity};
 use crate::assistant::prompt::OPENING_REQUEST;
 use crate::assistant::prompt::Role;
@@ -510,7 +512,6 @@ pub fn two_panels(content_width: f32) -> bool {
 
 /// Trecho de texto com o estilo que a resposta do modelo pode ter. O que a interface nao desenha
 /// (link, riscado, imagem) entra como texto simples: perder o enfeite e melhor que perder o texto.
-#[allow(dead_code)] // usado na Tarefa 30
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Span {
     pub text: String,
@@ -521,7 +522,6 @@ pub struct Span {
 
 /// Um bloco da resposta. A lista e o que as interfaces desenham; quem confere a mascara e
 /// `blocks_text`, que le exatamente o que sera desenhado.
-#[allow(dead_code)] // usado na Tarefa 30
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplyBlock {
     Heading {
@@ -541,18 +541,15 @@ pub enum ReplyBlock {
 
 /// Item de lista. `task` e o estado da tarefa ("- [x]" e `Some(true)`, "- [ ]" e `Some(false)`);
 /// `None` e item comum. Sem ele a interface nao distingue tarefa feita de item solto.
-#[allow(dead_code)] // usado na Tarefa 30
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListItem {
     pub task: Option<bool>,
     pub blocks: Vec<ReplyBlock>,
 }
 
-#[allow(dead_code)] // usado na Tarefa 30
 type Events<'a> = std::iter::Peekable<pulldown_cmark::Parser<'a>>;
 
 /// Interpreta o Markdown da resposta (as mesmas opcoes da mascara: tabela, riscado, tarefas).
-#[allow(dead_code)] // usado na Tarefa 30
 pub fn parse_reply(content: &str) -> Vec<ReplyBlock> {
     use pulldown_cmark::{Options, Parser};
     let options =
@@ -561,7 +558,6 @@ pub fn parse_reply(content: &str) -> Vec<ReplyBlock> {
     blocks(&mut events)
 }
 
-#[allow(dead_code)] // usado na Tarefa 30
 fn push_span(spans: &mut Vec<Span>, text: &str, bold: bool, italic: bool, code: bool) {
     if !text.is_empty() {
         spans.push(Span {
@@ -574,7 +570,6 @@ fn push_span(spans: &mut Vec<Span>, text: &str, bold: bool, italic: bool, code: 
 }
 
 /// Le eventos ate o fim do conteiner atual (o `End` que o fecha) ou do texto.
-#[allow(dead_code)] // usado na Tarefa 30
 fn blocks(events: &mut Events<'_>) -> Vec<ReplyBlock> {
     use pulldown_cmark::{Event, Tag, TagEnd};
     let mut out = Vec::new();
@@ -695,7 +690,6 @@ fn blocks(events: &mut Events<'_>) -> Vec<ReplyBlock> {
 }
 
 /// Linhas e celulas da tabela, ate o `End(Table)`.
-#[allow(dead_code)] // usado na Tarefa 30
 fn table(events: &mut Events<'_>) -> Vec<Vec<Vec<Span>>> {
     use pulldown_cmark::{Event, Tag, TagEnd};
     let mut rows: Vec<Vec<Vec<Span>>> = Vec::new();
@@ -735,7 +729,6 @@ fn table(events: &mut Events<'_>) -> Vec<Vec<Vec<Span>>> {
 
 /// O texto que os blocos desenham, um por linha de bloco. `None` com tabela: a mascara nao
 /// confere celulas (o desenho antigo nao as expunha), entao a resposta cai em texto puro.
-#[allow(dead_code)] // usado na Tarefa 30
 pub fn blocks_text(blocks: &[ReplyBlock]) -> Option<String> {
     fn spans_text(spans: &[Span], out: &mut String) {
         for s in spans {
@@ -773,7 +766,6 @@ pub fn blocks_text(blocks: &[ReplyBlock]) -> Option<String> {
 }
 
 /// Como a resposta aparece: blocos, ou texto puro quando a mascara nao pode garantir os blocos.
-#[allow(dead_code)] // usado na Tarefa 30
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplyView {
     Blocks(Vec<ReplyBlock>),
@@ -781,7 +773,6 @@ pub enum ReplyView {
 }
 
 /// Resposta pronta para desenhar e o que "Copiar" leva (com o olho ligado, o texto ja mascarado).
-#[allow(dead_code)] // usado na Tarefa 30
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MaskedReply {
     pub shown: ReplyView,
@@ -793,7 +784,6 @@ pub struct MaskedReply {
 /// desenhado tem de ser exatamente a mascara do que o Markdown original desenharia. Isso pega o
 /// que o parse remonta e a mascara do fonte nao ve ("1.**234**,56", "1\.234,56"); nesses casos, e
 /// com tabela, sai o texto puro, mascarado depois de interpretado.
-#[allow(dead_code)] // usado na Tarefa 30
 pub fn masked_reply(content: &str, hidden: bool) -> MaskedReply {
     if !hidden {
         return MaskedReply {
@@ -894,6 +884,42 @@ pub fn awaiting_cloud_consent(app: &App) -> Option<&OpenConversation> {
                 .destination()
                 .is_some_and(|d| d.is_cloud())
     })
+}
+
+pub fn hidden_values_note(app: &App) -> Option<&'static str> {
+    app.hide_values.then_some(HIDDEN_VALUES_NOTE)
+}
+
+/// O envelope da conversa como aparece na previa: o da propria conversa (e o que de fato vai),
+/// com a mascara de "Ocultar valores" so na tela. Com o olho desligado e o texto exato do envio.
+/// Com ele ligado, as respostas anteriores do assistente passam antes por `plain_text`: sao
+/// Markdown, e "R$ **1500**" ou "R\$ 1.500" so viram dinheiro que a mascara reconhece depois de
+/// interpretados.
+pub fn preview_shown(app: &App, open: &OpenConversation) -> String {
+    if !app.hide_values {
+        return preview_body(open);
+    }
+    mask_str(&preview_text_with(open, |turn| {
+        plain_text(turn).trim_end().to_string()
+    }))
+}
+
+/// O texto da prévia como aparece na tela: com "Ocultar valores" ligado cada R$ vira a máscara
+/// (quem esconde os valores não os quer à vista nem aqui). O que SAI para o assistente é
+/// sempre `App::current_envelope`, sem máscara; a máscara é só de quem olha.
+pub fn preview_text(app: &App) -> Option<Cow<'_, str>> {
+    app.envelope_preview.as_deref().map(|s| mask(app, s))
+}
+
+/// "Ocultar valores": os textos dos achados trazem o dinheiro ja formatado ("R$ 1.234,56"),
+/// entao a tela troca cada valor pela mascara em vez de formatar de novo. Sem isto o numero
+/// vazaria por cima do botao de ocultar.
+pub fn mask<'a>(app: &App, s: &'a str) -> Cow<'a, str> {
+    if app.hide_values {
+        Cow::Owned(mask_str(s))
+    } else {
+        Cow::Borrowed(s)
+    }
 }
 
 #[cfg(test)]
@@ -1585,5 +1611,34 @@ pub(crate) mod tests {
         let shown = masked_reply("**R$ 1.234,56**", false);
         assert!(matches!(shown.shown, ReplyView::Blocks(_)));
         assert_eq!(shown.copy, "**R$ 1.234,56**");
+    }
+
+    #[test]
+    fn cancelar_a_previa_apaga_a_conversa_que_nunca_foi_respondida() {
+        let opening = || {
+            let mut m = msg(MessageRole::User, None);
+            m.content = OPENING_REQUEST.into();
+            m
+        };
+        // So a abertura recem-criada, sem nada chegando, e apagada.
+        let fresh = conversation_with(vec![opening()]);
+        assert!(matches!(
+            cancel_preview_message(&fresh, false),
+            Some(Msg::DeleteConversation(id)) if id == "C1"
+        ));
+        assert!(cancel_preview_message(&fresh, true).is_none());
+        // Conversa local com erro, reaberta do historico com a nuvem configurada: tem o que
+        // guardar, o "Cancelar" so fecha a previa.
+        let failed = conversation_with(vec![opening(), msg(MessageRole::Error, None)]);
+        assert!(cancel_preview_message(&failed, false).is_none());
+        // Pergunta da propria pessoa (nao a abertura) tambem fica.
+        let asked = conversation_with(vec![msg(MessageRole::User, None)]);
+        assert!(cancel_preview_message(&asked, false).is_none());
+        let answered = conversation_with(vec![
+            opening(),
+            msg(MessageRole::Assistant, None),
+            msg(MessageRole::User, None),
+        ]);
+        assert!(cancel_preview_message(&answered, false).is_none());
     }
 }

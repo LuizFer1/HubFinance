@@ -772,29 +772,18 @@ mod tests {
         }
     }
 
+    /// So a acao do cabecalho; quando o fluxo ocupa a tela e quando vira dialogo vive em
+    /// `ui_model::connect` (`sem_aparelho_o_fluxo_ocupa_a_tela_e_com_aparelho_vira_dialogo`).
     #[test]
-    fn sem_aparelho_o_fluxo_ocupa_a_tela_e_com_aparelho_vira_dialogo() {
+    fn acao_do_cabecalho_so_com_aparelho_pareado() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with(running(vec![]), dir.path().to_path_buf());
         app.refresh_people();
         app.screen = Screen::Connection;
-        assert!(shows_in_screen_flow(&app));
-        assert!(!dialog_open(&app));
         assert!(header_action(&app).is_none());
-
-        // No boot (`Starting`) a lista vazia ainda nao quer dizer nada.
-        app.snapshot.status = Status::Starting;
-        assert!(!shows_in_screen_flow(&app));
-
         app.snapshot = running(vec![device("D1")]);
         app.refresh_people();
-        assert!(!shows_in_screen_flow(&app));
         assert!(header_action(&app).is_some());
-        app.connect = Some(ConnectFlow::new(true));
-        assert!(dialog_open(&app));
-        // Em outra tela o dialogo nao aparece.
-        app.screen = Screen::Dashboard;
-        assert!(!dialog_open(&app));
     }
 
     #[test]

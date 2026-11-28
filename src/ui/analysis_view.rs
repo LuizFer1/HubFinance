@@ -18,15 +18,15 @@ use crate::advisor::{Finding, Severity};
 use crate::assistant::view::{MessageRole, MessageView, OpenConversation};
 use crate::dashboard::money::MASK;
 use crate::ui_model::analysis::{
-    Comparison, HIDDEN_VALUES_NOTE, INTRO, PREVIEW_SEND, PREVIEW_TITLE, assistant_status,
-    comparison, delete_all_label, group_title, mask_str, mask_streaming, plain_text, preview_body,
-    preview_intro, preview_text_with, reply_notes, retention_value, summary_line,
-    tokens_total_label, two_panels,
+    Comparison, INTRO, PREVIEW_SEND, PREVIEW_TITLE, assistant_status, comparison, delete_all_label,
+    group_title, mask_str, mask_streaming, plain_text, preview_intro, reply_notes, retention_value,
+    summary_line, tokens_total_label, two_panels,
 };
 use crate::ui_model::time;
 
 pub(super) use crate::ui_model::analysis::{
-    conversations_of_book, data_changed, open_conversation, shown_consent,
+    conversations_of_book, data_changed, hidden_values_note, mask, open_conversation,
+    preview_shown, preview_text, shown_consent,
 };
 
 /// Entre os cards da tela.
@@ -391,10 +391,6 @@ fn idle_body(app: &State) -> Element<'_, Msg> {
         col = col.push(Space::new().height(6)).push(list);
     }
     panel_scroll(t, container(col).padding([16, 16])).into()
-}
-
-fn hidden_values_note(app: &State) -> Option<&'static str> {
-    app.hide_values.then_some(HIDDEN_VALUES_NOTE)
 }
 
 /// A conversa: mensagens na rolagem propria (ancorada embaixo, acompanha o texto que chega) e o
@@ -804,20 +800,6 @@ impl<'a> markdown::Viewer<'a, Msg> for ReplyViewer {
     }
 }
 
-/// O envelope da conversa como aparece na previa: o da propria conversa (e o que de fato vai),
-/// com a mascara de "Ocultar valores" so na tela. Com o olho desligado e o texto exato do envio.
-/// Com ele ligado, as respostas anteriores do assistente passam antes por `plain_text`: sao
-/// Markdown, e "R$ **1500**" ou "R\$ 1.500" so viram dinheiro que a mascara reconhece depois de
-/// interpretados.
-pub(super) fn preview_shown(app: &State, open: &OpenConversation) -> String {
-    if !app.hide_values {
-        return preview_body(open);
-    }
-    mask_str(&preview_text_with(open, |turn| {
-        plain_text(turn).trim_end().to_string()
-    }))
-}
-
 /// Pe da conversa de nuvem que espera aprovacao: nada saiu, e o campo de pergunta da lugar ao
 /// caminho para a previa (que tambem abre sozinha ao comecar a conversa).
 fn awaiting_foot(t: &'static Tokens) -> Element<'static, Msg> {
@@ -993,13 +975,6 @@ fn conversation_list(app: &State) -> Option<Element<'_, Msg>> {
     Some(col.into())
 }
 
-/// O texto da prévia como aparece na tela: com "Ocultar valores" ligado cada R$ vira a máscara
-/// (quem esconde os valores não os quer à vista nem aqui). O que SAI para o assistente é
-/// sempre `State::current_envelope`, sem máscara; a máscara é só de quem olha.
-pub(super) fn preview_text(app: &State) -> Option<Cow<'_, str>> {
-    app.envelope_preview.as_deref().map(|s| mask(app, s))
-}
-
 /// Sobreposição "O que o assistente vê": o envelope inteiro, rolável, com "Fechar". Mesmo
 /// padrão do modal de remoção: fundo escurecido que fecha ao clicar e a caixa por cima, que
 /// engole o clique.
@@ -1046,25 +1021,13 @@ pub(super) fn envelope_dialog(app: &State) -> Option<Element<'_, Msg>> {
     ))
 }
 
-/// "Ocultar valores": os textos dos achados trazem o dinheiro ja formatado ("R$ 1.234,56"),
-/// entao a tela troca cada valor pela mascara em vez de formatar de novo. Sem isto o numero
-/// vazaria por cima do botao de ocultar.
-fn mask<'a>(app: &State, s: &'a str) -> Cow<'a, str> {
-    if app.hide_values {
-        Cow::Owned(mask_str(s))
-    } else {
-        Cow::Borrowed(s)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::advisor::FindingKind;
-    use crate::assistant::prompt::OPENING_REQUEST;
     use crate::assistant::settings::{ProviderChoice, Settings};
     use crate::dashboard::money::MASK_DIGITS;
-    use crate::ui_model::analysis::cancel_preview_message;
+    use crate::ui_model::analysis::preview_body;
     use crate::ui_model::analysis::tests::{conversation_with, msg};
     use crate::ui_model::effect::Effect;
 
@@ -1084,128 +1047,6 @@ mod tests {
             let c = comparison(&f).unwrap();
             let _ = comparison_view(&app, f.severity, &c);
         }
-    }
-
-    #[test]
-    fn previa_mascara_valores_so_na_tela_e_o_envio_continua_inteiro() {
-        use crate::ui::app::tests::app_with_fixtures;
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
-        let _ = crate::ui::app::update(&mut app, Msg::ShowEnvelope);
-        let full = app.current_envelope();
-        assert!(full.contains("R$ "), "o envelope do exemplo traz dinheiro");
-
-        app.hide_values = false;
-        assert_eq!(preview_text(&app).as_deref(), Some(full.as_str()));
-
-        app.hide_values = true;
-        let shown = preview_text(&app).expect("previa aberta");
-        let leaked = shown
-            .match_indices("R$ ")
-            .any(|(i, _)| shown[i + 3..].starts_with(|c: char| c.is_ascii_digit()));
-        assert!(!leaked, "valor apareceu na previa com valores ocultos");
-        assert!(shown.contains(MASK));
-        // O texto que sai (e o guardado na previa) nunca e o mascarado.
-        assert_eq!(app.current_envelope(), full);
-        assert_eq!(app.envelope_preview.as_deref(), Some(full.as_str()));
-        assert!(envelope_dialog(&app).is_some());
-    }
-
-    #[test]
-    fn cancelar_a_previa_apaga_a_conversa_que_nunca_foi_respondida() {
-        let opening = || {
-            let mut m = msg(MessageRole::User, None);
-            m.content = OPENING_REQUEST.into();
-            m
-        };
-        // So a abertura recem-criada, sem nada chegando, e apagada.
-        let fresh = conversation_with(vec![opening()]);
-        assert!(matches!(
-            cancel_preview_message(&fresh, false),
-            Some(Msg::DeleteConversation(id)) if id == "C1"
-        ));
-        assert!(cancel_preview_message(&fresh, true).is_none());
-        // Conversa local com erro, reaberta do historico com a nuvem configurada: tem o que
-        // guardar, o "Cancelar" so fecha a previa.
-        let failed = conversation_with(vec![opening(), msg(MessageRole::Error, None)]);
-        assert!(cancel_preview_message(&failed, false).is_none());
-        // Pergunta da propria pessoa (nao a abertura) tambem fica.
-        let asked = conversation_with(vec![msg(MessageRole::User, None)]);
-        assert!(cancel_preview_message(&asked, false).is_none());
-        let answered = conversation_with(vec![
-            opening(),
-            msg(MessageRole::Assistant, None),
-            msg(MessageRole::User, None),
-        ]);
-        assert!(cancel_preview_message(&answered, false).is_none());
-
-        // Pela tela.
-        use crate::hub::{AssistantCommand, Command};
-        use crate::ui::app::tests::app_with_fixtures;
-        use crate::ui::app::{Screen, update};
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx, _tx) = app_with_fixtures(dir.path());
-        let _ = update(&mut app, Msg::SelectScreen(Screen::Analysis));
-        let mut cloud = Settings {
-            provider: ProviderChoice::Cloud,
-            ..Settings::default()
-        };
-        cloud.cloud.enabled = true;
-        app.snapshot.assistant.settings = cloud;
-        let mut failed = failed;
-        failed.book = app.book;
-        app.snapshot.assistant.open = Some(failed);
-        app.consent_preview = Some("C1".into());
-        assert!(consent_dialog(&app).is_some());
-        let _ = shell::root(&app);
-        while rx.try_recv().is_ok() {}
-        // Esc/scrim e "Cancelar" so fecham a previa: nada sai para o nucleo.
-        let _ = update(&mut app, Msg::ClosePreview);
-        assert!(app.consent_preview.is_none());
-        app.consent_preview = Some("C1".into());
-        let _ = update(&mut app, Msg::CancelPreview);
-        assert!(app.consent_preview.is_none());
-        assert!(
-            rx.try_recv().is_err(),
-            "a conversa com erro nao foi apagada"
-        );
-
-        // Resposta local chegando e a troca para a nuvem: nao ha o que aprovar ainda, a previa
-        // nao aparece e o "Cancelar" nao apaga nada.
-        let mut streaming = fresh;
-        streaming.book = app.book;
-        app.snapshot.assistant.open = Some(streaming);
-        app.snapshot.assistant.busy = true;
-        app.consent_preview = Some("C1".into());
-        assert!(crate::ui::app::awaiting_cloud_consent(&app).is_none());
-        assert!(consent_dialog(&app).is_none());
-        let _ = update(&mut app, Msg::CancelPreview);
-        assert!(
-            rx.try_recv().is_err(),
-            "a conversa com resposta chegando ficou"
-        );
-        // Terminada a resposta, a abertura sozinha e apagada pelo "Cancelar".
-        app.snapshot.assistant.busy = false;
-        app.consent_preview = Some("C1".into());
-        let _ = update(&mut app, Msg::CancelPreview);
-        assert!(matches!(
-            rx.try_recv(),
-            Ok(Command::Assistant(AssistantCommand::Delete(id))) if id == "C1"
-        ));
-    }
-
-    #[test]
-    fn previa_com_valores_ocultos_avisa_que_o_envio_leva_os_reais() {
-        use crate::ui::app::tests::app_with_fixtures;
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
-        app.hide_values = false;
-        assert_eq!(hidden_values_note(&app), None);
-        app.hide_values = true;
-        assert_eq!(
-            hidden_values_note(&app),
-            Some("Os valores estão ocultos na tela; o envio leva os valores reais.")
-        );
     }
 
     #[test]
@@ -1388,5 +1229,45 @@ mod tests {
         let effects = crate::ui::app::step(&mut app, Msg::CopyReply("X".into()));
         assert!(effects.is_empty());
         assert!(!app.is_copied(CopyTarget::Reply));
+    }
+
+    /// So a montagem da previa de consentimento; a regra do "Cancelar" vive em `ui_model`
+    /// (`cancelar_a_previa_apaga_a_conversa_que_nunca_foi_respondida`, em analysis e em app).
+    #[test]
+    fn cancelar_a_previa_monta() {
+        use crate::ui::app::tests::app_with_fixtures;
+        use crate::ui::app::{Screen, update};
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Msg::SelectScreen(Screen::Analysis));
+        let mut cloud = Settings {
+            provider: ProviderChoice::Cloud,
+            ..Settings::default()
+        };
+        cloud.cloud.enabled = true;
+        app.snapshot.assistant.settings = cloud;
+        let mut failed = conversation_with(vec![msg(MessageRole::Error, None)]);
+        failed.book = app.book;
+        app.snapshot.assistant.open = Some(failed);
+        app.consent_preview = Some("C1".into());
+        assert!(consent_dialog(&app).is_some());
+        let _ = shell::root(&app);
+        // Resposta local chegando: nao ha o que aprovar ainda, a previa nao aparece.
+        app.snapshot.assistant.busy = true;
+        assert!(consent_dialog(&app).is_none());
+    }
+
+    /// So a montagem do dialogo "O que o assistente ve"; a mascara so na tela vive em
+    /// `ui_model::app` (`previa_mascara_valores_so_na_tela_e_o_envio_continua_inteiro`).
+    #[test]
+    fn dialogo_da_previa_monta() {
+        use crate::ui::app::tests::app_with_fixtures;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = crate::ui::app::update(&mut app, Msg::ShowEnvelope);
+        for hidden in [false, true] {
+            app.hide_values = hidden;
+            assert!(envelope_dialog(&app).is_some());
+        }
     }
 }

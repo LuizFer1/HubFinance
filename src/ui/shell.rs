@@ -1,8 +1,6 @@
 //! Casca da janela: barra de titulo propria, moldura de redimensionar, barra lateral com o
 //! card de status, e a area de conteudo rolavel. O tema mora em Ajustes.
 
-use std::net::Ipv4Addr;
-
 use iced::widget::{
     Space, button, column, container, float, mouse_area, opaque, row, scrollable, stack, text,
     tooltip,
@@ -16,15 +14,14 @@ use super::{
     analysis_view, assistant_settings_view, connection_view, dashboard_view, fonts, icons,
     remove_view, reserves_view, settings_view, transactions_view, widgets,
 };
-use crate::advisor::Severity;
 use crate::dashboard::contract::Book;
 use crate::hub::snapshot::Status;
 pub(super) use crate::ui_model::shell::failure;
-use crate::ui_model::shell::{
-    Arrival, DASHBOARD_LINE, OPENING_TEXT, RESERVES_QUESTION, arrival, brand_subtitle,
-    nav_shortcut, plural, thousands, transactions_question,
+use crate::ui_model::shell::{OPENING_TEXT, brand_subtitle, nav_shortcut, thousands};
+pub(super) use crate::ui_model::shell::{
+    active_devices, address, alert_count, has_data, header_line, last_sync_line, owns_scroll,
+    screen_arrival, status_card_press, transactions_count,
 };
-use crate::ui_model::time;
 
 /// Id da rolagem do conteudo: sem ele o iced guarda a posicao pela arvore e a tela nova abria
 /// no meio, onde a anterior estava. `SelectScreen` volta este id ao topo.
@@ -311,7 +308,8 @@ pub(super) struct NavEntry {
 }
 
 /// As seis linhas na ordem do design; "Aparelhos" e "Ajustes" ficam sob a secao "Hub". A
-/// ordem e tambem a do Ctrl+1..6 (`keys::shortcut` le daqui) e a do tooltip de cada item.
+/// ordem e tambem a do Ctrl+1..6 (`keys::shortcut` le `NAV_ORDER`, e o teste
+/// `lateral_desenha_na_ordem_do_ctrl_numero` garante que esta lista a segue) e a do tooltip de cada item.
 ///
 /// Sem contagens (decisao do dono, 25/11): o total de lancamentos ou de aparelhos nao pede
 /// nada a ninguem. A excecao e a Analise, com o numero de alertas, que e o que pede acao.
@@ -354,75 +352,6 @@ pub(super) fn nav_entries(app: &State) -> [NavEntry; 6] {
             count: None,
         },
     ]
-}
-
-/// Achados de severidade "alerta" da conta aberta, do mesmo modelo que a Analise desenha.
-/// Zero nao aparece: um "0" na lateral seria ruido.
-pub(super) fn alert_count(app: &State) -> Option<usize> {
-    let n = app
-        .analysis
-        .findings
-        .iter()
-        .filter(|f| f.severity == Severity::Alert)
-        .count();
-    (n > 0).then_some(n)
-}
-
-/// Lancamentos vivos da conta escolhida (do modelo do Dashboard, que ja os contou).
-pub(super) fn transactions_count(app: &State) -> usize {
-    app.dashboard.sidebar.transactions
-}
-
-/// Aparelhos ativos: e o numero de linhas da lista "Usuarios conectados" (sem a remocao
-/// pendente, que ja sumiu da tela).
-pub(super) fn active_devices(app: &State) -> usize {
-    active_device_names(app).len()
-}
-
-/// Nomes dos aparelhos ativos, na ordem do snapshot. A mesma regra de `active_devices`, para o
-/// "Aguardando o primeiro sync de ..." nunca citar um aparelho que a contagem nao conta.
-pub(super) fn active_device_names(app: &State) -> Vec<&str> {
-    let pending = app
-        .pending_removal
-        .as_ref()
-        .and_then(super::app::PendingRemoval::device_id);
-    app.snapshot
-        .devices
-        .iter()
-        .filter(|d| !d.revoked && Some(d.device_id.as_str()) != pending)
-        .map(|d| d.name.as_str())
-        .collect()
-}
-
-/// Algum aparelho ativo (a regra de `active_device_names`) ja fez um envio ou recebimento.
-pub(super) fn any_active_synced(app: &State) -> bool {
-    let pending = app
-        .pending_removal
-        .as_ref()
-        .and_then(super::app::PendingRemoval::device_id);
-    app.snapshot.devices.iter().any(|d| {
-        !d.revoked
-            && Some(d.device_id.as_str()) != pending
-            && (d.last_push_at.is_some() || d.last_pull_at.is_some())
-    })
-}
-
-/// Ha alguma linha viva no hub, em qualquer conta: lancamento ou reserva. E o que separa o hub
-/// que nunca recebeu um sync (passos, espera) da tela que so esta vazia nesta conta.
-pub(super) fn hub_has_rows(app: &State) -> bool {
-    let ds = &app.snapshot.dashboard;
-    !ds.is_empty() || ds.has_reserves()
-}
-
-/// O estado de uma tela de dados que tem (ou nao) o que mostrar.
-pub(super) fn screen_arrival(app: &State, screen_has_data: bool) -> Arrival {
-    arrival(
-        &app.snapshot.status,
-        screen_has_data,
-        hub_has_rows(app),
-        &active_device_names(app),
-        any_active_synced(app),
-    )
 }
 
 /// Esqueleto do boot, o mesmo em Resumo, Lancamentos e Reservas: o texto e blocos de
@@ -541,14 +470,6 @@ fn nav_item(app: &State, entry: NavEntry, n: usize) -> Element<'_, Msg> {
     .into()
 }
 
-/// Endereco principal e porta HTTPS; sem rede, so a porta.
-fn address(app: &State) -> Option<String> {
-    app.snapshot
-        .addresses
-        .first()
-        .map(|ip: &Ipv4Addr| format!("{ip}:{}", app.snapshot.https_port))
-}
-
 /// O que o card de status diz: cor do ponto, titulo, linha do endereco e linha de detalhe.
 pub(super) struct StatusLines {
     pub dot: iced::Color,
@@ -606,36 +527,6 @@ pub(super) fn status_lines(app: &State) -> StatusLines {
     }
 }
 
-/// Ha lancamento ou reserva viva no hub: uma casa que so sincronizou reservas tem dados.
-pub(super) fn has_data(app: &State) -> bool {
-    has_transactions(app) || app.scope.has_reserves()
-}
-
-/// Ha lancamento vivo: o estado vazio do Dashboard e de Lancamentos e sobre lancamentos.
-pub(super) fn has_transactions(app: &State) -> bool {
-    app.dashboard.sidebar.has_data
-}
-
-/// "Último sync há 2 min · Pixel da Ana": o maior entre envio e recebimento de todos os
-/// aparelhos. RFC 3339 em UTC compara como string, entao nao precisa parsear para escolher.
-pub(super) fn last_sync_line(app: &State) -> String {
-    let latest = app
-        .snapshot
-        .devices
-        .iter()
-        .flat_map(|d| {
-            [d.last_push_at.as_deref(), d.last_pull_at.as_deref()]
-                .into_iter()
-                .flatten()
-                .map(move |at| (at, d.name.as_str()))
-        })
-        .max_by(|a, b| a.0.cmp(b.0));
-    match latest {
-        Some((at, name)) => format!("Último sync {} · {name}", time::relative(Some(at))),
-        None => "Nenhum sync ainda".into(),
-    }
-}
-
 /// Ponto de 7 px com halo de 3 px na cor a 18 % (o `box-shadow: 0 0 0 3px` do design): o
 /// iced nao tem sombra espalhada, entao o halo e um circulo de 13 px por baixo.
 fn halo_dot<'a>(color: iced::Color) -> Element<'a, Msg> {
@@ -673,14 +564,6 @@ fn status_card(app: &State) -> Element<'_, Msg> {
         .style(theme::status_card(t))
         .on_press(status_card_press())
         .into()
-}
-
-/// Para onde o card de status leva: Aparelhos, onde estao o endereco e quem esta conectado.
-pub(super) const STATUS_CARD_TARGET: Screen = Screen::Connection;
-
-/// A mensagem do clique no card, a unica que `status_card` usa.
-pub(super) fn status_card_press() -> Msg {
-    Msg::SelectScreen(STATUS_CARD_TARGET)
 }
 
 // ---- conteudo ----
@@ -757,13 +640,6 @@ fn content(app: &State) -> Element<'_, Msg> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
-}
-
-/// A tela atual gerencia a propria rolagem? Lancamentos (B7: so as linhas rolam) e Analise
-/// (8.5: cada painel com a sua), e so quando aparecem de fato: com o hub em erro o card de falha
-/// entra no lugar e volta a rolagem geral.
-pub(super) fn owns_scroll(app: &State) -> bool {
-    matches!(app.screen, Screen::Transactions | Screen::Analysis) && failure(app).is_none()
 }
 
 /// Largura util do conteudo (sem a lateral e o padding de 32 + 32; a divisoria vertical saiu
@@ -853,37 +729,6 @@ fn header(app: &State) -> Element<'_, Msg> {
         .into()
 }
 
-/// Titulo e a linha de baixo do cabecalho. A regra, igual nas telas de dados:
-/// - mes corrente com dados, nas telas com seletor de mes: o "Parcial · até 24 set" do modelo
-///   ganha da pergunta, porque e o que muda a leitura dos numeros (o mes ainda nao fechou) e o
-///   Resumo ja faz assim. Em Lancamentos ele leva tambem quantos aparelhos enviaram ("· 2
-///   aparelhos"): sao eles que ainda podem mandar o resto do mes;
-/// - fora disso, o subtitulo de `titles`, que nas telas de dados e a pergunta que a tela
-///   responde ("O que entrou e saiu em agosto?", "Quanto está guardado, e para quê?");
-/// - sem nada sincronizado, "Nada sincronizado ainda": uma pergunta sobre dado que nao existe
-///   nao faz sentido.
-pub(super) fn header_line(app: &State) -> (&str, String) {
-    let (title, subtitle) = titles(app);
-    let Some(partial) = partial_chip(app) else {
-        return (title, subtitle);
-    };
-    let devices = app.transactions.synced_devices;
-    let line = if app.screen == Screen::Transactions && devices > 0 {
-        format!("{partial} · {}", plural(devices, "aparelho", "aparelhos"))
-    } else {
-        partial.to_string()
-    };
-    (title, line)
-}
-
-/// "Parcial · até 19 nov": so nas telas com seletor de mes, no mes corrente e com dados (o
-/// modelo ja decide as duas ultimas). Vira a linha do cabecalho (`header_line`).
-pub(super) fn partial_chip(app: &State) -> Option<&str> {
-    matches!(app.screen, Screen::Dashboard | Screen::Transactions)
-        .then_some(app.dashboard.header.partial.as_deref())
-        .flatten()
-}
-
 /// Olho de 44 px com tooltip "Ocultar valores" / "Mostrar valores" (o `aria-label` do design).
 /// Com valores ocultos o glifo vira `eye-slash`, para o estado ficar visivel sem o tooltip.
 fn hide_values_button(app: &State) -> Element<'_, Msg> {
@@ -919,44 +764,6 @@ pub(super) fn book_switch(app: &State) -> Option<Element<'_, Msg>> {
     ))
 }
 
-/// Titulo e subtitulo de cada tela. O do Dashboard vem pronto do modelo Grafite ("Resumo da
-/// casa"); a navegacao diz so "Resumo".
-pub(super) fn titles(app: &State) -> (&str, String) {
-    let empty = !has_transactions(app);
-    // No boot o vazio ainda nao quer dizer nada: "Nada sincronizado ainda" la seria o mesmo
-    // vazio falso do corpo. A linha volta ao que a tela e; o corpo diz que esta abrindo.
-    let opening = app.snapshot.status == Status::Starting;
-    match app.screen {
-        Screen::Dashboard => (
-            app.dashboard.header.title.as_str(),
-            if opening && app.dashboard.is_empty {
-                DASHBOARD_LINE.into()
-            } else {
-                app.dashboard.header.subtitle.clone()
-            },
-        ),
-        Screen::Transactions => (
-            "Lançamentos",
-            if empty && !opening {
-                "Nada sincronizado ainda".into()
-            } else {
-                transactions_question(&app.transactions.month)
-            },
-        ),
-        Screen::Reserves => (
-            "Reservas",
-            if app.reserves.is_empty && !opening {
-                "Nada sincronizado ainda".into()
-            } else {
-                RESERVES_QUESTION.into()
-            },
-        ),
-        Screen::Analysis => ("Análise", crate::ui_model::analysis::QUESTION.into()),
-        Screen::Connection => ("Aparelhos", "Quem sincroniza com esta casa?".into()),
-        Screen::Settings => ("Ajustes", "Preferências deste computador".into()),
-    }
-}
-
 /// Hub que nao subiu: no lugar de qualquer tela (menos Ajustes), o motivo e onde ficam os
 /// dados.
 fn failed_card<'a>(app: &'a State, msg: &'a str) -> Element<'a, Msg> {
@@ -982,7 +789,12 @@ fn failed_card<'a>(app: &'a State, msg: &'a str) -> Element<'a, Msg> {
 mod tests {
     use super::super::app::tests::app_with;
     use super::*;
+    use crate::advisor::Severity;
     use crate::hub::snapshot::{DeviceView, Snapshot};
+    use crate::ui_model::shell::{
+        Arrival, STATUS_CARD_TARGET, any_active_synced, hub_has_rows, titles,
+    };
+    use std::net::Ipv4Addr;
 
     fn device(name: &str, push: Option<&str>, pull: Option<&str>, revoked: bool) -> DeviceView {
         DeviceView {
@@ -1030,71 +842,6 @@ mod tests {
     }
 
     #[test]
-    fn ultimo_sync_e_o_maior_entre_envio_e_recebimento() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
-        assert_eq!(last_sync_line(&app), "Nenhum sync ainda");
-        app.snapshot.devices = vec![
-            device("iPhone do Luiz", Some("2026-09-01T10:00:00Z"), None, false),
-            device("Pixel da Ana", None, Some("2026-09-02T10:00:00Z"), false),
-        ];
-        assert!(
-            last_sync_line(&app).ends_with("· Pixel da Ana"),
-            "{}",
-            last_sync_line(&app)
-        );
-    }
-
-    #[test]
-    fn contagem_de_aparelhos_ignora_revogados() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
-        app.snapshot.devices = vec![
-            device("A", None, None, false),
-            device("B", None, None, true),
-        ];
-        assert_eq!(active_devices(&app), 1);
-    }
-
-    #[test]
-    fn subtitulo_dos_lancamentos_e_a_pergunta_do_mes() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
-        app.screen = Screen::Transactions;
-        assert_eq!(titles(&app).1, "O que entrou e saiu em setembro?");
-        // A pergunta acompanha o mes escolhido.
-        let _ = super::super::app::update(&mut app, Msg::PrevMonth);
-        assert_eq!(titles(&app).1, "O que entrou e saiu em agosto?");
-        app.screen = Screen::Dashboard;
-        assert_eq!(titles(&app).1, "Somente leitura · dados do último sync");
-    }
-
-    #[test]
-    fn subtitulos_das_reservas() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
-        app.screen = Screen::Reserves;
-        // Boot: a pergunta da tela, nunca o vazio.
-        assert_eq!(titles(&app).1, "Quanto está guardado, e para quê?");
-        app.snapshot.status = Status::Running;
-        assert_eq!(
-            titles(&app),
-            ("Reservas", "Nada sincronizado ainda".to_string())
-        );
-        app.screen = Screen::Transactions;
-        assert_eq!(titles(&app).1, "Nada sincronizado ainda");
-        app.snapshot.status = Status::Starting;
-        assert!(titles(&app).1.starts_with("O que entrou e saiu em "));
-        let (mut app, _rx, _tx) = super::super::app::tests::app_with_reserves(dir.path());
-        app.screen = Screen::Reserves;
-        assert_eq!(
-            titles(&app),
-            ("Reservas", "Quanto está guardado, e para quê?".to_string())
-        );
-        assert_eq!(app.dashboard.sidebar.reserves, 6);
-    }
-
-    #[test]
     fn so_reservas_liga_o_status_mas_nao_o_dashboard() {
         use crate::dashboard::dataset::{Dataset, RESERVES, RawRow};
         let dir = tempfile::tempdir().unwrap();
@@ -1118,53 +865,6 @@ mod tests {
         assert_eq!(titles(&app).1, "Nada sincronizado ainda");
         app.screen = Screen::Reserves;
         assert_eq!(titles(&app).1, "Quanto está guardado, e para quê?");
-    }
-
-    #[test]
-    fn titulo_do_dashboard_e_resumo_da_casa_e_a_nav_diz_resumo() {
-        let dir = tempfile::tempdir().unwrap();
-        let (app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
-        assert_eq!(
-            titles(&app),
-            (
-                "Resumo da casa",
-                "Somente leitura · dados do último sync".to_string()
-            )
-        );
-        assert_eq!(nav_entries(&app)[0].label, "Resumo");
-        let snap = Snapshot {
-            status: Status::Running,
-            ..Snapshot::default()
-        };
-        let (empty, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
-        assert_eq!(
-            titles(&empty),
-            ("Resumo da casa", "Nada sincronizado ainda".to_string())
-        );
-    }
-
-    #[test]
-    fn chip_parcial_so_no_mes_corrente_com_dados() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
-        assert_eq!(partial_chip(&app), Some("Parcial · até 24 set"));
-        assert_eq!(app.dashboard.header.month_label, "Set 2026");
-        app.screen = Screen::Transactions;
-        assert_eq!(partial_chip(&app), Some("Parcial · até 24 set"));
-        // Reservas e Aparelhos nao tem seletor de mes.
-        app.screen = Screen::Reserves;
-        assert_eq!(partial_chip(&app), None);
-        app.screen = Screen::Connection;
-        assert_eq!(partial_chip(&app), None);
-
-        app.screen = Screen::Dashboard;
-        let _ = super::super::app::update(&mut app, Msg::PrevMonth);
-        assert_eq!(partial_chip(&app), None);
-        assert_eq!(app.dashboard.header.month_label, "Ago 2026");
-
-        let (mut empty, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
-        empty.set_today("2026-09-24".into());
-        assert_eq!(partial_chip(&empty), None);
     }
 
     #[test]
@@ -1283,87 +983,6 @@ mod tests {
         let _ = super::super::app::update(&mut app, status_card_press());
         assert_eq!(app.screen, STATUS_CARD_TARGET);
         assert_eq!(titles(&app).0, "Aparelhos");
-    }
-
-    #[test]
-    fn hub_com_erro_cobre_as_telas_menos_ajustes() {
-        let dir = tempfile::tempdir().unwrap();
-        let snap = Snapshot {
-            status: Status::Failed("Porta 7777 em uso".into()),
-            ..Snapshot::default()
-        };
-        let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
-        for screen in nav_entries(&app).map(|e| e.screen) {
-            app.screen = screen;
-            let want = (screen != Screen::Settings).then_some("Porta 7777 em uso");
-            assert_eq!(failure(&app), want, "{screen:?}");
-            let _ = root(&app);
-        }
-        app.snapshot.status = Status::Running;
-        app.screen = Screen::Dashboard;
-        assert_eq!(failure(&app), None);
-    }
-
-    #[test]
-    fn lancamentos_e_analise_rolam_por_conta_propria_e_o_erro_devolve_a_rolagem_geral() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
-        for screen in nav_entries(&app).map(|e| e.screen) {
-            app.screen = screen;
-            assert_eq!(
-                owns_scroll(&app),
-                matches!(screen, Screen::Transactions | Screen::Analysis),
-                "{screen:?}"
-            );
-            let _ = root(&app);
-        }
-        // Com o menu de categoria aberto a tela continua montando, nas duas larguras.
-        app.screen = Screen::Transactions;
-        app.cat_menu_open = true;
-        for width in [1024.0, 1440.0] {
-            app.window_size.w = width;
-            let _ = root(&app);
-        }
-        // Hub em erro: o card de falha entra no lugar e precisa da rolagem da casca.
-        app.snapshot.status = Status::Failed("Porta 7777 em uso".into());
-        assert!(!owns_scroll(&app));
-        let _ = root(&app);
-    }
-
-    #[test]
-    fn parcial_vira_a_linha_do_cabecalho() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
-        assert_eq!(
-            header_line(&app),
-            ("Resumo da casa", "Parcial · até 24 set".to_string())
-        );
-        app.screen = Screen::Transactions;
-        assert_eq!(
-            header_line(&app),
-            (
-                "Lançamentos",
-                "Parcial · até 24 set · 1 aparelho".to_string()
-            )
-        );
-        app.transactions.synced_devices = 2;
-        assert_eq!(header_line(&app).1, "Parcial · até 24 set · 2 aparelhos");
-        // Nenhum aparelho conhecido: sem o "· 0 aparelhos".
-        app.transactions.synced_devices = 0;
-        assert_eq!(header_line(&app).1, "Parcial · até 24 set");
-        // Mes fechado: volta o subtitulo.
-        let _ = super::super::app::update(&mut app, Msg::PrevMonth);
-        assert_eq!(header_line(&app), titles(&app));
-        // Telas sem seletor de mes: sempre o subtitulo.
-        for screen in [
-            Screen::Reserves,
-            Screen::Analysis,
-            Screen::Connection,
-            Screen::Settings,
-        ] {
-            app.screen = screen;
-            assert_eq!(header_line(&app), titles(&app));
-        }
     }
 
     #[test]
@@ -1490,19 +1109,65 @@ mod tests {
         assert!(hub_has_rows(&app));
     }
 
+    /// A lateral diz "Resumo" mesmo quando o titulo do cabecalho e "Resumo da casa" (o modelo
+    /// do titulo vive em `ui_model::shell`: `titulo_do_dashboard_e_resumo_da_casa_e_a_nav_diz_resumo`).
     #[test]
-    fn subtitulos() {
+    fn a_nav_diz_resumo() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
-        // No boot o vazio nao e verdade ainda: a linha nao diz "Nada sincronizado", nem promete
-        // "dados do último sync" antes de o banco abrir.
-        assert_eq!(titles(&app).1, "Somente leitura");
-        app.snapshot.status = Status::Running;
-        assert_eq!(titles(&app).1, "Nada sincronizado ainda");
-        app.screen = Screen::Connection;
+        let (app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        assert_eq!(nav_entries(&app)[0].label, "Resumo");
+    }
+
+    /// A lateral desenha na ordem do Ctrl+1..6: `keys::shortcut` le `NAV_ORDER`, entao a ordem
+    /// de `nav_entries` precisa ser a mesma ou o tooltip diria um numero e a tecla faria outro.
+    #[test]
+    fn lateral_desenha_na_ordem_do_ctrl_numero() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
         assert_eq!(
-            titles(&app),
-            ("Aparelhos", "Quem sincroniza com esta casa?".to_string())
+            nav_entries(&app).map(|e| e.screen),
+            crate::ui_model::shell::NAV_ORDER
         );
+    }
+
+    /// So a montagem: o hub com erro troca a tela pelo card de falha em toda tela da lateral
+    /// (a regra vive em `ui_model::shell`: `hub_com_erro_cobre_as_telas_menos_ajustes`).
+    #[test]
+    fn hub_com_erro_monta_em_toda_tela() {
+        let dir = tempfile::tempdir().unwrap();
+        let snap = Snapshot {
+            status: Status::Failed("Porta 7777 em uso".into()),
+            ..Snapshot::default()
+        };
+        let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
+        for screen in nav_entries(&app).map(|e| e.screen) {
+            app.screen = screen;
+            let _ = root(&app);
+        }
+    }
+    #[test]
+    fn rolagem_monta_em_toda_tela_e_com_o_menu_de_categoria_aberto() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
+        for screen in nav_entries(&app).map(|e| e.screen) {
+            app.screen = screen;
+            assert_eq!(
+                owns_scroll(&app),
+                matches!(screen, Screen::Transactions | Screen::Analysis),
+                "{screen:?}"
+            );
+            let _ = root(&app);
+        }
+        // Com o menu de categoria aberto a tela continua montando, nas duas larguras.
+        app.screen = Screen::Transactions;
+        app.cat_menu_open = true;
+        for width in [1024.0, 1440.0] {
+            app.window_size.w = width;
+            let _ = root(&app);
+        }
+        // Hub em erro: o card de falha entra no lugar e precisa da rolagem da casca.
+        app.snapshot.status = Status::Failed("Porta 7777 em uso".into());
+        assert!(!owns_scroll(&app));
+        let _ = root(&app);
     }
 }

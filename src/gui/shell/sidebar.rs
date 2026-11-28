@@ -203,7 +203,9 @@ fn theme_switch(
         usize::from(!dark),
         t,
     )
-    .surface(Surface::Inset)
+    .surface(Surface::Raised)
+    .item_height(40.0)
+    .icons(vec![Icon::Moon, Icon::Sun])
     .width(WIDTH - 32.0)
     .focus_handles(focus.theme.clone())
     .on_select(move |i, _, cx| {

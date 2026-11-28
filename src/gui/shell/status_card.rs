@@ -9,7 +9,6 @@ use gpui::{
 };
 
 use super::send;
-use crate::gui::components::button::{Button, Size, Variant};
 use crate::gui::components::focus;
 use crate::gui::components::tooltip::TooltipView;
 use crate::gui::fonts;
@@ -23,6 +22,33 @@ pub fn summary(card: &StatusCard) -> String {
     let mut parts = vec![card.title.clone()];
     parts.extend(card.lines.iter().cloned());
     parts.join(" · ")
+}
+
+fn arc_ring(t: &Tokens, arc: Hsla) -> AnyElement {
+    // Dois filhos absolutos na mesma caixa de 16: o anel inteiro e, por cima, o arco, que cobre a
+    // caixa toda (viewBox 16) sem depender de como a borda desloca o `absolute`.
+    div()
+        .size(px(16.0))
+        .flex_none()
+        .relative()
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .rounded_full()
+                .border_2()
+                .border_color(t.divider),
+        )
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .child(icon(Icon::StatusArc, px(16.0), arc)),
+        )
+        .into_any_element()
 }
 
 fn mark(kind: StatusIcon, t: &Tokens) -> AnyElement {
@@ -46,16 +72,24 @@ fn mark(kind: StatusIcon, t: &Tokens) -> AnyElement {
             .text_color(t.on_danger)
             .child("!")
             .into_any_element(),
-        StatusIcon::Warning => icon(Icon::Warning, px(16.0), t.warning).into_any_element(),
-        // Anel vazio: a forma ja diz "em andamento" sem depender da rotacao, que
-        // fica para o relogio de animacao (e cai com "Reduzir movimento").
-        StatusIcon::Spinner => div()
+        // Anel de 2 px com o check de 8 px: "ligado, ainda sem dados".
+        StatusIcon::OkEmpty => div()
             .size(px(16.0))
             .flex_none()
             .rounded_full()
             .border_2()
-            .border_color(t.accent)
+            .border_color(t.ok)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(icon(Icon::Check, px(8.0), t.ok))
             .into_any_element(),
+        StatusIcon::Warning => icon(Icon::StatusDiamond, px(16.0), t.warning).into_any_element(),
+        // Anel `divider` com so o arco de cima colorido: a forma ja diz "em andamento" sem
+        // depender da rotacao (que fica para o relogio de animacao e cai com "Reduzir
+        // movimento"), e o "Desligado" (anel inteiro) continua outra forma.
+        StatusIcon::Spinner => arc_ring(t, t.accent),
+        StatusIcon::Stopping => arc_ring(t, t.muted),
     }
 }
 
@@ -142,11 +176,23 @@ pub fn render(
     }
     if let Some(action) = card.action {
         let state = state.clone();
+        // Link de texto 12/600 `accent`, como no design: o botao contornado de 40 px e o do
+        // "Ligar hub" (Tarefa 32).
         body = body.child(
-            Button::new("status-action", action.label(), Variant::Outline, t)
-                .size(Size::Small)
-                .focus(details)
-                .on_click(move |_, cx| dispatch_later(&state, action.msg(), cx)),
+            div()
+                .id("status-action")
+                .role(Role::Link)
+                .aria_label(action.label())
+                .self_start()
+                .rounded(px(4.0))
+                .text_size(px(12.0))
+                .font_weight(fonts::weight(600))
+                .text_color(t.accent)
+                .track_focus(details)
+                .focus_visible(focus::style(t, t.surface))
+                .cursor_pointer()
+                .on_click(move |_, _, cx| dispatch_later(&state, action.msg(), cx))
+                .child(action.label()),
         );
     }
     body.into_any_element()

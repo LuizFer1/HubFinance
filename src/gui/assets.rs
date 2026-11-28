@@ -252,6 +252,14 @@ pub const FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../assets/icons/sparkle-w1_8.svg"),
     ),
     (
+        "icons/status-arc.svg",
+        include_bytes!("../../assets/icons/status-arc.svg"),
+    ),
+    (
+        "icons/status-diamond.svg",
+        include_bytes!("../../assets/icons/status-diamond.svg"),
+    ),
+    (
         "icons/sun.svg",
         include_bytes!("../../assets/icons/sun.svg"),
     ),

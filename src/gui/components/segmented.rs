@@ -11,6 +11,7 @@ use gpui::{
 
 use super::focus;
 use crate::gui::fonts;
+use crate::gui::icons::{Icon, icon};
 use crate::gui::theme::Tokens;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +68,8 @@ pub struct Segmented {
     surface: Surface,
     tokens: &'static Tokens,
     width: Option<f32>,
+    item_height: f32,
+    icons: Vec<Icon>,
     focus: Vec<FocusHandle>,
     preview: Option<(usize, Preview)>,
     on_select: Option<Select>,
@@ -86,6 +89,8 @@ impl Segmented {
             surface: Surface::Inset,
             tokens,
             width: None,
+            item_height: 36.0,
+            icons: Vec::new(),
             focus: Vec::new(),
             preview: None,
             on_select: None,
@@ -100,6 +105,18 @@ impl Segmented {
     /// Largura fixa; sem ela o controle ocupa o conteudo.
     pub fn width(mut self, w: f32) -> Segmented {
         self.width = Some(w);
+        self
+    }
+
+    /// Altura de cada item (padrao 36; o tema da lateral usa 40, medida do Main).
+    pub fn item_height(mut self, h: f32) -> Segmented {
+        self.item_height = h;
+        self
+    }
+
+    /// Um icone de 15 px por item, na ordem, com gap 6 antes do rotulo; sem eles so texto.
+    pub fn icons(mut self, icons: Vec<Icon>) -> Segmented {
+        self.icons = icons;
         self
     }
 
@@ -149,6 +166,8 @@ impl RenderOnce for Segmented {
             let hover = item_colors(active, true, t);
             let select = self.on_select.clone();
             let handle = self.focus.get(i).cloned();
+            let glyph = self.icons.get(i).copied();
+            let item_height = self.item_height;
             let ring = focus::style(t, gap_color);
             row = row.child(
                 div()
@@ -157,7 +176,8 @@ impl RenderOnce for Segmented {
                     .flex_1()
                     .items_center()
                     .justify_center()
-                    .h(px(36.0))
+                    .gap(px(6.0))
+                    .h(px(item_height))
                     .px(px(14.0))
                     .rounded_full()
                     .text_size(px(13.0))
@@ -177,6 +197,7 @@ impl RenderOnce for Segmented {
                     .when_some(select, |d, f| {
                         d.on_click(move |_: &ClickEvent, window, cx| f(i, window, cx))
                     })
+                    .when_some(glyph, |d, g| d.child(icon(g, px(15.0), rest.fg)))
                     .child(label),
             );
         }

@@ -282,6 +282,7 @@ pub struct IconButton {
     focus: Option<FocusHandle>,
     on_click: Option<Handler>,
     hover_bg: Option<Hsla>,
+    rest_bg: Option<Hsla>,
     disabled_opacity: f32,
     glyph_size: f32,
     box_size: f32,
@@ -300,6 +301,7 @@ impl IconButton {
             focus: None,
             on_click: None,
             hover_bg: None,
+            rest_bg: None,
             disabled_opacity: 0.4,
             glyph_size: 18.0,
             box_size: 36.0,
@@ -312,6 +314,13 @@ impl IconButton {
     /// e `divider`; o padrao `surface_2` sumiria sobre o fundo do proprio seletor).
     pub fn hover_bg(mut self, color: Hsla) -> IconButton {
         self.hover_bg = Some(color);
+        self
+    }
+
+    /// Fundo em repouso (padrao nenhum). O olho do cabecalho e um circulo `surface`; o hover e o
+    /// pressionado seguem pintando por cima.
+    pub fn bg(mut self, color: Hsla) -> IconButton {
+        self.rest_bg = Some(color);
         self
     }
 
@@ -380,6 +389,7 @@ impl RenderOnce for IconButton {
             .justify_center()
             .size(px(self.box_size))
             .rounded_full()
+            .when_some(self.rest_bg, |d, c| d.bg(c))
             .when_some(self.aria_label, |d, l| d.role(Role::Button).aria_label(l))
             // Desabilitado nao entra na ordem do Tab: pararia num alvo sem anel e sem acao.
             .when_some(self.focus.filter(|_| enabled), |d, h| d.track_focus(&h))

@@ -135,6 +135,10 @@ pub enum Icon {
     /// Traco 1.8 px; 3 uso(s) no design, p.ex. Ajustes, Analise, Estados.
     SparkleW18,
     /// Traco 1.8 px; 11 uso(s) no design, p.ex. Ajustes, Analise, AnaliseConversa.
+    /// Anel de 16 px so com o arco de cima (traco 2 px); o "Iniciando"/"Desligando" do card.
+    StatusArc,
+    /// Losango de 11 px com raio 2 (preenchido); o "Sem rede local" do card.
+    StatusDiamond,
     Sun,
     /// Traco 2 px; 10 uso(s) no design, p.ex. Ajustes, Analise, AnaliseConversa.
     Sync,
@@ -214,6 +218,8 @@ impl Icon {
         Icon::ShieldW2,
         Icon::Sparkle,
         Icon::SparkleW18,
+        Icon::StatusArc,
+        Icon::StatusDiamond,
         Icon::Sun,
         Icon::Sync,
         Icon::SyncW18,
@@ -286,6 +292,8 @@ impl Icon {
             Icon::ShieldW2 => "icons/shield-w2.svg",
             Icon::Sparkle => "icons/sparkle.svg",
             Icon::SparkleW18 => "icons/sparkle-w1_8.svg",
+            Icon::StatusArc => "icons/status-arc.svg",
+            Icon::StatusDiamond => "icons/status-diamond.svg",
             Icon::Sun => "icons/sun.svg",
             Icon::Sync => "icons/sync.svg",
             Icon::SyncW18 => "icons/sync-w1_8.svg",

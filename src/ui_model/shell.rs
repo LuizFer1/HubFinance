@@ -328,9 +328,17 @@ pub fn header_line(app: &App) -> (&str, String) {
 /// `Spinner`; quem desenha decide a animacao (e a corta com "Reduzir movimento").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StatusIcon {
+    /// Disco cheio com check: hub ligado e com dados.
     Ok,
+    /// Check contornado: hub ligado, ainda sem dados. Forma propria para nao ser so mais um "Ok".
+    OkEmpty,
+    /// Losango: sem rede local.
     Warning,
+    /// Anel com o arco de cima em `accent`: iniciando.
     Spinner,
+    /// Anel com o arco de cima em `muted`: desligando. Outra cor sobre a mesma forma do
+    /// `Spinner` seria "so cor"; a forma muda do "Desligado" (anel inteiro, Tarefa 32).
+    Stopping,
     Danger,
 }
 
@@ -396,7 +404,7 @@ pub fn status_card(snapshot: &Snapshot, now: OffsetDateTime) -> StatusCard {
                 // nao inventa um "ha X min", mostra so onde o hub esta.
                 (true, None) => card(StatusIcon::Ok, "Hub ligado", addr.into_iter().collect()),
                 (false, _) => card(
-                    StatusIcon::Ok,
+                    StatusIcon::OkEmpty,
                     "Hub ligado",
                     vec!["Sem dados · aguardando o primeiro sync".into()],
                 ),
@@ -417,7 +425,7 @@ pub fn status_card(snapshot: &Snapshot, now: OffsetDateTime) -> StatusCard {
         ),
         // `Stopped` so aparece ao sair: o mesmo texto de quem esta salvando.
         Status::Stopping | Status::Stopped => card(
-            StatusIcon::Spinner,
+            StatusIcon::Stopping,
             "Desligando…",
             vec!["Salvando os dados".into()],
         ),
@@ -984,7 +992,8 @@ mod tests {
             https_port: 7777,
             ..Snapshot::default()
         });
-        assert_eq!(card.icon, StatusIcon::Ok);
+        // Check contornado, nao o disco cheio do estado com dados.
+        assert_eq!(card.icon, StatusIcon::OkEmpty);
         assert_eq!(card.title, "Hub ligado");
         assert_eq!(card.lines, ["Sem dados · aguardando o primeiro sync"]);
     }
@@ -1022,9 +1031,36 @@ mod tests {
                 status,
                 ..Snapshot::default()
             });
-            assert_eq!(card.icon, StatusIcon::Spinner);
+            assert_eq!(card.icon, StatusIcon::Stopping);
             assert_eq!(card.title, "Desligando…");
             assert_eq!(card.lines, ["Salvando os dados"]);
+        }
+    }
+
+    #[test]
+    fn cada_estado_do_card_tem_forma_propria() {
+        let icon = |status, rows: bool| {
+            let mut snap = Snapshot {
+                status,
+                ..Snapshot::default()
+            };
+            if rows {
+                snap = running_with_data();
+            }
+            card_of(snap).icon
+        };
+        let shapes = [
+            icon(Status::Running, true),
+            icon(Status::Running, false),
+            icon(Status::NoNetwork, false),
+            icon(Status::Starting, false),
+            icon(Status::Stopping, false),
+            icon(Status::Failed("x".into()), false),
+        ];
+        for (i, a) in shapes.iter().enumerate() {
+            for b in &shapes[i + 1..] {
+                assert_ne!(a, b, "forma + cor, nunca so cor");
+            }
         }
     }
 

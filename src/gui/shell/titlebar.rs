@@ -7,7 +7,7 @@
 //! como `Msg::CloseRequested` (bandeja x desligar).
 
 use gpui::{
-    AnyElement, Hsla, IntoElement, ParentElement as _, Styled as _, WindowControlArea, div, img,
+    AnyElement, Hsla, IntoElement, ParentElement as _, Styled as _, WindowControlArea, div,
     prelude::*, px, svg,
 };
 
@@ -17,13 +17,40 @@ pub const HEIGHT: f32 = 40.0;
 pub const BUTTON_WIDTH: f32 = 46.0;
 const GLYPH: f32 = 10.0;
 
-/// Logo pela cor do fundo: a versao "fundo escuro" tem tracos claros e vice-versa.
-pub fn logo_path(dark: bool) -> &'static str {
+/// Camadas da marca de 16 px (telhado, ponto): arquivos monocromaticos tingidos por `svg()`.
+pub const LOGO_ROOF: &str = "brand/hubfinance-pequeno-telhado.svg";
+pub const LOGO_DOT: &str = "brand/hubfinance-pequeno-ponto.svg";
+
+/// Cores da marca pelo fundo (as mesmas das versoes "fundo escuro"/"fundo claro" do brand):
+/// (telhado, ponto).
+pub fn logo_colors(dark: bool) -> (u32, u32) {
     if dark {
-        "brand/hubfinance-pequeno-fundo-escuro.svg"
+        (0xF2F2F2, 0xE2C15A)
     } else {
-        "brand/hubfinance-pequeno-fundo-claro.svg"
+        (0x131313, 0x876C00)
     }
+}
+
+/// Marca em duas camadas sobrepostas. `img()` rasteriza SVG a escala 1.0 (gpui elements/img.rs),
+/// entao o pixel-art de 16x16 seria esticado e ficaria borrado em 125% ou 150%; `svg()` e
+/// vetorial e redesenha na escala da tela, mas tinge uma cor so, dai uma camada por cor.
+fn logo(dark: bool) -> impl IntoElement {
+    let (roof, dot) = logo_colors(dark);
+    let layer = |path: &'static str, color: u32| {
+        svg()
+            .path(path)
+            .size(px(16.0))
+            .text_color(gpui::rgb(color))
+            .absolute()
+            .top_0()
+            .left_0()
+    };
+    div()
+        .relative()
+        .size(px(16.0))
+        .flex_none()
+        .child(layer(LOGO_ROOF, roof))
+        .child(layer(LOGO_DOT, dot))
 }
 
 /// Glifo do botao do meio: Restaurar quando a janela ja esta maximizada.
@@ -84,11 +111,7 @@ pub fn render(t: &'static Tokens, maximized: bool) -> AnyElement {
                 .pl_4()
                 .text_size(px(12.0))
                 .text_color(t.muted)
-                .child(
-                    // img(), nao svg(): svg() e mascara de uma cor e tingiria o telhado e o
-                    // ponto com a mesma cor, quebrando a marca (spec 4.6).
-                    img(logo_path(t.dark)).size(px(16.0)).flex_none(),
-                )
+                .child(logo(t.dark))
                 .child("HubFinance"),
         )
         .child(control(
@@ -126,8 +149,8 @@ mod tests {
 
     #[test]
     fn logo_segue_a_cor_do_fundo() {
-        assert!(logo_path(true).ends_with("fundo-escuro.svg"));
-        assert!(logo_path(false).ends_with("fundo-claro.svg"));
+        assert_eq!(logo_colors(true), (0xF2F2F2, 0xE2C15A));
+        assert_eq!(logo_colors(false), (0x131313, 0x876C00));
     }
 
     #[test]
@@ -139,8 +162,8 @@ mod tests {
     #[test]
     fn todo_asset_da_barra_esta_embutido() {
         for path in [
-            logo_path(true),
-            logo_path(false),
+            LOGO_ROOF,
+            LOGO_DOT,
             maximize_glyph(false),
             maximize_glyph(true),
             "window/minimize.svg",

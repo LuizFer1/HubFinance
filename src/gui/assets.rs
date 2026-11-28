@@ -289,12 +289,12 @@ pub const FILES: &[(&str, &[u8])] = &[
 /// que tudo ali tenha variante em `Icon`.
 pub const EXTRA_FILES: &[(&str, &[u8])] = &[
     (
-        "brand/hubfinance-pequeno-fundo-escuro.svg",
-        include_bytes!("../../assets/brand/hubfinance-pequeno-fundo-escuro.svg"),
+        "brand/hubfinance-pequeno-telhado.svg",
+        include_bytes!("../../assets/brand/hubfinance-pequeno-telhado.svg"),
     ),
     (
-        "brand/hubfinance-pequeno-fundo-claro.svg",
-        include_bytes!("../../assets/brand/hubfinance-pequeno-fundo-claro.svg"),
+        "brand/hubfinance-pequeno-ponto.svg",
+        include_bytes!("../../assets/brand/hubfinance-pequeno-ponto.svg"),
     ),
     (
         "window/minimize.svg",

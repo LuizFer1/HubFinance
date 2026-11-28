@@ -36,42 +36,24 @@ pub struct Scene {
     pub streaming: bool,
 }
 
-/// Curvas `cubic-bezier` do CSS, as mesmas que o design usa.
+/// As duas curvas que o `iced::Animation` (lilt 0.8) trazia: formulas fechadas, as mesmas de
+/// antes da troca do motor, para a refatoracao nao mudar o ritmo de scrim e toast.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Easing {
-    /// `cubic-bezier(0, 0, 0.58, 1)`.
+    /// `sin(x * pi / 2)`.
     EaseOut,
-    /// `cubic-bezier(0.215, 0.61, 0.355, 1)`.
+    /// `1 - (1 - x)^3`.
     EaseOutCubic,
 }
 
 impl Easing {
-    fn points(self) -> (f32, f32, f32, f32) {
-        match self {
-            Easing::EaseOut => (0.0, 0.0, 0.58, 1.0),
-            Easing::EaseOutCubic => (0.215, 0.61, 0.355, 1.0),
-        }
-    }
-
-    /// Progresso eased para `x` (fracao do tempo, 0 a 1). A curva e dada em `x(s)`, `y(s)`:
-    /// acha o `s` cujo `x` e o tempo (bissecao; `x` e monotono com esses pontos) e devolve `y`.
+    /// Progresso eased para `x` (fracao do tempo, 0 a 1; fora disso e cortado).
     pub fn apply(self, x: f32) -> f32 {
-        let (x1, y1, x2, y2) = self.points();
         let x = x.clamp(0.0, 1.0);
-        let bezier = |a: f32, b: f32, s: f32| {
-            let u = 1.0 - s;
-            3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s
-        };
-        let (mut lo, mut hi) = (0.0_f32, 1.0_f32);
-        for _ in 0..24 {
-            let mid = (lo + hi) / 2.0;
-            if bezier(x1, x2, mid) < x {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
+        match self {
+            Easing::EaseOut => (x * std::f32::consts::FRAC_PI_2).sin(),
+            Easing::EaseOutCubic => 1.0 - (1.0 - x).powi(3),
         }
-        bezier(y1, y2, (lo + hi) / 2.0)
     }
 }
 
@@ -467,5 +449,46 @@ mod tests {
             m.blinking(),
             "a resposta ainda chega: o cursor volta a piscar"
         );
+    }
+
+    #[test]
+    fn curvas_vao_de_0_a_1_sem_voltar() {
+        for e in [Easing::EaseOut, Easing::EaseOutCubic] {
+            assert!(e.apply(0.0).abs() < 1e-6);
+            assert!((e.apply(1.0) - 1.0).abs() < 1e-6);
+            let mut prev = 0.0;
+            for i in 1..=100 {
+                let v = e.apply(i as f32 / 100.0);
+                assert!(v >= prev, "{e:?} recuou em {i}: {v} < {prev}");
+                prev = v;
+            }
+        }
+        assert!((Easing::EaseOut.apply(0.5) - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-5);
+        assert!((Easing::EaseOutCubic.apply(0.5) - 0.875).abs() < 1e-6);
+    }
+
+    #[test]
+    fn toast_que_some_no_meio_da_subida_desce_de_onde_estava() {
+        let t0 = Instant::now();
+        let mut m = Motion::new(false, t0);
+        m.sync(
+            Scene {
+                toast: toast("x"),
+                ..Scene::default()
+            },
+            t0,
+        );
+        let t1 = t0 + TOAST / 2;
+        m.frame(t1);
+        let (mid, _, _) = m.toast().unwrap();
+        assert!(mid > 0.0 && mid < 1.0, "{mid}");
+        m.sync(Scene::default(), t1);
+        // No instante da troca o valor e o que estava, nem 1 nem 0.
+        let (start, _, live) = m.toast().unwrap();
+        assert!(!live);
+        assert!((start - mid).abs() < 1e-6, "{start} != {mid}");
+        m.frame(t1 + TOAST / 4);
+        let (later, _, _) = m.toast().unwrap();
+        assert!(later < mid, "{later} deveria ser menor que {mid}");
     }
 }

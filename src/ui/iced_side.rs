@@ -100,8 +100,9 @@ pub fn model_id(id: window::Id) -> WindowId {
     WindowId(id.to_string().parse().unwrap_or(0))
 }
 
-/// Reaproveita a textura enquanto o mesmo valor viver: o `Handle` e identificado pelos bytes, e
-/// refaze-lo a cada snapshot subiria a foto de novo para a GPU. So a chave nova ou de foto
+/// Reaproveita a textura enquanto os bytes forem os mesmos. O `Handle` NAO e identificado pelos
+/// bytes: `Handle::from_bytes` da um id novo a cada chamada, e a GPU sobe a foto de novo para
+/// cada id. Por isso o handle antigo e mantido e so refeito quando os bytes mudam. So a chave nova ou de foto
 /// trocada ganha textura; chave que saiu do conjunto perde a dela.
 fn sync_textures(handles: &mut HashMap<String, image::Handle>, avatars: &HashMap<String, Avatar>) {
     handles.retain(|key, _| avatars.contains_key(key));

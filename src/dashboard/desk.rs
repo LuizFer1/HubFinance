@@ -15,8 +15,8 @@ use super::aggregate::{in_month, totals};
 use super::business::business_panel;
 use super::dataset::Dataset;
 use super::grafite::{LabeledValue, Tone};
-use super::insights::history;
-use super::money::{AXIS_MASK, BigMoney, MINUS, Money, group_thousands};
+use super::insights::{HistoryRow, history};
+use super::money::{AXIS_MASK, BigMoney, MINUS, Money, axis_label, group_thousands};
 use super::periods::{
     days_in_month, month_long, month_of, month_short, partial_label, shift_month,
 };
@@ -99,6 +99,9 @@ pub struct DeskBusiness {
     /// "R$ 6,3 mil": média dos meses fechados; `None` sem mês fechado com dado.
     pub average: Option<String>,
     pub bars: Vec<DeskBar>,
+    /// Nome acessível do gráfico: "Resultado PJ de junho a novembro: 5,2 mil, … (novembro
+    /// parcial); média 6,3 mil". Oculto, os valores viram "valores ocultos".
+    pub bars_label: String,
     /// "R$ 5.000,00 foram para a casa como pró-labore. DAS de R$ 588,00 vence em 20 dez."
     /// Só com dado real (presunção 3 da spec): o hub não tem transferência marcada nem
     /// recorrência de DAS ligadas ao negócio hoje, então fica `None` e a frase some.
@@ -160,7 +163,11 @@ pub struct DeskHistory {
     pub legend_expense: String,
     pub months: Vec<DeskMonth>,
     /// Eixo de cima para baixo: "15 mil", "10 mil", "5 mil", "0".
+    /// Fica visível com valores ocultos: no design o eixo é `.n` (escala), não `.v` (valor).
     pub y_labels: [String; 4],
+    /// Nome acessível do gráfico: "Receitas e despesas de junho a novembro. Sobras: 2,5 mil, …
+    /// (novembro parcial)." Oculto, as sobras viram "valores ocultos".
+    pub chart_label: String,
     /// "Valor abaixo do mês = quanto sobrou · *novembro parcial, até 27 nov".
     pub footnote: String,
 }
@@ -221,9 +228,40 @@ fn percent_tenths(part: i64, whole: i64) -> String {
     format!("{},{}%", tenths / 10, tenths % 10)
 }
 
-/// Eixo sem o "R$ " do `axis_label` ("15 mil", "500"): o design põe só o número. Oculto, só pontos.
-fn axis_plain(m: Money, minor: i64) -> String {
-    m.axis(minor).trim_start_matches("R$ ").to_string()
+/// Eixo sem o "R$ " do `axis_label` ("15 mil", "500"): o design põe só o número. Não mascara
+/// com valores ocultos: o eixo do design é `.n` (escala do gráfico), então "15 mil" e "0" ficam.
+fn axis_plain(minor: i64) -> String {
+    axis_label(minor).trim_start_matches("R$ ").to_string()
+}
+
+/// "5,2 mil" com espaço não separável, para o nome acessível dos gráficos.
+fn spoken_thousands(minor: i64) -> String {
+    let body = match minor.cmp(&0) {
+        std::cmp::Ordering::Equal => "0".to_string(),
+        std::cmp::Ordering::Greater => surplus_thousands(minor),
+        std::cmp::Ordering::Less => format!("{MINUS}{}", surplus_thousands(minor)),
+    };
+    body.replace(' ', "\u{a0}")
+}
+
+/// "a, b e c" (sem vírgula antes do "e", como no design). Oculto não lista valor nenhum.
+fn spoken_list(m: Money, values: &[String]) -> String {
+    if m.hidden {
+        return "valores ocultos".to_string();
+    }
+    match values {
+        [] => String::new(),
+        [only] => only.clone(),
+        [init @ .., last] => format!("{} e {last}", init.join(", ")),
+    }
+}
+
+/// " (novembro parcial)" quando o intervalo tem mês parcial.
+fn partial_suffix(rows: &[&HistoryRow]) -> String {
+    rows.iter()
+        .find(|r| r.partial)
+        .map(|r| format!(" ({} parcial)", month_long(&r.month)))
+        .unwrap_or_default()
 }
 
 /// Valor da sobra em milhares com uma casa fixa ("3,0 mil", "0,4 mil"): ao contrario do eixo
@@ -387,7 +425,6 @@ fn business_card(b: &Dataset, today: &str, month: &str, m: Money) -> DeskBusines
         } else {
             format!("Resultado PJ · {DESK_MONTHS} meses")
         },
-        average,
         bars: rows
             .iter()
             .map(|r| DeskBar {
@@ -402,6 +439,31 @@ fn business_card(b: &Dataset, today: &str, month: &str, m: Money) -> DeskBusines
                 existed: r.existed,
             })
             .collect(),
+        bars_label: {
+            let vals: Vec<String> = rows
+                .iter()
+                .filter(|r| r.existed)
+                .map(|r| spoken_thousands(r.surplus_minor))
+                .collect();
+            let avg = average
+                .as_deref()
+                .filter(|_| !m.hidden)
+                .map(|a| {
+                    format!(
+                        "; média {}",
+                        a.trim_start_matches("R$ ").replace(' ', "\u{a0}")
+                    )
+                })
+                .unwrap_or_default();
+            format!(
+                "Resultado PJ de {} a {}: {}{}{avg}",
+                rows.first().map_or("", |r| month_long(&r.month)),
+                rows.last().map_or("", |r| month_long(&r.month)),
+                spoken_list(m, &vals),
+                partial_suffix(&rows),
+            )
+        },
+        average,
         pro_labore: None,
     }
 }
@@ -536,11 +598,25 @@ fn history_card(ds: &Dataset, today: &str, month: &str, m: Money) -> DeskHistory
             })
             .collect(),
         y_labels: [
-            axis_plain(m, top),
-            axis_plain(m, top / 3 * 2),
-            axis_plain(m, top / 3),
-            axis_plain(m, 0),
+            axis_plain(top),
+            axis_plain(top / 3 * 2),
+            axis_plain(top / 3),
+            axis_plain(0),
         ],
+        chart_label: {
+            let sobras: Vec<String> = rows
+                .iter()
+                .filter(|r| r.existed)
+                .map(|r| spoken_thousands(r.surplus_minor))
+                .collect();
+            format!(
+                "Receitas e despesas de {} a {}. Sobras: {}{}.",
+                rows.first().map_or("", |r| month_long(&r.month)),
+                rows.last().map_or("", |r| month_long(&r.month)),
+                spoken_list(m, &sobras),
+                partial_suffix(&rows),
+            )
+        },
         footnote: format!(
             "Valor abaixo do mês = quanto sobrou{}",
             partial_note.unwrap_or_default()
@@ -828,7 +904,43 @@ mod tests {
         assert!(v.history.months[5].income > 0.0);
         assert!(v.how_am_i.usage.is_some());
         assert_eq!(v.how_am_i.balance.whole, "•••••");
-        assert_eq!(v.history.y_labels[0], "•••");
+        // Eixo é escala (`.n` no design): continua legível, e o "0" nunca vira máscara.
+        assert_eq!(v.history.y_labels, ["6 mil", "4 mil", "2 mil", "0"]);
         assert_eq!(v.history.months[4].surplus, "•••");
+        assert_eq!(
+            v.history.chart_label,
+            "Receitas e despesas de junho a novembro. Sobras: valores ocultos (novembro parcial)."
+        );
+        assert_eq!(
+            hidden.business.as_ref().map(|b| b.bars_label.as_str()),
+            Some("Resultado PJ de junho a novembro: valores ocultos (novembro parcial)")
+        );
+    }
+
+    #[test]
+    fn nome_acessivel_dos_graficos_visiveis() {
+        let (all, biz) = negocio_fixture(Some(60_000));
+        let v = build_desk(
+            &all.for_book(Book::Personal),
+            Some(&biz),
+            GRAFITE_TODAY,
+            "2026-11",
+            false,
+        );
+        let b = v.business.expect("negocio");
+        assert_eq!(
+            b.bars_label,
+            "Resultado PJ de junho a novembro: 0,6\u{a0}mil e 0,5\u{a0}mil (novembro parcial); média 600"
+        );
+        assert!(
+            v.history
+                .chart_label
+                .starts_with("Receitas e despesas de junho a novembro. Sobras: ")
+        );
+        assert!(v.history.chart_label.ends_with(" (novembro parcial)."));
+        assert!(
+            v.history.chart_label.contains("+1,4\u{a0}mil")
+                || v.history.chart_label.contains("1,4\u{a0}mil")
+        );
     }
 }

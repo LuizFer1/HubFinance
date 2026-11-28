@@ -2,7 +2,7 @@
 //! esqueleto tracejado do estado "Sem dados" (Dashboard); barras empilhadas da evolucao e o
 //! medidor tracejado do estado vazio (Reservas).
 //!
-//! A geometria fica num `canvas::Cache` que a `App` limpa quando dados, mes, tema ou "Ocultar
+//! A geometria fica num `canvas::Cache` que a `State` limpa quando dados, mes, tema ou "Ocultar
 //! valores" mudam (os rotulos em R$ ficam gravados na geometria); o hover das barras e estado
 //! do proprio `Program` e e desenhado num segundo `Frame`, sem cache, para passar o mouse nao
 //! refazer o grafico inteiro.
@@ -16,7 +16,7 @@ use iced::widget::canvas::{
 use iced::widget::text::{Alignment as TextAlign, LineHeight, Shaping};
 use iced::{Color, Pixels, Point, Rectangle, Renderer, Size, Theme};
 
-use super::app::Message;
+use super::app::Msg;
 use super::fonts;
 use super::theme::{Tokens, alpha};
 use crate::dashboard::grafite::{HistoryChart, HistoryColumn, PaceChart};
@@ -132,7 +132,7 @@ pub struct EmptyChartProgram<'a> {
     pub cache: &'a canvas::Cache,
 }
 
-impl canvas::Program<Message> for EmptyChartProgram<'_> {
+impl canvas::Program<Msg> for EmptyChartProgram<'_> {
     type State = ();
 
     fn draw(
@@ -269,7 +269,7 @@ pub(super) fn series_color(t: &'static Tokens, c: &ReserveColor) -> Color {
     }
 }
 
-impl canvas::Program<Message> for StackedBarsProgram<'_> {
+impl canvas::Program<Msg> for StackedBarsProgram<'_> {
     /// Coluna sob o cursor.
     type State = Option<usize>;
 
@@ -279,7 +279,7 @@ impl canvas::Program<Message> for StackedBarsProgram<'_> {
         event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> Option<Action<Message>> {
+    ) -> Option<Action<Msg>> {
         if !matches!(event, Event::Mouse(_)) {
             return None;
         }
@@ -552,7 +552,7 @@ pub struct EmptyReservesProgram<'a> {
     pub cache: &'a canvas::Cache,
 }
 
-impl canvas::Program<Message> for EmptyReservesProgram<'_> {
+impl canvas::Program<Msg> for EmptyReservesProgram<'_> {
     type State = ();
 
     fn draw(
@@ -752,7 +752,7 @@ impl PaceProgram<'_> {
     }
 }
 
-impl canvas::Program<Message> for PaceProgram<'_> {
+impl canvas::Program<Msg> for PaceProgram<'_> {
     /// Dia sob o cursor.
     type State = Option<usize>;
 
@@ -762,7 +762,7 @@ impl canvas::Program<Message> for PaceProgram<'_> {
         event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> Option<Action<Message>> {
+    ) -> Option<Action<Msg>> {
         if !matches!(event, Event::Mouse(_)) {
             return None;
         }
@@ -952,7 +952,7 @@ fn frame_rule(frame: &mut Frame, t: &'static Tokens, x: f32, plot: Rectangle) {
 
 /// Barra de progresso com marcas pontilhadas (meta nas linhas "em atenção", 50% e 70% no
 /// comprometido). Sem `Cache`: sao poucos retangulos, e um cache por linha teria de viver na
-/// `App` (um cache so para medidores de mesmo tamanho repetiria a geometria do primeiro).
+/// `State` (um cache so para medidores de mesmo tamanho repetiria a geometria do primeiro).
 pub struct MeterProgram {
     pub fill: f32,
     pub fill_color: Color,
@@ -984,7 +984,7 @@ pub fn meter_geometry(width: f32, fill: f32, marks: &[f32]) -> (f32, Vec<f32>) {
     (at(fill), marks.iter().map(|m| at(*m)).collect())
 }
 
-impl canvas::Program<Message> for MeterProgram {
+impl canvas::Program<Msg> for MeterProgram {
     type State = ();
 
     fn draw(
@@ -1045,7 +1045,7 @@ pub struct SwatchProgram {
     pub dashed: bool,
 }
 
-impl canvas::Program<Message> for SwatchProgram {
+impl canvas::Program<Msg> for SwatchProgram {
     type State = ();
 
     fn draw(
@@ -1139,7 +1139,7 @@ pub struct HistoryProgram<'a> {
     pub cache: &'a canvas::Cache,
 }
 
-impl canvas::Program<Message> for HistoryProgram<'_> {
+impl canvas::Program<Msg> for HistoryProgram<'_> {
     /// Coluna sob o cursor.
     type State = Option<usize>;
 
@@ -1149,7 +1149,7 @@ impl canvas::Program<Message> for HistoryProgram<'_> {
         event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> Option<Action<Message>> {
+    ) -> Option<Action<Msg>> {
         if !matches!(event, Event::Mouse(_)) {
             return None;
         }

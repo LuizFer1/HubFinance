@@ -5,6 +5,7 @@
 use crate::dashboard::money::group_thousands;
 use crate::dashboard::periods::month_long;
 use crate::hub::snapshot::Status;
+use crate::ui_model::app::{App, Screen};
 
 /// A versao precisa de um lugar sempre a vista (Ajustes > Sobre so aparece a quem abre a
 /// tela), e o subtitulo curto nao quebra em duas linhas. "Somente leitura" ficou fora dela de
@@ -107,6 +108,27 @@ pub fn plural(n: usize, one: &str, many: &str) -> String {
 pub fn thousands(n: usize) -> String {
     group_thousands(n as u64)
 }
+
+/// Motivo do hub que nao subiu, se a tela atual deve dar lugar a ele. Ajustes fica de fora:
+/// tema, inicializacao e as pastas de dados e logs nao dependem do nucleo, e as pastas sao
+/// justamente o que a pessoa procura para entender a falha.
+pub fn failure(app: &App) -> Option<&str> {
+    match &app.snapshot.status {
+        Status::Failed(msg) if app.screen != Screen::Settings => Some(msg),
+        _ => None,
+    }
+}
+
+/// A ordem da navegacao lateral, que e tambem a do Ctrl+1..6. Mora aqui para o atalho nao
+/// depender dos glifos e rotulos da barra; a lateral de cada toolkit desenha nesta ordem.
+pub const NAV_ORDER: [Screen; 6] = [
+    Screen::Dashboard,
+    Screen::Transactions,
+    Screen::Reserves,
+    Screen::Analysis,
+    Screen::Connection,
+    Screen::Settings,
+];
 
 #[cfg(test)]
 mod tests {

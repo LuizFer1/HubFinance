@@ -10,15 +10,15 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length};
 
-use super::app::{App, Message};
+use super::app::{Msg, State};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, space};
 use super::{fonts, icons, widgets};
 use crate::assistant::secret::Secret;
 use crate::assistant::settings::ProviderChoice;
+use crate::ui_model::assistant_setup::can_finish;
 use crate::ui_model::assistant_setup::{
     AssistantSetup, CHOICES, CLOUD_EXPLAIN, DENY_LABEL, DENY_WARNING, MODELS_NOT_LISTED,
-    NO_MODELS_HINT, PLAIN_KEY_WARNING, SetupStep, finishes_here, primary_label, settings_to_save,
-    step_caption,
+    NO_MODELS_HINT, PLAIN_KEY_WARNING, SetupStep, finishes_here, primary_label, step_caption,
 };
 
 /// Com mais modelos que isto a lista de radio ficaria mais alta que o dialogo: vira o
@@ -37,35 +37,7 @@ pub(super) fn dialog_height(window_height: f32) -> f32 {
     DIALOG_HEIGHT.min(window_height - 48.0).max(200.0)
 }
 
-/// O ultimo botao pode gravar? Ollama precisa de porta valida e de um modelo da lista que o
-/// teste trouxe **desta** porta (modelo de outra porta, ou de uma lista antiga, falharia na
-/// primeira pergunta); a nuvem, de modelo e de uma chave (a salva ou a digitada agora, que nao
-/// conta se for so espaco).
-pub(super) fn can_finish(app: &App, setup: &AssistantSetup) -> bool {
-    if setup.saving.is_some() {
-        return false;
-    }
-    let view = &app.snapshot.assistant;
-    let ok = match setup.draft.choice {
-        ProviderChoice::None => true,
-        ProviderChoice::Local => {
-            let port = setup.draft.port();
-            let listed = match &view.models {
-                Some(Ok(models)) => setup
-                    .draft
-                    .local_model
-                    .as_ref()
-                    .is_some_and(|m| models.contains(m)),
-                _ => false,
-            };
-            port.is_some() && view.models_port == port && listed
-        }
-        ProviderChoice::Cloud => view.has_key || !app.key_input.trim().is_empty(),
-    };
-    ok && settings_to_save(&view.settings, &setup.draft).is_some()
-}
-
-pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
+pub(super) fn dialog(app: &State) -> Option<Element<'_, Msg>> {
     let setup = app.assistant_setup.as_ref()?;
     let t = app.iced.tokens;
     let header = row![
@@ -79,7 +51,7 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
             icons::X,
             ButtonSize::Compact,
             "Fechar",
-            Some(Message::CloseAssistantSetup),
+            Some(Msg::CloseAssistantSetup),
         ),
     ]
     .align_y(Alignment::Center);
@@ -97,7 +69,7 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
     };
     let details = setup.step == SetupStep::Details;
     // No passo 2 o corpo rola dentro da altura fixa; no passo 1 (tres linhas) cabe sempre.
-    let body: Element<'_, Message> = if details {
+    let body: Element<'_, Msg> = if details {
         scrollable(container(body).padding(iced::Padding {
             right: 12.0,
             ..iced::Padding::ZERO
@@ -131,15 +103,15 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
     }
     let secondary = if setup.step == SetupStep::Where {
         widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Regular, "Cancelar")
-            .on_press(Message::CloseAssistantSetup)
+            .on_press(Msg::CloseAssistantSetup)
     } else {
         widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Regular, "Voltar")
-            .on_press_maybe(setup.saving.is_none().then_some(Message::SetupBack))
+            .on_press_maybe(setup.saving.is_none().then_some(Msg::SetupBack))
     };
     let primary_message = if finishes_here(setup) {
-        can_finish(app, setup).then_some(Message::SetupFinish)
+        can_finish(app, setup).then_some(Msg::SetupFinish)
     } else {
-        Some(Message::SetupNext)
+        Some(Msg::SetupNext)
     };
     let primary = widgets::action_button(
         t,
@@ -159,7 +131,7 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
         app.window_size.w,
         DIALOG_WIDTH,
         details.then(|| dialog_height(app.window_size.h)),
-        Message::CloseAssistantSetup,
+        Msg::CloseAssistantSetup,
         app.motion.scrim(),
     ))
 }
@@ -170,14 +142,14 @@ fn radio_row<'a>(
     label: &'a str,
     detail: Option<&'a str>,
     selected: bool,
-    on_press: Message,
-) -> Element<'a, Message> {
+    on_press: Msg,
+) -> Element<'a, Msg> {
     let ring = if selected {
         t.accent
     } else {
         t.border_control()
     };
-    let inner: Element<'a, Message> = if selected {
+    let inner: Element<'a, Msg> = if selected {
         container(Space::new())
             .width(8)
             .height(8)
@@ -208,7 +180,7 @@ fn radio_row<'a>(
         .into()
 }
 
-fn where_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Message> {
+fn where_step<'a>(app: &'a State, setup: &'a AssistantSetup) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     column(CHOICES.iter().map(|(choice, label, detail)| {
         radio_row(
@@ -216,14 +188,14 @@ fn where_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
             label,
             Some(detail),
             setup.draft.choice == *choice,
-            Message::SetupChoice(*choice),
+            Msg::SetupChoice(*choice),
         )
     }))
     .spacing(2)
     .into()
 }
 
-fn local_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Message> {
+fn local_step<'a>(app: &'a State, setup: &'a AssistantSetup) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     let view = &app.snapshot.assistant;
     let port = setup.draft.port();
@@ -235,15 +207,15 @@ fn local_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
     let port_row = row![
         text("Porta").size(13).color(t.text_soft()),
         text_input("11434", &setup.draft.port_input)
-            .on_input(Message::SetupPort)
-            .on_submit(Message::SetupTest)
+            .on_input(Msg::SetupPort)
+            .on_submit(Msg::SetupTest)
             .size(13)
             .width(100)
             .padding([10, 10])
             .style(theme::input(t)),
         Space::new().width(Length::Fill),
         widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Regular, test_label)
-            .on_press_maybe((!view.listing && port.is_some()).then_some(Message::SetupTest)),
+            .on_press_maybe((!view.listing && port.is_some()).then_some(Msg::SetupTest)),
     ]
     // Validado; fora da escala de proposito.
     .spacing(10)
@@ -268,7 +240,7 @@ fn local_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
                             m.as_str(),
                             None,
                             current == Some(m.as_str()),
-                            Message::SetupLocalModel(m.clone()),
+                            Msg::SetupLocalModel(m.clone()),
                         )
                     }))
                     .spacing(2),
@@ -278,7 +250,7 @@ fn local_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
                     pick_list(
                         models.clone(),
                         setup.draft.local_model.clone(),
-                        Message::SetupLocalModel,
+                        Msg::SetupLocalModel,
                     )
                     .placeholder("Escolha um modelo")
                     .text_size(13)
@@ -303,7 +275,7 @@ fn local_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
     section.into()
 }
 
-fn cloud_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Message> {
+fn cloud_step<'a>(app: &'a State, setup: &'a AssistantSetup) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     let view = &app.snapshot.assistant;
     let mut section = column![
@@ -315,23 +287,23 @@ fn cloud_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
     .spacing(12);
 
     // Chave: salva (so "Remover") ou campo para digitar. O campo e `secure`: a chave nunca
-    // aparece na tela, e so sai do `App` no ultimo botao.
-    let key: Element<'_, Message> = if view.has_key {
+    // aparece na tela, e so sai do `State` no ultimo botao.
+    let key: Element<'_, Msg> = if view.has_key {
         row![
             text("Chave salva").size(13).color(t.text),
             Space::new().width(Length::Fill),
             // Desligado enquanto grava: apagar a chave no meio do `Configure` desfaria o que ele
             // acabou de salvar.
             widgets::action_button(t, ButtonKind::Danger, ButtonSize::Compact, "Remover")
-                .on_press_maybe(setup.saving.is_none().then_some(Message::RemoveKey)),
+                .on_press_maybe(setup.saving.is_none().then_some(Msg::RemoveKey)),
         ]
         .align_y(Alignment::Center)
         .into()
     } else {
         text_input("sk-or-...", &app.key_input)
             .secure(true)
-            .on_input(|k| Message::KeyInput(Secret::new(k)))
-            .on_submit(Message::SetupFinish)
+            .on_input(|k| Msg::KeyInput(Secret::new(k)))
+            .on_submit(Msg::SetupFinish)
             .size(13)
             .width(Length::Fill)
             .padding([10, 10])
@@ -349,7 +321,7 @@ fn cloud_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
                 crate::assistant::settings::SUGGESTED_CLOUD_MODEL,
                 &setup.draft.cloud_model
             )
-            .on_input(Message::SetupCloudModel)
+            .on_input(Msg::SetupCloudModel)
             .size(13)
             .width(Length::Fill)
             .padding([10, 10])
@@ -360,7 +332,7 @@ fn cloud_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
     section = section.push(
         row![
             text(DENY_LABEL).size(13).color(t.text).width(Length::Fill),
-            widgets::toggle(t, setup.draft.deny, Some(Message::SetupDeny)),
+            widgets::toggle(t, setup.draft.deny, Some(Msg::SetupDeny)),
         ]
         .spacing(12)
         .align_y(Alignment::Center),
@@ -375,7 +347,7 @@ fn cloud_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
             ButtonSize::Compact,
             "Ver o que o assistente vê",
         )
-        .on_press(Message::ShowEnvelope),
+        .on_press(Msg::ShowEnvelope),
     );
     section.into()
 }

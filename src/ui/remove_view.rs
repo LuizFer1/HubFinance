@@ -9,7 +9,7 @@
 use iced::widget::{Space, button, column, row, text};
 use iced::{Alignment, Element, Length};
 
-use super::app::{App, Message, RemoveStep};
+use super::app::{Msg, RemoveStep, State};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, space};
 use super::{fonts, icons, widgets};
 use crate::hub::snapshot::DeviceView;
@@ -28,7 +28,7 @@ struct Subject<'a> {
     device: &'a DeviceView,
 }
 
-fn subject<'a>(app: &'a App, device_id: &str) -> Option<Subject<'a>> {
+fn subject<'a>(app: &'a State, device_id: &str) -> Option<Subject<'a>> {
     let device = app
         .snapshot
         .devices
@@ -53,7 +53,7 @@ fn subject<'a>(app: &'a App, device_id: &str) -> Option<Subject<'a>> {
 }
 
 /// Fundo preto a 55 % que cancela ao clicar e a caixa por cima.
-pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
+pub(super) fn dialog(app: &State) -> Option<Element<'_, Msg>> {
     let t = app.iced.tokens;
     let state = app.confirm_remove.as_ref()?;
     let who = subject(app, &state.device_id)?;
@@ -73,7 +73,7 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
     .spacing(12)
     .align_y(Alignment::Center);
 
-    let body: Element<'_, Message> = match state.step {
+    let body: Element<'_, Msg> = match state.step {
         RemoveStep::Choose => choose_body(app, &who, state.selected),
         RemoveStep::Confirm => text(confirm_text(data, state.selected))
             .size(14)
@@ -87,7 +87,7 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
         RemoveStep::Choose => {
             let first = if orphan { "Depois" } else { "Cancelar" };
             let cancel = widgets::action_button(t, ButtonKind::Secondary, size, first)
-                .on_press(Message::CancelRemove);
+                .on_press(Msg::CancelRemove);
             let nothing = state.selected.is_empty();
             let (primary_label, kind) = match (nothing, orphan) {
                 (true, true) => ("Manter tudo", ButtonKind::Primary),
@@ -99,19 +99,19 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
             } else {
                 widgets::action_button(t, kind, size, primary_label)
             }
-            .on_press(Message::RemoveContinue);
+            .on_press(Msg::RemoveContinue);
             row![Space::new().width(Length::Fill), cancel, primary].spacing(space::M)
         }
         RemoveStep::Confirm => {
             let back = widgets::action_button(t, ButtonKind::Secondary, size, "Voltar")
-                .on_press(Message::RemoveBack);
+                .on_press(Msg::RemoveBack);
             let confirm = widgets::action_button(
                 t,
                 ButtonKind::DangerFilled,
                 size,
                 confirm_label(data, state.selected, orphan),
             )
-            .on_press(Message::ConfirmRemove);
+            .on_press(Msg::ConfirmRemove);
             row![Space::new().width(Length::Fill), back, confirm].spacing(space::M)
         }
     };
@@ -129,12 +129,12 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
         app.window_size.w,
         460.0,
         None,
-        Message::CancelRemove,
+        Msg::CancelRemove,
         app.motion.scrim(),
     ))
 }
 
-fn choose_body<'a>(app: &'a App, who: &Subject<'a>, selected: AreaSet) -> Element<'a, Message> {
+fn choose_body<'a>(app: &'a State, who: &Subject<'a>, selected: AreaSet) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     let data = &who.device.data;
     let intro = if who.device.revoked {
@@ -157,7 +157,7 @@ fn choose_body<'a>(app: &'a App, who: &Subject<'a>, selected: AreaSet) -> Elemen
     for area in Area::ALL {
         col = col.push(area_row(t, area, data, selected.contains(area)));
     }
-    let shortcut = |label: &'static str, msg: Message, danger: bool| {
+    let shortcut = |label: &'static str, msg: Msg, danger: bool| {
         let kind = if danger {
             ButtonKind::Danger
         } else {
@@ -167,8 +167,8 @@ fn choose_body<'a>(app: &'a App, who: &Subject<'a>, selected: AreaSet) -> Elemen
     };
     col.push(
         row![
-            shortcut("Manter tudo", Message::SelectNoAreas, false),
-            shortcut("Apagar tudo", Message::SelectAllAreas, true),
+            shortcut("Manter tudo", Msg::SelectNoAreas, false),
+            shortcut("Apagar tudo", Msg::SelectAllAreas, true),
         ]
         .spacing(8),
     )
@@ -187,9 +187,9 @@ fn area_row<'a>(
     area: Area,
     data: &DeviceData,
     selected: bool,
-) -> Element<'a, Message> {
+) -> Element<'a, Msg> {
     let enabled = data.items(area) > 0;
-    let mark: Element<'a, Message> = if selected && enabled {
+    let mark: Element<'a, Msg> = if selected && enabled {
         icons::icon(icons::CHECK_CIRCLE, 18.0, t.expense_fg)
     } else {
         icons::icon(icons::CIRCLE_DASHED, 18.0, t.text_muted)
@@ -238,7 +238,7 @@ fn area_row<'a>(
         .padding([10, 12])
         .style(theme::button(t, kind, ButtonSize::Regular));
     if enabled {
-        b.on_press(Message::ToggleArea(area)).into()
+        b.on_press(Msg::ToggleArea(area)).into()
     } else {
         b.into()
     }
@@ -246,7 +246,7 @@ fn area_row<'a>(
 
 /// Aviso ambar no topo do conteudo: aparelhos removidos que ainda tem dados. Derivado do
 /// estado, sem card permanente; "Depois" so esconde nesta sessao.
-pub(super) fn orphan_banner(app: &App) -> Option<Element<'_, Message>> {
+pub(super) fn orphan_banner(app: &State) -> Option<Element<'_, Msg>> {
     let t = app.iced.tokens;
     if app.orphans_postponed || app.confirm_remove.is_some() {
         return None;
@@ -261,9 +261,9 @@ pub(super) fn orphan_banner(app: &App) -> Option<Element<'_, Message>> {
         format!("{n} aparelhos removidos ainda têm dados no hub")
     };
     let later = widgets::action_button(t, ButtonKind::Ghost, ButtonSize::Compact, "Depois")
-        .on_press(Message::PostponeOrphans);
+        .on_press(Msg::PostponeOrphans);
     let decide = widgets::action_button(t, ButtonKind::Primary, ButtonSize::Compact, "Decidir")
-        .on_press(Message::DecideOrphan);
+        .on_press(Msg::DecideOrphan);
     Some(widgets::banner(
         t,
         Tone::Warning,

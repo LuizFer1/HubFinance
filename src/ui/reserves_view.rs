@@ -1,7 +1,7 @@
 //! Tela Reservas: total separado, emergencia coberta, ultimos 12 meses, o card da reserva de
 //! emergencia, as caixinhas, a evolucao empilhada e as movimentacoes; ou o estado vazio.
 //!
-//! Tudo vem de `app.reserves` (calculado em `App::rebuild`); aqui so se monta a arvore. Todo
+//! Tudo vem de `app.reserves` (calculado em `State::rebuild`); aqui so se monta a arvore. Todo
 //! valor em R$ ja chega formatado (e mascarado com "Ocultar valores"): formatar aqui vazaria o
 //! numero por cima do botao de ocultar. Os textos seguem o bloco `isRes` do prototipo e o
 //! trecho de `renderVals()` a partir de `RD`.
@@ -11,7 +11,7 @@ use iced::widget::text::Wrapping;
 use iced::widget::{Column, Space, canvas, column, container, row, text};
 use iced::{Alignment, Color, Element, Length, Padding};
 
-use super::app::{App, Message};
+use super::app::{Msg, State};
 use super::charts::{
     EMPTY_RESERVES_HEIGHT, EMPTY_RESERVES_WIDTH, EmptyReservesProgram, StackedBarsProgram,
     series_color,
@@ -42,7 +42,7 @@ const LEGEND_COL_GAP: f32 = 24.0;
 /// Padding lateral dos cards da linha 2 (20 + 20).
 const CARD_PADDING_X: f32 = 40.0;
 
-pub fn view(app: &App) -> Element<'_, Message> {
+pub fn view(app: &State) -> Element<'_, Msg> {
     let v = &app.reserves;
     if v.is_empty {
         // No boot o vazio seria falso: o esqueleto comum das telas de dados no lugar.
@@ -100,7 +100,7 @@ fn reserve_glyph(key: &str) -> &'static str {
 
 // ---- linha 1: KPIs ----
 
-fn kpi_row(app: &App) -> Element<'_, Message> {
+fn kpi_row(app: &State) -> Element<'_, Msg> {
     widgets::three_up(
         shell::content_width(app),
         KPI_MIN,
@@ -110,12 +110,12 @@ fn kpi_row(app: &App) -> Element<'_, Message> {
 }
 
 /// Card de numero: o padding de todo card (20) e espaco 8 entre rotulo, valor, nota e barra.
-fn kpi_card<'a>(t: &'static Tokens, content: Column<'a, Message>) -> Element<'a, Message> {
+fn kpi_card<'a>(t: &'static Tokens, content: Column<'a, Msg>) -> Element<'a, Msg> {
     widgets::card(t, content.spacing(KPI_SPACING)).into()
 }
 
 /// Barra de 6 px com 8 de respiro acima, no pe dos cards Total e Emergencia.
-fn kpi_bar<'a>(spec: Bar<'_>) -> Element<'a, Message> {
+fn kpi_bar<'a>(spec: Bar<'_>) -> Element<'a, Msg> {
     container(widgets::bar(spec, 6.0))
         .padding(Padding {
             top: space::S,
@@ -131,7 +131,7 @@ fn kpi_note<'a>(t: &'static Tokens, note: &str) -> Text<'a> {
         .color(t.text_muted)
 }
 
-fn total_card(app: &App) -> Element<'_, Message> {
+fn total_card(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let v = &app.reserves;
     let note = row![
@@ -186,7 +186,7 @@ fn coverage_figure(emergency: Option<&EmergencyView>) -> CoverageFigure<'_> {
     }
 }
 
-fn coverage_card(app: &App) -> Element<'_, Message> {
+fn coverage_card(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let v = &app.reserves;
     let empty_segments = vec![0.0; usize::from(DEFAULT_MULTIPLE)];
@@ -198,7 +198,7 @@ fn coverage_card(app: &App) -> Element<'_, Message> {
         ),
     };
     let big = StatSize::L.size();
-    let value: Element<'_, Message> = match coverage_figure(v.emergency.as_ref()) {
+    let value: Element<'_, Msg> = match coverage_figure(v.emergency.as_ref()) {
         CoverageFigure::Months { value, suffix } => widgets::value_line(
             vec![
                 (value.to_string(), big, fonts::INTER_LIGHT, t.text),
@@ -253,7 +253,7 @@ fn flow_color(minor: i64, color: Color, muted: Color) -> Color {
 /// nao iguala alturas.
 const YEAR_LINE_HEIGHT: f32 = 25.0;
 
-fn year_card(app: &App) -> Element<'_, Message> {
+fn year_card(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let v = &app.reserves;
     let muted = t.text_muted;
@@ -322,14 +322,14 @@ const EMERGENCY_TITLE: &str = "Reserva de emergência";
 const HEADING_GAP: f32 = space::M;
 
 /// Titulo de secao 16 (fora do card) e o card embaixo.
-fn titled<'a>(heading: Element<'a, Message>, card: Element<'a, Message>) -> Element<'a, Message> {
+fn titled<'a>(heading: Element<'a, Msg>, card: Element<'a, Msg>) -> Element<'a, Msg> {
     column![heading, card].spacing(HEADING_GAP).into()
 }
 
 /// Lado a lado (alinhados ao topo, como o `align-items: start` do prototipo) quando os dois
 /// cabem com 440 cada; senao empilhados. Cada um com o titulo de secao em cima, fora do card:
 /// "Reserva de emergência" e "Caixinhas" com quantas tem meta ao lado.
-fn cards_row(app: &App) -> Element<'_, Message> {
+fn cards_row(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let v = &app.reserves;
     let width = shell::content_width(app);
@@ -375,14 +375,14 @@ fn custom_emergency_name(name: &str) -> Option<&str> {
 }
 
 /// Caixa de 36 com borda no acento e a boia: o simbolo da emergencia.
-fn lifebuoy_box<'a>(t: &'static Tokens) -> Element<'a, Message> {
+fn lifebuoy_box<'a>(t: &'static Tokens) -> Element<'a, Msg> {
     container(icons::icon(icons::LIFEBUOY, 18.0, t.accent_300))
         .center(36)
         .style(theme::outlined(t.accent, theme::radius::CONTROL))
         .into()
 }
 
-fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
+fn emergency_card(app: &State, inner_width: f32) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let Some(e) = &app.reserves.emergency else {
         // O titulo da secao, fora do card, ja diz o que falta; aqui so a boia e o motivo.
@@ -486,7 +486,7 @@ fn meter_label(i: usize, n: usize) -> String {
     }
 }
 
-fn meter_labels<'a>(t: &'static Tokens, e: &EmergencyView) -> Element<'a, Message> {
+fn meter_labels<'a>(t: &'static Tokens, e: &EmergencyView) -> Element<'a, Msg> {
     let n = e.segments.len();
     iced::widget::Row::with_children((1..=n).map(|i| {
         container(
@@ -504,10 +504,10 @@ fn meter_labels<'a>(t: &'static Tokens, e: &EmergencyView) -> Element<'a, Messag
 }
 
 fn essential_section<'a>(
-    app: &'a App,
+    app: &'a State,
     cost: Option<&'a EssentialCost>,
     inner_width: f32,
-) -> Element<'a, Message> {
+) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     let muted = t.text_muted;
     let title = text("Custo essencial médio")
@@ -573,7 +573,7 @@ fn essential_section<'a>(
     } else {
         1
     };
-    let cell = |p: &'a EssentialPart| -> Element<'a, Message> {
+    let cell = |p: &'a EssentialPart| -> Element<'a, Msg> {
         row![
             widgets::dot(t.token(&p.color), 8.0),
             container(
@@ -624,7 +624,7 @@ fn essential_section<'a>(
     .into()
 }
 
-fn pots_card(app: &App) -> Element<'_, Message> {
+fn pots_card(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let v = &app.reserves;
     // O titulo saiu para fora do card: as linhas comecam no topo, com divisor so entre elas. O
@@ -660,7 +660,7 @@ fn pace_style(t: &'static Tokens, pace: &Pace) -> (&'static str, Color) {
     }
 }
 
-fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
+fn pot_row<'a>(app: &'a State, p: &'a PotRow) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     let color = reserve_color(t, &p.color);
     let tile = widgets::tile(t, reserve_glyph(&p.icon), color, color, 36.0);
@@ -737,7 +737,7 @@ fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
 const EVOLUTION_LEGEND_INLINE: f32 = 760.0;
 const EVOLUTION_HEIGHT: f32 = 230.0;
 
-fn evolution_card(app: &App) -> Element<'_, Message> {
+fn evolution_card(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let v = &app.reserves;
     let muted = t.text_muted;
@@ -761,7 +761,7 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
     }
     keys = keys.push(text("saldo no fim de cada mês").size(12).color(muted));
     let legend = keys.wrap().vertical_spacing(6);
-    let header: Element<'_, Message> = if shell::content_width(app) >= EVOLUTION_LEGEND_INLINE {
+    let header: Element<'_, Msg> = if shell::content_width(app) >= EVOLUTION_LEGEND_INLINE {
         row![container(title).width(Length::Fill), legend]
             .spacing(16)
             .align_y(Alignment::Center)
@@ -770,7 +770,7 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
         column![title, legend].spacing(8).into()
     };
     let quiet = v.series.iter().all(|s| s.balances.iter().all(|b| *b <= 0));
-    let body: Element<'_, Message> = if quiet {
+    let body: Element<'_, Msg> = if quiet {
         text("Nenhum saldo nos últimos 12 meses")
             .size(13)
             .color(t.text_muted)
@@ -800,7 +800,7 @@ const MOVEMENT_COLUMNS: [u16; 3] = [24, 16, 9];
 const MOVEMENT_VALUE_WIDTH: f32 = 116.0;
 const MOVEMENT_ROW_HEIGHT: f32 = 56.0;
 
-fn movements_card(app: &App) -> Element<'_, Message> {
+fn movements_card(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let v = &app.reserves;
     // Padding lateral 12 (e nao 20): o hover da linha passa 8 px do conteudo, como o
@@ -831,7 +831,7 @@ fn movements_card(app: &App) -> Element<'_, Message> {
 }
 
 /// Tile de 32: guardar e seta para baixo no acento; retirar e seta para cima na cor de despesa.
-fn movement_tile<'a>(t: &'static Tokens, kind: MovementKind) -> Element<'a, Message> {
+fn movement_tile<'a>(t: &'static Tokens, kind: MovementKind) -> Element<'a, Msg> {
     let (glyph, color, tint) = match kind {
         MovementKind::Deposit => (icons::ARROW_DOWN, t.accent_300, t.accent),
         MovementKind::Withdrawal => (icons::ARROW_UP, t.expense_fg, t.expense),
@@ -839,7 +839,7 @@ fn movement_tile<'a>(t: &'static Tokens, kind: MovementKind) -> Element<'a, Mess
     widgets::tile(t, glyph, color, tint, 32.0)
 }
 
-fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
+fn movement_row<'a>(app: &'a State, m: &'a MovementRow) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     let [desc_w, reserve_w, author_w] = MOVEMENT_COLUMNS;
     let mut meta = row![
@@ -921,7 +921,7 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
 // ---- estado vazio ----
 
 /// O card com esboco do Resumo (`widgets::empty_sketch_card`), com o medidor tracejado.
-fn empty_card(app: &App) -> Element<'_, Message> {
+fn empty_card(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let sketch = canvas(EmptyReservesProgram {
         tokens: t,

@@ -4,10 +4,12 @@
 //! valor que vaza numa delas anula a promessa da outra).
 
 use crate::advisor::{FigureValue, Finding, FindingKind, Severity};
+use crate::assistant::prompt::OPENING_REQUEST;
 use crate::assistant::prompt::Role;
 use crate::assistant::settings::{ProviderChoice, Settings};
-use crate::assistant::view::{MessageView, OpenConversation};
+use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
 use crate::dashboard::money::{MASK, MASK_DIGITS, MINUS, group_thousands};
+use crate::ui_model::app::{App, Msg};
 
 /// A pergunta que a tela responde, no cabecalho fixo da casca.
 pub const QUESTION: &str = "Onde dá para melhorar?";
@@ -825,6 +827,73 @@ pub fn masked_reply(content: &str, hidden: bool) -> MaskedReply {
             }
         }
     }
+}
+
+// ---- a conversa aberta, lida do estado da janela ----
+
+/// A conversa aberta, so se for da conta que a tela mostra: com a outra conta aberta ela falaria
+/// de numeros que nao estao na tela.
+pub fn open_conversation(app: &App) -> Option<&OpenConversation> {
+    app.snapshot
+        .assistant
+        .open
+        .as_ref()
+        .filter(|c| c.book == app.book && !app.conversation_hidden(&c.id))
+}
+
+/// Os dados da conta mudaram desde que a conversa comecou (spec 3): o envelope guardado nela
+/// difere do de agora. Comparar o texto (e nao o ponteiro do `Arc` do dataset) faz valer
+/// tambem para conversa reaberta do historico e ignora sync que nao mexeu nesta conta.
+pub fn data_changed(app: &App) -> bool {
+    open_conversation(app).is_some_and(|c| c.envelope != app.envelope_now)
+}
+
+/// Conversas da conta que a tela mostra (cada uma e presa a uma conta).
+pub fn conversations_of_book(app: &App) -> Vec<&ConversationSummary> {
+    app.snapshot
+        .assistant
+        .conversations
+        .iter()
+        .filter(|c| c.book == app.book && !app.conversation_hidden(&c.id))
+        .collect()
+}
+
+/// "Cancelar" na previa da nuvem. So apaga a conversa que e exatamente a abertura automatica
+/// recem-criada (uma pergunta, a `OPENING_REQUEST`) e sem nada chegando: nada nunca foi enviado
+/// e guarda-la deixaria lixo no historico. Qualquer outra (reaberta do historico com erro, com
+/// resposta, com pergunta da pessoa, ou com uma resposta local ainda chegando) tem o que
+/// guardar: o "Cancelar" so fecha a previa. Esc e o scrim nunca apagam (`ClosePreview`).
+pub fn cancel_preview_message(open: &OpenConversation, busy: bool) -> Option<Msg> {
+    let only_opening = matches!(
+        open.messages.as_slice(),
+        [m] if m.role == MessageRole::User && m.content == OPENING_REQUEST
+    );
+    (only_opening && !busy).then(|| Msg::DeleteConversation(open.id.clone()))
+}
+
+/// A conversa da previa aberta: so enquanto ela for a aberta e esperar aprovacao. A previa e
+/// presa ao id, entao nunca mostra (nem aprova) outra conversa.
+pub fn shown_consent(app: &App) -> Option<&OpenConversation> {
+    let id = app.consent_preview.as_deref()?;
+    awaiting_cloud_consent(app).filter(|o| o.id == id)
+}
+
+/// A conversa aberta que ainda espera a previa da nuvem ser aprovada: o destino e a nuvem e
+/// nada saiu dela. Enquanto isso a tela mostra a previa no lugar do campo de pergunta.
+///
+/// Com resposta chegando (`busy`) nao espera nada: e o modelo local respondendo antes da troca
+/// para a nuvem, e a previa (com o "Cancelar" que apaga) nao pode cair por cima disso.
+pub fn awaiting_cloud_consent(app: &App) -> Option<&OpenConversation> {
+    open_conversation(app).filter(|o| {
+        o.needs_cloud_consent
+            && !app.snapshot.assistant.busy
+            && app
+                .snapshot
+                .assistant
+                .settings
+                .destination()
+                .is_some_and(|d| d.is_cloud())
+    })
 }
 
 #[cfg(test)]

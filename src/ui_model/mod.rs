@@ -5,6 +5,7 @@
 //! desenham o que este modulo decide e traduzem suas teclas e eventos para os tipos daqui.
 
 pub mod analysis;
+pub mod app;
 pub mod assistant_setup;
 pub mod connect;
 pub mod effect;

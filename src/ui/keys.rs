@@ -10,8 +10,7 @@ use iced::Subscription;
 use iced::keyboard::key::{Code, Named, Physical};
 use iced::keyboard::{self, Key, Modifiers};
 
-use super::app::{App, Message, Screen};
-use super::{analysis_view, connection_view, shell};
+use super::app::Msg;
 use crate::ui_model::keys::{Key as MKey, KeyPress};
 
 /// Traduz a tecla do iced para o `KeyPress` do `ui_model`. A posicao fisica e o caractere
@@ -44,7 +43,7 @@ pub fn convert(key: &Key, physical: Physical, modifiers: Modifiers, repeat: bool
     }
 }
 
-pub fn subscription() -> Subscription<Message> {
+pub fn subscription() -> Subscription<Msg> {
     keyboard::listen().filter_map(|event| match event {
         keyboard::Event::KeyPressed {
             key,
@@ -52,7 +51,7 @@ pub fn subscription() -> Subscription<Message> {
             modifiers,
             repeat,
             ..
-        } => Some(Message::KeyPressed(convert(
+        } => Some(Msg::KeyPressed(convert(
             &key,
             physical_key,
             modifiers,
@@ -60,81 +59,6 @@ pub fn subscription() -> Subscription<Message> {
         ))),
         _ => None,
     })
-}
-
-/// O que a tecla faz agora, ou `None`.
-///
-/// - Esc fecha o que estiver por cima: dialogo de remocao, "Conectar um celular", "O que o
-///   assistente vê" (que abre por cima da configuracao, pelo link dela), previa de envio a
-///   nuvem (pelo caminho do "Cancelar"), "Configurar assistente" e menu de categoria (nessa
-///   ordem). O menu so na tela dele.
-/// - Com dialogo aberto, so o Esc: atalho por baixo do scrim mexeria numa tela escondida.
-///   Limite conhecido: isso inclui o Tab, entao no "Configurar assistente" ele nao anda entre
-///   porta, chave e modelo (o painel antigo andava). O `focus_next` do iced percorre a janela
-///   inteira e levaria o foco ao campo do chat por baixo do scrim; um Tab preso ao dialogo
-///   precisa de foco por id, que fica para depois.
-/// - Tab e Shift+Tab andam entre os campos.
-/// - Ctrl+1..N troca de tela na ordem da navegacao.
-/// - Alt+setas mudam o mes, onde ha seletor de mes.
-/// - Ctrl+H alterna ocultar valores, onde o olho existe.
-///
-/// Repeticao (tecla segurada) so vale para Tab e para as setas: Ctrl+H segurado gravaria o
-/// `ui.json` a cada repeticao e piscaria os valores.
-pub fn shortcut(app: &App, press: &KeyPress) -> Option<Message> {
-    if press.key == MKey::Escape {
-        return escape(app);
-    }
-    if app.any_dialog_open() {
-        return None;
-    }
-    if press.key == MKey::Tab && !press.ctrl && !press.alt {
-        return Some(if press.shift {
-            Message::FocusPrevious
-        } else {
-            Message::FocusNext
-        });
-    }
-    if press.alt && !press.ctrl && !press.shift {
-        let month_screen = matches!(app.screen, Screen::Dashboard | Screen::Transactions);
-        return match press.key {
-            MKey::ArrowLeft if month_screen => Some(Message::PrevMonth),
-            MKey::ArrowRight if month_screen => Some(Message::NextMonth),
-            _ => None,
-        };
-    }
-    if press.ctrl && !press.alt && !press.shift && !press.repeat {
-        if let MKey::Digit(n) = press.key {
-            let entries = shell::nav_entries(app);
-            let screen = entries.get(usize::from(n).checked_sub(1)?)?.screen;
-            // A mesma tela: nada a fazer (e nao manda a remocao pendente antes da hora).
-            return (screen != app.screen).then_some(Message::SelectScreen(screen));
-        }
-        if app.screen.shows_values() && press.key == MKey::Letter('h') {
-            return Some(Message::ToggleHideValues);
-        }
-    }
-    None
-}
-
-fn escape(app: &App) -> Option<Message> {
-    if app.confirm_remove.is_some() {
-        Some(Message::CancelRemove)
-    } else if connection_view::dialog_open(app) {
-        // Pelo mesmo caminho do "x": cancela o codigo pendente.
-        Some(Message::ConnectClose)
-    } else if app.envelope_preview.is_some() {
-        Some(Message::CloseEnvelope)
-    } else if analysis_view::shown_consent(app).is_some() {
-        // So fecha (como o scrim): um Esc nunca apaga a conversa, so o "Cancelar".
-        Some(Message::ClosePreview)
-    } else if app.assistant_setup.is_some() {
-        // Como o "x": nada e gravado e a chave digitada e esquecida.
-        Some(Message::CloseAssistantSetup)
-    } else if app.screen == Screen::Transactions && app.cat_menu_open {
-        Some(Message::CloseCategoryMenu)
-    } else {
-        None
-    }
 }
 
 /// O numero da tecla (1 a 9), pela posicao fisica: em teclado AZERTY o "1" sem Shift e "&".
@@ -175,12 +99,7 @@ fn digit(key: &Key, physical: Physical) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::app::tests::{app_with, app_with_fixtures};
-    use super::super::app::{RemoveDialog, RemoveStep};
     use super::*;
-    use crate::hub::snapshot::Snapshot;
-    use crate::store::erase::AreaSet;
-    use crate::ui_model::effect::Effect;
 
     fn press(key: Key, physical: Code, modifiers: Modifiers) -> KeyPress {
         convert(&key, Physical::Code(physical), modifiers, false)
@@ -198,10 +117,6 @@ mod tests {
         press(Key::Character("h".into()), Code::KeyH, Modifiers::CTRL)
     }
 
-    fn alt(named: Named, code: Code) -> KeyPress {
-        press(Key::Named(named), code, Modifiers::ALT)
-    }
-
     fn tab(shift: bool) -> KeyPress {
         let mods = if shift {
             Modifiers::SHIFT
@@ -209,12 +124,6 @@ mod tests {
             Modifiers::empty()
         };
         press(Key::Named(Named::Tab), Code::Tab, mods)
-    }
-
-    fn app() -> (App, tempfile::TempDir) {
-        let dir = tempfile::tempdir().unwrap();
-        let (app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
-        (app, dir)
     }
 
     #[test]
@@ -239,249 +148,5 @@ mod tests {
             true,
         );
         assert!(held.alt && held.repeat);
-    }
-
-    fn is(m: Option<Message>, want: &str) -> bool {
-        format!("{m:?}") == want
-    }
-
-    #[test]
-    fn esc_fecha_o_que_esta_por_cima_na_ordem() {
-        let (mut app, _dir) = app();
-        assert!(shortcut(&app, &esc()).is_none());
-        app.screen = Screen::Transactions;
-        app.cat_menu_open = true;
-        assert!(is(shortcut(&app, &esc()), "Some(CloseCategoryMenu)"));
-        // O dialogo de configuracao fica por cima do menu, e vale em qualquer tela.
-        app.assistant_setup = Some(crate::ui_model::assistant_setup::AssistantSetup::open(
-            &Default::default(),
-        ));
-        assert!(is(shortcut(&app, &esc()), "Some(CloseAssistantSetup)"));
-        // O envelope abre por cima da configuracao (pelo link dela).
-        app.envelope_preview = Some("ENV".into());
-        assert!(is(shortcut(&app, &esc()), "Some(CloseEnvelope)"));
-        app.confirm_remove = Some(RemoveDialog {
-            device_id: "D1".into(),
-            step: RemoveStep::Choose,
-            selected: AreaSet::default(),
-        });
-        assert!(is(shortcut(&app, &esc()), "Some(CancelRemove)"));
-    }
-
-    #[test]
-    fn com_dialogo_aberto_so_o_esc_funciona() {
-        let (mut app, _dir) = app();
-        app.envelope_preview = Some("ENV".into());
-        assert!(shortcut(&app, &ctrl_digit('2', Code::Digit2)).is_none());
-        assert!(shortcut(&app, &ctrl_h()).is_none());
-        assert!(shortcut(&app, &tab(false)).is_none());
-        assert!(shortcut(&app, &alt(Named::ArrowLeft, Code::ArrowLeft)).is_none());
-        // O mesmo com "Configurar assistente" aberto.
-        app.envelope_preview = None;
-        app.assistant_setup = Some(crate::ui_model::assistant_setup::AssistantSetup::open(
-            &Default::default(),
-        ));
-        assert!(shortcut(&app, &ctrl_digit('2', Code::Digit2)).is_none());
-        assert!(shortcut(&app, &ctrl_h()).is_none());
-        assert!(shortcut(&app, &tab(false)).is_none());
-    }
-
-    #[test]
-    fn esc_na_previa_de_envio_so_fecha() {
-        use crate::assistant::settings::{ProviderChoice, Settings};
-        use crate::assistant::view::{MessageRole, MessageView, OpenConversation};
-        let (mut app, _dir) = app();
-        let mut settings = Settings {
-            provider: ProviderChoice::Cloud,
-            ..Settings::default()
-        };
-        settings.cloud.enabled = true;
-        app.snapshot.assistant.settings = settings;
-        app.snapshot.assistant.open = Some(OpenConversation {
-            id: "C1".into(),
-            book: app.book,
-            envelope: "ENV".into(),
-            messages: vec![MessageView {
-                id: "m".into(),
-                role: MessageRole::User,
-                content: "Resuma".into(),
-                sent_to_cloud: false,
-                deny_data_collection: None,
-                provider: None,
-                model: None,
-                tokens_in: None,
-                tokens_out: None,
-                interrupted: false,
-            }],
-            needs_cloud_consent: true,
-        });
-        // Sem a previa aberta, Esc nao faz nada com a conversa.
-        assert!(shortcut(&app, &esc()).is_none());
-        app.consent_preview = Some("C1".into());
-        assert!(is(shortcut(&app, &esc()), "Some(ClosePreview)"));
-        assert!(shortcut(&app, &ctrl_digit('2', Code::Digit2)).is_none());
-    }
-
-    #[test]
-    fn ctrl_numero_segue_a_ordem_da_navegacao() {
-        let (mut app, _dir) = app();
-        let entries = shell::nav_entries(&app);
-        for (i, entry) in entries.iter().enumerate() {
-            let n = char::from(b'1' + u8::try_from(i).unwrap());
-            let code = [
-                Code::Digit1,
-                Code::Digit2,
-                Code::Digit3,
-                Code::Digit4,
-                Code::Digit5,
-                Code::Digit6,
-            ][i];
-            app.screen = if entry.screen == Screen::Dashboard {
-                Screen::Connection
-            } else {
-                Screen::Dashboard
-            };
-            assert!(is(
-                shortcut(&app, &ctrl_digit(n, code)),
-                &format!("Some(SelectScreen({:?}))", entry.screen)
-            ));
-        }
-        // A ordem nova: Aparelhos no 5 e Ajustes no 6.
-        app.screen = Screen::Dashboard;
-        assert!(is(
-            shortcut(&app, &ctrl_digit('5', Code::Digit5)),
-            "Some(SelectScreen(Connection))"
-        ));
-        assert!(is(
-            shortcut(&app, &ctrl_digit('6', Code::Digit6)),
-            "Some(SelectScreen(Settings))"
-        ));
-        // Teclado numerico, alem da fileira de cima.
-        app.screen = Screen::Dashboard;
-        assert!(is(
-            shortcut(&app, &ctrl_digit('3', Code::Numpad3)),
-            "Some(SelectScreen(Reserves))"
-        ));
-        // NumLock desligado: Numpad1 com Ctrl e Ctrl+End, nao troca de tela.
-        let end = press(Key::Named(Named::End), Code::Numpad1, Modifiers::CTRL);
-        assert!(shortcut(&app, &end).is_none());
-        // Alem da ultima tela, a tela atual, sem Ctrl ou segurado: nada.
-        assert!(shortcut(&app, &ctrl_digit('7', Code::Digit7)).is_none());
-        assert!(shortcut(&app, &ctrl_digit('1', Code::Digit1)).is_none());
-        assert!(
-            shortcut(
-                &app,
-                &press(Key::Character("2".into()), Code::Digit2, Modifiers::empty())
-            )
-            .is_none()
-        );
-        let held = KeyPress {
-            repeat: true,
-            ..ctrl_digit('2', Code::Digit2)
-        };
-        assert!(shortcut(&app, &held).is_none());
-    }
-
-    #[test]
-    fn alt_setas_so_onde_ha_seletor_de_mes() {
-        let (mut app, _dir) = app();
-        let left = alt(Named::ArrowLeft, Code::ArrowLeft);
-        let right = alt(Named::ArrowRight, Code::ArrowRight);
-        for screen in [Screen::Dashboard, Screen::Transactions] {
-            app.screen = screen;
-            assert!(is(shortcut(&app, &left), "Some(PrevMonth)"));
-            assert!(is(shortcut(&app, &right), "Some(NextMonth)"));
-        }
-        for screen in [
-            Screen::Reserves,
-            Screen::Analysis,
-            Screen::Connection,
-            Screen::Settings,
-        ] {
-            app.screen = screen;
-            assert!(shortcut(&app, &left).is_none());
-        }
-    }
-
-    #[test]
-    fn ctrl_h_so_onde_o_olho_existe_e_sem_repeticao() {
-        let (mut app, _dir) = app();
-        for screen in [
-            Screen::Dashboard,
-            Screen::Transactions,
-            Screen::Reserves,
-            Screen::Analysis,
-        ] {
-            app.screen = screen;
-            assert!(is(shortcut(&app, &ctrl_h()), "Some(ToggleHideValues)"));
-        }
-        for screen in [Screen::Connection, Screen::Settings] {
-            app.screen = screen;
-            assert!(shortcut(&app, &ctrl_h()).is_none());
-        }
-        app.screen = Screen::Dashboard;
-        let held = KeyPress {
-            repeat: true,
-            ..ctrl_h()
-        };
-        assert!(shortcut(&app, &held).is_none());
-        // Layout nao latino: a posicao fisica do H vale.
-        let cyrillic = press(Key::Character("р".into()), Code::KeyH, Modifiers::CTRL);
-        assert!(is(shortcut(&app, &cyrillic), "Some(ToggleHideValues)"));
-    }
-
-    #[test]
-    fn tab_anda_entre_os_campos() {
-        let (app, _dir) = app();
-        assert!(is(shortcut(&app, &tab(false)), "Some(FocusNext)"));
-        assert!(is(shortcut(&app, &tab(true)), "Some(FocusPrevious)"));
-    }
-
-    #[test]
-    fn atalho_passa_pelo_update() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
-        let _ =
-            super::super::app::update(&mut app, Message::KeyPressed(ctrl_digit('2', Code::Digit2)));
-        assert_eq!(app.screen, Screen::Transactions);
-        // Tab vira a operacao de foco (uma tarefa para o iced); tecla sem atalho, nenhuma.
-        let effects = super::super::app::step(&mut app, Message::KeyPressed(tab(false)));
-        assert!(matches!(effects.as_slice(), [Effect::FocusNext]));
-        let effects = super::super::app::step(&mut app, Message::KeyPressed(tab(true)));
-        assert!(matches!(effects.as_slice(), [Effect::FocusPrevious]));
-        let effects = super::super::app::step(
-            &mut app,
-            Message::KeyPressed(press(
-                Key::Character("x".into()),
-                Code::KeyX,
-                Modifiers::empty(),
-            )),
-        );
-        assert!(effects.is_empty());
-        assert_eq!(app.screen, Screen::Transactions);
-        let before = app.month_idx;
-        let _ = super::super::app::update(
-            &mut app,
-            Message::KeyPressed(alt(Named::ArrowLeft, Code::ArrowLeft)),
-        );
-        assert_eq!(app.month_idx, before - 1);
-    }
-
-    #[test]
-    fn esc_fecha_o_conectar_um_celular_e_os_atalhos_param_por_baixo() {
-        use crate::ui_model::connect::ConnectFlow;
-        let (mut app, _dir) = app();
-        app.screen = Screen::Connection;
-        app.connect = Some(ConnectFlow::new(true));
-        assert!(matches!(
-            shortcut(&app, &esc()),
-            Some(Message::ConnectClose)
-        ));
-        assert!(shortcut(&app, &ctrl_digit('1', Code::Digit1)).is_none());
-        assert!(shortcut(&app, &tab(false)).is_none());
-        // O fluxo em tela (sem modal) nao e dialogo: Esc nao faz nada e os atalhos valem.
-        app.connect = Some(ConnectFlow::new(false));
-        assert!(shortcut(&app, &esc()).is_none());
-        assert!(shortcut(&app, &ctrl_digit('1', Code::Digit1)).is_some());
     }
 }

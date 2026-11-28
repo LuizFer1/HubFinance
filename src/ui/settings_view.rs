@@ -9,7 +9,7 @@ use iced::widget::text::Wrapping;
 use iced::widget::{Column, container, row, text};
 use iced::{Alignment, Element, Length, Padding};
 
-use super::app::{App, CopyTarget, Message};
+use super::app::{CopyTarget, Msg, State};
 use super::theme::{ButtonKind, ButtonSize, Tokens, space, type_scale};
 use super::widgets::{SegmentedSize, SegmentedVariant};
 use super::{fonts, icons, widgets};
@@ -21,9 +21,9 @@ const COLUMN_MAX: f32 = 720.0;
 /// Coluna do nome da secao, a esquerda das linhas.
 const SECTION_LABEL: f32 = 120.0;
 
-pub fn view(app: &App) -> Element<'_, Message> {
+pub fn view(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
-    let mut sections: Vec<Element<'_, Message>> = vec![
+    let mut sections: Vec<Element<'_, Msg>> = vec![
         section(t, "Aparência", vec![theme_row(app), reduce_motion_row(app)]),
         section(t, "Privacidade", vec![hide_values_row(app)]),
     ];
@@ -46,11 +46,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
 /// Nome da secao a esquerda (13 `text_muted`, na altura da primeira linha) e as linhas a
 /// direita, uma sob a outra.
-fn section<'a>(
-    t: &'static Tokens,
-    name: &'a str,
-    rows: Vec<Element<'a, Message>>,
-) -> Element<'a, Message> {
+fn section<'a>(t: &'static Tokens, name: &'a str, rows: Vec<Element<'a, Msg>>) -> Element<'a, Msg> {
     // (52 - 18) / 2: a linha de 13 px centrada na primeira linha de 52.
     let label = container(text(name).size(type_scale::LABEL).color(t.text_muted))
         .width(SECTION_LABEL)
@@ -65,9 +61,9 @@ fn section<'a>(
         .into()
 }
 
-fn theme_row(app: &App) -> Element<'_, Message> {
+fn theme_row(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
-    let option = |label, mode| (label, app.theme == mode, Message::SetTheme(mode));
+    let option = |label, mode| (label, app.theme == mode, Msg::SetTheme(mode));
     widgets::settings_row(
         t,
         "Tema",
@@ -87,7 +83,7 @@ fn theme_row(app: &App) -> Element<'_, Message> {
 }
 
 /// Desliga as tres animacoes (scrim, toast, cursor da resposta): o estado final aparece na hora.
-fn reduce_motion_row(app: &App) -> Element<'_, Message> {
+fn reduce_motion_row(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     widgets::settings_row(
         t,
@@ -98,31 +94,27 @@ fn reduce_motion_row(app: &App) -> Element<'_, Message> {
                 .color(t.text_muted)
                 .into(),
         ),
-        widgets::toggle(
-            t,
-            app.motion.reduce(),
-            Some(|_| Message::ToggleReduceMotion),
-        ),
+        widgets::toggle(t, app.motion.reduce(), Some(|_| Msg::ToggleReduceMotion)),
     )
 }
 
 /// O mesmo estado do olho do cabecalho: ligar aqui e la e a mesma preferencia.
-fn hide_values_row(app: &App) -> Element<'_, Message> {
+fn hide_values_row(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     widgets::settings_row(
         t,
         "Ocultar valores",
         None,
-        widgets::toggle(t, app.hide_values, Some(|_| Message::ToggleHideValues)),
+        widgets::toggle(t, app.hide_values, Some(|_| Msg::ToggleHideValues)),
     )
 }
 
 /// So onde o sistema tem a opcao (Windows com bandeja). Sem bandeja fechar a janela desliga o
 /// hub, e a frase sobre o relogio seria mentira: a secao inteira some.
-fn startup_rows(app: &App) -> Option<Vec<Element<'_, Message>>> {
+fn startup_rows(app: &State) -> Option<Vec<Element<'_, Msg>>> {
     let t = app.iced.tokens;
     let enabled = app.autostart?;
-    let detail: Option<Element<'_, Message>> = app.autostart_failed.then(|| {
+    let detail: Option<Element<'_, Msg>> = app.autostart_failed.then(|| {
         text("Não foi possível alterar. Veja o log.")
             .size(type_scale::META)
             .color(t.expense_fg)
@@ -132,7 +124,7 @@ fn startup_rows(app: &App) -> Option<Vec<Element<'_, Message>>> {
         t,
         "Iniciar com o Windows",
         detail,
-        widgets::toggle(t, enabled, Some(Message::SetAutostart)),
+        widgets::toggle(t, enabled, Some(Msg::SetAutostart)),
     );
     let note = container(
         text(
@@ -151,7 +143,7 @@ fn startup_rows(app: &App) -> Option<Vec<Element<'_, Message>>> {
 }
 
 /// "Configurar" abre o dialogo em passos do assistente aqui mesmo, por cima de Ajustes.
-fn assistant_row(app: &App) -> Element<'_, Message> {
+fn assistant_row(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let summary = assistant_summary(&app.snapshot.assistant.settings);
     widgets::settings_row(
@@ -159,15 +151,15 @@ fn assistant_row(app: &App) -> Element<'_, Message> {
         &summary,
         None,
         widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Configurar")
-            .on_press(Message::ConfigureAssistant),
+            .on_press(Msg::ConfigureAssistant),
     )
 }
 
 /// Versao com "Versoes no GitHub", as duas pastas com "Copiar" e a frase sobre a internet.
-fn about_rows(app: &App) -> Vec<Element<'_, Message>> {
+fn about_rows(app: &State) -> Vec<Element<'_, Msg>> {
     let t = app.iced.tokens;
     let lines = about_lines(&app.snapshot);
-    let path = |p: String| -> Option<Element<'_, Message>> {
+    let path = |p: String| -> Option<Element<'_, Msg>> {
         Some(
             text(breakable_path(&p))
                 .size(type_scale::META)
@@ -210,17 +202,17 @@ fn about_rows(app: &App) -> Vec<Element<'_, Message>> {
     ]
 }
 
-fn copy_button(app: &App, target: CopyTarget) -> Element<'_, Message> {
+fn copy_button(app: &State, target: CopyTarget) -> Element<'_, Msg> {
     widgets::copy_button(
         app.iced.tokens,
         app.is_copied(target),
-        Some(Message::Copy(target)),
+        Some(Msg::Copy(target)),
     )
 }
 
 /// "Versoes no GitHub" abre o navegador do sistema; se nao abrir, a URL com "Copiar", sem
 /// dialogo (spec de atualizacao, "Tratamento de erros").
-fn releases_link(app: &App) -> Element<'_, Message> {
+fn releases_link(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     if app.releases_open_failed {
         return row![
@@ -247,7 +239,7 @@ fn releases_link(app: &App) -> Element<'_, Message> {
         .spacing(6)
         .align_y(Alignment::Center),
     )
-    .on_press(Message::OpenReleases)
+    .on_press(Msg::OpenReleases)
     .into()
 }
 
@@ -288,7 +280,7 @@ mod tests {
         assert_eq!(startup_rows(&app).map(|r| r.len()), Some(2));
         app.autostart_failed = true;
         app.releases_open_failed = true;
-        let _ = update(&mut app, Message::SetTheme(ThemeMode::Light));
+        let _ = update(&mut app, Msg::SetTheme(ThemeMode::Light));
         let _ = view(&app);
         let _ = super::super::shell::root(&app);
     }

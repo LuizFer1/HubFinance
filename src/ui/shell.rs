@@ -9,7 +9,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length, Padding, Vector, mouse};
 
-use super::app::{App, Message, Screen};
+use super::app::{Msg, Screen, State};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, space};
 use super::widgets::{SegmentedSize, SegmentedVariant};
 use super::{
@@ -19,6 +19,7 @@ use super::{
 use crate::advisor::Severity;
 use crate::dashboard::contract::Book;
 use crate::hub::snapshot::Status;
+pub(super) use crate::ui_model::shell::failure;
 use crate::ui_model::shell::{
     Arrival, DASHBOARD_LINE, OPENING_TEXT, RESERVES_QUESTION, arrival, brand_subtitle,
     nav_shortcut, plural, thousands, transactions_question,
@@ -35,7 +36,7 @@ const SIDEBAR_WIDTH: f32 = 232.0;
 const EDGE: f32 = 6.0;
 const CORNER: f32 = 12.0;
 
-pub fn root(app: &App) -> Element<'_, Message> {
+pub fn root(app: &State) -> Element<'_, Msg> {
     let mut layers = stack![frame(app)].width(Length::Fill).height(Length::Fill);
     if !app.maximized {
         layers = layers.push(resize_frame());
@@ -57,7 +58,7 @@ pub fn root(app: &App) -> Element<'_, Message> {
         layers = layers.push(preview);
     }
     // O "Desfazer" ganha do aviso (tem acao e prazo que manda algo ao nucleo); a escolha e
-    // feita em `App::scene`, e o `motion` guarda o que desce depois de sair do estado.
+    // feita em `State::scene`, e o `motion` guarda o que desce depois de sair do estado.
     if let Some((progress, shown, live)) = app.motion.toast() {
         layers = layers.push(toast(
             app.iced.tokens,
@@ -86,7 +87,7 @@ fn toast<'a>(
     undo: bool,
     live: bool,
     progress: f32,
-) -> Element<'a, Message> {
+) -> Element<'a, Msg> {
     let mut content = row![
         icons::icon(icons::CHECK_CIRCLE, 14.0, t.income_fg),
         text(message).size(13).color(t.text),
@@ -96,7 +97,7 @@ fn toast<'a>(
     if undo {
         let button = widgets::action_button(t, ButtonKind::Ghost, ButtonSize::Compact, "Desfazer");
         content = content.push(if live {
-            button.on_press(Message::UndoRemove)
+            button.on_press(Msg::UndoRemove)
         } else {
             button
         });
@@ -125,7 +126,7 @@ fn toast<'a>(
         .into()
 }
 
-fn frame(app: &App) -> Element<'_, Message> {
+fn frame(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     // Lateral e conteudo no mesmo fundo, sem divisoria: no design a navegacao fica sobre o
     // fundo da pagina. Um container so para os dois leva o gradiente.
@@ -142,7 +143,7 @@ fn frame(app: &App) -> Element<'_, Message> {
 
 // ---- barra de titulo ----
 
-fn titlebar(app: &App) -> Element<'_, Message> {
+fn titlebar(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let mark = container(icons::icon(icons::HOUSE_LINE, 11.0, t.accent_400))
         .center(18)
@@ -157,16 +158,16 @@ fn titlebar(app: &App) -> Element<'_, Message> {
             .height(TITLEBAR_HEIGHT)
             .align_y(Alignment::Center),
     )
-    .on_press(Message::TitlePressed)
-    .on_release(Message::TitleReleased)
-    .on_move(|_| Message::TitleMoved)
-    .on_double_click(Message::ToggleMaximize);
+    .on_press(Msg::TitlePressed)
+    .on_release(Msg::TitleReleased)
+    .on_move(|_| Msg::TitleMoved)
+    .on_double_click(Msg::ToggleMaximize);
 
     // O icone pega a cor do texto do botao (que muda no hover do fechar): sem cor propria.
     let controls = row![
-        titlebar_control(t, icons::MINUS, 14.0, false, Message::Minimize),
-        titlebar_control(t, icons::SQUARE, 12.0, false, Message::ToggleMaximize),
-        titlebar_control(t, icons::X, 14.0, true, Message::CloseRequested),
+        titlebar_control(t, icons::MINUS, 14.0, false, Msg::Minimize),
+        titlebar_control(t, icons::SQUARE, 12.0, false, Msg::ToggleMaximize),
+        titlebar_control(t, icons::X, 14.0, true, Msg::CloseRequested),
     ];
     container(row![grip, controls].align_y(Alignment::Center))
         .width(Length::Fill)
@@ -180,8 +181,8 @@ fn titlebar_control<'a>(
     glyph: &'static str,
     size: f32,
     close: bool,
-    message: Message,
-) -> Element<'a, Message> {
+    message: Msg,
+) -> Element<'a, Msg> {
     button(
         container(
             text(glyph)
@@ -203,12 +204,12 @@ fn titlebar_control<'a>(
 
 /// Bordas de 6 px (cantos de 12 px) sobre a janela inteira; o centro e um `Space`, que nao
 /// tem interacao e por isso deixa os eventos passarem para a camada de baixo.
-fn resize_frame<'a>() -> Element<'a, Message> {
+fn resize_frame<'a>() -> Element<'a, Msg> {
     use crate::ui_model::window::ResizeEdge as D;
     let grip = |w: Length, h: Length, direction: D, cursor: mouse::Interaction| {
         mouse_area(Space::new().width(w).height(h))
             .interaction(cursor)
-            .on_press(Message::Resize(direction))
+            .on_press(Msg::Resize(direction))
     };
     let diag_down = mouse::Interaction::ResizingDiagonallyDown;
     let diag_up = mouse::Interaction::ResizingDiagonallyUp;
@@ -248,7 +249,7 @@ fn resize_frame<'a>() -> Element<'a, Message> {
 
 // ---- barra lateral ----
 
-fn sidebar(app: &App) -> Element<'_, Message> {
+fn sidebar(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let mark = container(icons::icon(icons::HOUSE_LINE, 20.0, t.accent_400))
         .center(36)
@@ -314,7 +315,7 @@ pub(super) struct NavEntry {
 ///
 /// Sem contagens (decisao do dono, 25/11): o total de lancamentos ou de aparelhos nao pede
 /// nada a ninguem. A excecao e a Analise, com o numero de alertas, que e o que pede acao.
-pub(super) fn nav_entries(app: &App) -> [NavEntry; 6] {
+pub(super) fn nav_entries(app: &State) -> [NavEntry; 6] {
     [
         NavEntry {
             screen: Screen::Dashboard,
@@ -357,7 +358,7 @@ pub(super) fn nav_entries(app: &App) -> [NavEntry; 6] {
 
 /// Achados de severidade "alerta" da conta aberta, do mesmo modelo que a Analise desenha.
 /// Zero nao aparece: um "0" na lateral seria ruido.
-pub(super) fn alert_count(app: &App) -> Option<usize> {
+pub(super) fn alert_count(app: &State) -> Option<usize> {
     let n = app
         .analysis
         .findings
@@ -368,19 +369,19 @@ pub(super) fn alert_count(app: &App) -> Option<usize> {
 }
 
 /// Lancamentos vivos da conta escolhida (do modelo do Dashboard, que ja os contou).
-pub(super) fn transactions_count(app: &App) -> usize {
+pub(super) fn transactions_count(app: &State) -> usize {
     app.dashboard.sidebar.transactions
 }
 
 /// Aparelhos ativos: e o numero de linhas da lista "Usuarios conectados" (sem a remocao
 /// pendente, que ja sumiu da tela).
-pub(super) fn active_devices(app: &App) -> usize {
+pub(super) fn active_devices(app: &State) -> usize {
     active_device_names(app).len()
 }
 
 /// Nomes dos aparelhos ativos, na ordem do snapshot. A mesma regra de `active_devices`, para o
 /// "Aguardando o primeiro sync de ..." nunca citar um aparelho que a contagem nao conta.
-pub(super) fn active_device_names(app: &App) -> Vec<&str> {
+pub(super) fn active_device_names(app: &State) -> Vec<&str> {
     let pending = app
         .pending_removal
         .as_ref()
@@ -394,7 +395,7 @@ pub(super) fn active_device_names(app: &App) -> Vec<&str> {
 }
 
 /// Algum aparelho ativo (a regra de `active_device_names`) ja fez um envio ou recebimento.
-pub(super) fn any_active_synced(app: &App) -> bool {
+pub(super) fn any_active_synced(app: &State) -> bool {
     let pending = app
         .pending_removal
         .as_ref()
@@ -408,13 +409,13 @@ pub(super) fn any_active_synced(app: &App) -> bool {
 
 /// Ha alguma linha viva no hub, em qualquer conta: lancamento ou reserva. E o que separa o hub
 /// que nunca recebeu um sync (passos, espera) da tela que so esta vazia nesta conta.
-pub(super) fn hub_has_rows(app: &App) -> bool {
+pub(super) fn hub_has_rows(app: &State) -> bool {
     let ds = &app.snapshot.dashboard;
     !ds.is_empty() || ds.has_reserves()
 }
 
 /// O estado de uma tela de dados que tem (ou nao) o que mostrar.
-pub(super) fn screen_arrival(app: &App, screen_has_data: bool) -> Arrival {
+pub(super) fn screen_arrival(app: &State, screen_has_data: bool) -> Arrival {
     arrival(
         &app.snapshot.status,
         screen_has_data,
@@ -429,7 +430,7 @@ pub(super) fn screen_arrival(app: &App, screen_has_data: bool) -> Arrival {
 /// Resumo e mais uma larga). Nao imita cada tela: dura o tempo de abrir o banco. A altura total
 /// (~425: texto, 100 + 160 + 100 e tres espacos de 16) cabe nos ~470 que sobram em 1024x720 com
 /// o cabecalho quebrado em duas linhas, porque em Lancamentos a casca nao rola (`owns_scroll`).
-pub(super) fn opening(app: &App) -> Element<'_, Message> {
+pub(super) fn opening(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let block = |height: f32| {
         container(Space::new())
@@ -456,7 +457,7 @@ pub(super) fn opening(app: &App) -> Element<'_, Message> {
 /// primeiro uso caia no Resumo sem caminho para Aparelhos. So navega (a Aparelhos, com o
 /// fluxo de pareamento aberto); o hub nunca cria dado.
 /// Com aparelho pareado o vazio e "aguardando sync" (ou filtro), e o botao nao ajudaria.
-pub(super) fn connect_phone_button(app: &App) -> Option<Element<'_, Message>> {
+pub(super) fn connect_phone_button(app: &State) -> Option<Element<'_, Msg>> {
     // So com o nucleo no ar: no `Starting` a lista de aparelhos ainda vem vazia do snapshot
     // inicial, e o botao piscaria no boot de quem ja tem celular pareado.
     let up = matches!(app.snapshot.status, Status::Running | Status::NoNetwork);
@@ -467,7 +468,7 @@ pub(super) fn connect_phone_button(app: &App) -> Option<Element<'_, Message>> {
             ButtonSize::Regular,
             "Conectar um celular",
         )
-        .on_press(Message::ConnectPhone)
+        .on_press(Msg::ConnectPhone)
         .into()
     })
 }
@@ -476,7 +477,7 @@ pub(super) fn connect_phone_button(app: &App) -> Option<Element<'_, Message>> {
 /// encostada a esquerda, icone `accent_400` e rotulo Medium; o inativo herda o texto de apoio
 /// do botao. A barra tem lugar reservado nos dois estados, para o icone nao pular ao trocar.
 /// O tooltip mostra o atalho (`n` e a posicao na navegacao).
-fn nav_item(app: &App, entry: NavEntry, n: usize) -> Element<'_, Message> {
+fn nav_item(app: &State, entry: NavEntry, n: usize) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let active = app.screen == entry.screen;
     let icon = if active {
@@ -527,7 +528,7 @@ fn nav_item(app: &App, entry: NavEntry, n: usize) -> Element<'_, Message> {
         .padding(0)
         .width(Length::Fill)
         .style(theme::nav_item(t, active))
-        .on_press(Message::SelectScreen(entry.screen));
+        .on_press(Msg::SelectScreen(entry.screen));
     tooltip(
         item,
         container(text(nav_shortcut(n)).size(12).color(t.text))
@@ -541,7 +542,7 @@ fn nav_item(app: &App, entry: NavEntry, n: usize) -> Element<'_, Message> {
 }
 
 /// Endereco principal e porta HTTPS; sem rede, so a porta.
-fn address(app: &App) -> Option<String> {
+fn address(app: &State) -> Option<String> {
     app.snapshot
         .addresses
         .first()
@@ -556,7 +557,7 @@ pub(super) struct StatusLines {
     pub detail: Option<String>,
 }
 
-pub(super) fn status_lines(app: &App) -> StatusLines {
+pub(super) fn status_lines(app: &State) -> StatusLines {
     let t = app.iced.tokens;
     let snap = &app.snapshot;
     match &snap.status {
@@ -606,18 +607,18 @@ pub(super) fn status_lines(app: &App) -> StatusLines {
 }
 
 /// Ha lancamento ou reserva viva no hub: uma casa que so sincronizou reservas tem dados.
-pub(super) fn has_data(app: &App) -> bool {
+pub(super) fn has_data(app: &State) -> bool {
     has_transactions(app) || app.scope.has_reserves()
 }
 
 /// Ha lancamento vivo: o estado vazio do Dashboard e de Lancamentos e sobre lancamentos.
-pub(super) fn has_transactions(app: &App) -> bool {
+pub(super) fn has_transactions(app: &State) -> bool {
     app.dashboard.sidebar.has_data
 }
 
 /// "Último sync há 2 min · Pixel da Ana": o maior entre envio e recebimento de todos os
 /// aparelhos. RFC 3339 em UTC compara como string, entao nao precisa parsear para escolher.
-pub(super) fn last_sync_line(app: &App) -> String {
+pub(super) fn last_sync_line(app: &State) -> String {
     let latest = app
         .snapshot
         .devices
@@ -637,7 +638,7 @@ pub(super) fn last_sync_line(app: &App) -> String {
 
 /// Ponto de 7 px com halo de 3 px na cor a 18 % (o `box-shadow: 0 0 0 3px` do design): o
 /// iced nao tem sombra espalhada, entao o halo e um circulo de 13 px por baixo.
-fn halo_dot<'a>(color: iced::Color) -> Element<'a, Message> {
+fn halo_dot<'a>(color: iced::Color) -> Element<'a, Msg> {
     container(widgets::dot(color, 7.0))
         .center(13)
         .style(theme::fill(theme::alpha(color, 0.18), 6.5))
@@ -646,7 +647,7 @@ fn halo_dot<'a>(color: iced::Color) -> Element<'a, Message> {
 
 /// Card de status: `surface`, raio 8, 14 de respiro; titulo 13 e as linhas em `text_muted`.
 /// Clicavel: leva a Aparelhos, onde estao o endereco e quem esta conectado.
-fn status_card(app: &App) -> Element<'_, Message> {
+fn status_card(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let lines = status_lines(app);
     let mut col = column![
@@ -678,15 +679,15 @@ fn status_card(app: &App) -> Element<'_, Message> {
 pub(super) const STATUS_CARD_TARGET: Screen = Screen::Connection;
 
 /// A mensagem do clique no card, a unica que `status_card` usa.
-pub(super) fn status_card_press() -> Message {
-    Message::SelectScreen(STATUS_CARD_TARGET)
+pub(super) fn status_card_press() -> Msg {
+    Msg::SelectScreen(STATUS_CARD_TARGET)
 }
 
 // ---- conteudo ----
 
-fn content(app: &App) -> Element<'_, Message> {
+fn content(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
-    let body: Element<'_, Message> = if let Some(msg) = failure(app) {
+    let body: Element<'_, Msg> = if let Some(msg) = failure(app) {
         failed_card(app, msg)
     } else {
         match app.screen {
@@ -709,7 +710,7 @@ fn content(app: &App) -> Element<'_, Message> {
         page = page.push(banner);
     }
     let page = page.push(body);
-    let scroll: Element<'_, Message> = if owns_scroll(app) {
+    let scroll: Element<'_, Msg> = if owns_scroll(app) {
         // A tela tem rolagem propria (Lancamentos: filtros, resumo e cabecalho da tabela fixos,
         // so as linhas rolam; Analise: os achados com `CONTENT_SCROLL` e a conversa com o seu
         // id). Aqui ela so ganha o respiro e a altura que sobra; a rolagem dela
@@ -761,14 +762,14 @@ fn content(app: &App) -> Element<'_, Message> {
 /// A tela atual gerencia a propria rolagem? Lancamentos (B7: so as linhas rolam) e Analise
 /// (8.5: cada painel com a sua), e so quando aparecem de fato: com o hub em erro o card de falha
 /// entra no lugar e volta a rolagem geral.
-pub(super) fn owns_scroll(app: &App) -> bool {
+pub(super) fn owns_scroll(app: &State) -> bool {
     matches!(app.screen, Screen::Transactions | Screen::Analysis) && failure(app).is_none()
 }
 
 /// Largura util do conteudo (sem a lateral e o padding de 32 + 32; a divisoria vertical saiu
 /// com a lateral Grafite). Sem teto: com o maximo de 1180 da 0.0.2 a janela maximizada deixava
 /// uma faixa vazia a direita. As telas usam para decidir colunas: o iced nao tem `auto-fit`.
-pub(super) fn content_width(app: &App) -> f32 {
+pub(super) fn content_width(app: &State) -> f32 {
     app.window_size.w - SIDEBAR_WIDTH - 64.0
 }
 
@@ -805,7 +806,7 @@ pub(super) fn header_controls(screen: Screen) -> HeaderControls {
 /// Cabecalho fixo, fora da rolagem: titulo 30 e uma linha 13 `text_muted` a esquerda
 /// (`header_line`); a direita, conforme a tela, o seletor de conta, o de mes e o olho de
 /// ocultar valores. Abaixo de `HEADER_WRAP_WIDTH` os controles descem para baixo do titulo.
-fn header(app: &App) -> Element<'_, Message> {
+fn header(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let (title, line) = header_line(app);
     // Validado; fora da escala de proposito.
@@ -815,8 +816,8 @@ fn header(app: &App) -> Element<'_, Message> {
     }
     let shown = header_controls(app.screen);
     if shown.month {
-        let prev = (app.month_idx > 0).then_some(Message::PrevMonth);
-        let next = (app.month_idx + 1 < app.months.len()).then_some(Message::NextMonth);
+        let prev = (app.month_idx > 0).then_some(Msg::PrevMonth);
+        let next = (app.month_idx + 1 < app.months.len()).then_some(Msg::NextMonth);
         controls = controls.push(widgets::month_picker(
             t,
             &app.dashboard.header.month_label,
@@ -833,7 +834,7 @@ fn header(app: &App) -> Element<'_, Message> {
         controls = controls.push(connect);
     }
     let title = widgets::page_title(t, title, &line);
-    let head: Element<'_, Message> = if header_inline(content_width(app)) {
+    let head: Element<'_, Msg> = if header_inline(content_width(app)) {
         row![container(title).width(Length::Fill), controls]
             .spacing(16)
             .align_y(Alignment::Center)
@@ -861,7 +862,7 @@ fn header(app: &App) -> Element<'_, Message> {
 ///   responde ("O que entrou e saiu em agosto?", "Quanto está guardado, e para quê?");
 /// - sem nada sincronizado, "Nada sincronizado ainda": uma pergunta sobre dado que nao existe
 ///   nao faz sentido.
-pub(super) fn header_line(app: &App) -> (&str, String) {
+pub(super) fn header_line(app: &State) -> (&str, String) {
     let (title, subtitle) = titles(app);
     let Some(partial) = partial_chip(app) else {
         return (title, subtitle);
@@ -877,7 +878,7 @@ pub(super) fn header_line(app: &App) -> (&str, String) {
 
 /// "Parcial · até 19 nov": so nas telas com seletor de mes, no mes corrente e com dados (o
 /// modelo ja decide as duas ultimas). Vira a linha do cabecalho (`header_line`).
-pub(super) fn partial_chip(app: &App) -> Option<&str> {
+pub(super) fn partial_chip(app: &State) -> Option<&str> {
     matches!(app.screen, Screen::Dashboard | Screen::Transactions)
         .then_some(app.dashboard.header.partial.as_deref())
         .flatten()
@@ -885,7 +886,7 @@ pub(super) fn partial_chip(app: &App) -> Option<&str> {
 
 /// Olho de 44 px com tooltip "Ocultar valores" / "Mostrar valores" (o `aria-label` do design).
 /// Com valores ocultos o glifo vira `eye-slash`, para o estado ficar visivel sem o tooltip.
-fn hide_values_button(app: &App) -> Element<'_, Message> {
+fn hide_values_button(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let glyph = if app.hide_values {
         icons::EYE_SLASH
@@ -897,18 +898,18 @@ fn hide_values_button(app: &App) -> Element<'_, Message> {
         glyph,
         ButtonSize::Large,
         app.dashboard.header.hide_toggle.as_str(),
-        Some(Message::ToggleHideValues),
+        Some(Msg::ToggleHideValues),
     )
 }
 
 /// Seletor de conta. So aparece com uma linha `books` viva de conta comercial (derivado das
 /// linhas, como no app) e fora de Aparelhos e de Ajustes, que sao do hub e nao de uma conta.
-pub(super) fn book_switch(app: &App) -> Option<Element<'_, Message>> {
+pub(super) fn book_switch(app: &State) -> Option<Element<'_, Msg>> {
     let of_the_hub = matches!(app.screen, Screen::Connection | Screen::Settings);
     if of_the_hub || !app.snapshot.dashboard.has_business_book() {
         return None;
     }
-    let option = |book: Book| (book.label(), app.book == book, Message::SelectBook(book));
+    let option = |book: Book| (book.label(), app.book == book, Msg::SelectBook(book));
     Some(widgets::segmented(
         app.iced.tokens,
         SegmentedVariant::Pill,
@@ -920,7 +921,7 @@ pub(super) fn book_switch(app: &App) -> Option<Element<'_, Message>> {
 
 /// Titulo e subtitulo de cada tela. O do Dashboard vem pronto do modelo Grafite ("Resumo da
 /// casa"); a navegacao diz so "Resumo".
-pub(super) fn titles(app: &App) -> (&str, String) {
+pub(super) fn titles(app: &State) -> (&str, String) {
     let empty = !has_transactions(app);
     // No boot o vazio ainda nao quer dizer nada: "Nada sincronizado ainda" la seria o mesmo
     // vazio falso do corpo. A linha volta ao que a tela e; o corpo diz que esta abrindo.
@@ -956,19 +957,9 @@ pub(super) fn titles(app: &App) -> (&str, String) {
     }
 }
 
-/// Motivo do hub que nao subiu, se a tela atual deve dar lugar a ele. Ajustes fica de fora:
-/// tema, inicializacao e as pastas de dados e logs nao dependem do nucleo, e as pastas sao
-/// justamente o que a pessoa procura para entender a falha.
-pub(super) fn failure(app: &App) -> Option<&str> {
-    match &app.snapshot.status {
-        Status::Failed(msg) if app.screen != Screen::Settings => Some(msg),
-        _ => None,
-    }
-}
-
 /// Hub que nao subiu: no lugar de qualquer tela (menos Ajustes), o motivo e onde ficam os
 /// dados.
-fn failed_card<'a>(app: &'a App, msg: &'a str) -> Element<'a, Message> {
+fn failed_card<'a>(app: &'a State, msg: &'a str) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     // O padrao dos estados vazios (titulo 18, corpo 14), com o glifo na cor do erro e a pasta
     // de dados como nota: e ela que a pessoa procura para entender a falha.
@@ -1072,7 +1063,7 @@ mod tests {
         app.screen = Screen::Transactions;
         assert_eq!(titles(&app).1, "O que entrou e saiu em setembro?");
         // A pergunta acompanha o mes escolhido.
-        let _ = super::super::app::update(&mut app, Message::PrevMonth);
+        let _ = super::super::app::update(&mut app, Msg::PrevMonth);
         assert_eq!(titles(&app).1, "O que entrou e saiu em agosto?");
         app.screen = Screen::Dashboard;
         assert_eq!(titles(&app).1, "Somente leitura · dados do último sync");
@@ -1167,7 +1158,7 @@ mod tests {
         assert_eq!(partial_chip(&app), None);
 
         app.screen = Screen::Dashboard;
-        let _ = super::super::app::update(&mut app, Message::PrevMonth);
+        let _ = super::super::app::update(&mut app, Msg::PrevMonth);
         assert_eq!(partial_chip(&app), None);
         assert_eq!(app.dashboard.header.month_label, "Ago 2026");
 
@@ -1286,7 +1277,7 @@ mod tests {
         assert_eq!(STATUS_CARD_TARGET, Screen::Connection);
         assert!(matches!(
             status_card_press(),
-            Message::SelectScreen(STATUS_CARD_TARGET)
+            Msg::SelectScreen(STATUS_CARD_TARGET)
         ));
         app.screen = Screen::Dashboard;
         let _ = super::super::app::update(&mut app, status_card_press());
@@ -1361,7 +1352,7 @@ mod tests {
         app.transactions.synced_devices = 0;
         assert_eq!(header_line(&app).1, "Parcial · até 24 set");
         // Mes fechado: volta o subtitulo.
-        let _ = super::super::app::update(&mut app, Message::PrevMonth);
+        let _ = super::super::app::update(&mut app, Msg::PrevMonth);
         assert_eq!(header_line(&app), titles(&app));
         // Telas sem seletor de mes: sempre o subtitulo.
         for screen in [
@@ -1410,7 +1401,7 @@ mod tests {
     fn cabecalho_monta_em_toda_tela_com_valores_ocultos() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
-        let _ = crate::ui::app::update(&mut app, Message::ToggleHideValues);
+        let _ = crate::ui::app::update(&mut app, Msg::ToggleHideValues);
         assert!(app.hide_values);
         for screen in nav_entries(&app).map(|e| e.screen) {
             app.screen = screen;
@@ -1446,7 +1437,7 @@ mod tests {
     fn estados_sem_dados_escolhidos_pelo_app_e_montados_nas_tres_telas() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
-        let draw = |app: &mut App| {
+        let draw = |app: &mut State| {
             for screen in [Screen::Dashboard, Screen::Transactions, Screen::Reserves] {
                 app.screen = screen;
                 let _ = root(app);

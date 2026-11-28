@@ -8,20 +8,20 @@ use std::time::Duration;
 
 use iced::{Task, window};
 
-use super::app::{App, Message};
+use super::app::{Msg, State};
 use super::iced_side::model_id;
 use super::shell::CONTENT_SCROLL;
 use crate::config::UiPrefs;
 use crate::ui_model::effect::Effect;
 use crate::ui_model::window::ResizeEdge;
 
-pub(super) fn task(effect: Effect<Message>, app: &mut App) -> Task<Message> {
+pub(super) fn task(effect: Effect, app: &mut State) -> Task<Msg> {
     match effect {
         Effect::OpenWindow => {
             let (id, task) = window::open(super::window_settings());
             // O id vai ao estado na hora: os botoes da barra de titulo nao esperam o `WindowOpened`.
             app.window = Some(app.iced.register(id));
-            task.map(|id| Message::WindowOpened(model_id(id)))
+            task.map(|id| Msg::WindowOpened(model_id(id)))
         }
         Effect::FocusWindow => match iced_window(app) {
             // Clique na bandeja e segunda execucao dao ao processo o direito de foco; se o
@@ -32,17 +32,17 @@ pub(super) fn task(effect: Effect<Message>, app: &mut App) -> Task<Message> {
         Effect::CloseWindow => with_window(app, window::close),
         Effect::Minimize => with_window(app, |id| window::minimize(id, true)),
         Effect::ToggleMaximize => with_window(app, |id| {
-            window::toggle_maximize(id).chain(window::is_maximized(id).map(Message::Maximized))
+            window::toggle_maximize(id).chain(window::is_maximized(id).map(Msg::Maximized))
         }),
         Effect::QueryMaximized => {
-            with_window(app, |id| window::is_maximized(id).map(Message::Maximized))
+            with_window(app, |id| window::is_maximized(id).map(Msg::Maximized))
         }
         Effect::StartDrag => with_window(app, window::drag),
         Effect::After(duration, message) => {
             Task::perform(delay(duration), move |_| message.clone())
         }
         Effect::SavePrefs(prefs) => {
-            Task::perform(save_prefs(prefs, app.prefs_dir.clone()), |_| Message::Noop)
+            Task::perform(save_prefs(prefs, app.prefs_dir.clone()), |_| Msg::Noop)
         }
         Effect::CopyToClipboard(text) => iced::clipboard::write(text),
         Effect::OpenUrl(url) => {
@@ -50,7 +50,7 @@ pub(super) fn task(effect: Effect<Message>, app: &mut App) -> Task<Message> {
                 // `that_detached`, e nao `that`: em alguns Linux o `xdg-open` so volta quando o
                 // navegador fecha, e a thread da janela nao pode esperar.
                 tracing::warn!("nao foi possivel abrir o navegador: {err}");
-                return Task::done(Message::OpenUrlFailed);
+                return Task::done(Msg::OpenUrlFailed);
             }
             Task::none()
         }
@@ -73,14 +73,14 @@ pub(super) fn task(effect: Effect<Message>, app: &mut App) -> Task<Message> {
         // o laco, que ve a marca e sai.
         Effect::Exit => Task::batch([
             iced::exit(),
-            Task::perform(delay(Duration::from_millis(50)), |_| Message::Noop),
+            Task::perform(delay(Duration::from_millis(50)), |_| Msg::Noop),
         ]),
     }
 }
 
 /// Arrastar a borda para redimensionar e coisa so do iced (o GPUI usa o teste de posicao do
 /// sistema), por isso nao e um `Effect`; some com a iced.
-pub(super) fn resize(app: &mut App, edge: ResizeEdge) -> Task<Message> {
+pub(super) fn resize(app: &mut State, edge: ResizeEdge) -> Task<Msg> {
     let direction = match edge {
         ResizeEdge::North => window::Direction::North,
         ResizeEdge::South => window::Direction::South,
@@ -95,7 +95,7 @@ pub(super) fn resize(app: &mut App, edge: ResizeEdge) -> Task<Message> {
 }
 
 /// O id do iced da janela atual, pelo mapa do adaptador.
-fn iced_window(app: &App) -> Option<window::Id> {
+fn iced_window(app: &State) -> Option<window::Id> {
     app.window.and_then(|id| app.iced.iced_id(id))
 }
 
@@ -144,7 +144,7 @@ fn delay(duration: Duration) -> futures::channel::oneshot::Receiver<()> {
 }
 
 /// Acao sobre a janela; sem id ainda, nada (com um aviso so, para nao inundar o log).
-fn with_window(app: &mut App, action: impl FnOnce(window::Id) -> Task<Message>) -> Task<Message> {
+fn with_window(app: &mut State, action: impl FnOnce(window::Id) -> Task<Msg>) -> Task<Msg> {
     match iced_window(app) {
         Some(id) => action(id),
         None => {

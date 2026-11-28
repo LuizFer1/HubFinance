@@ -5,7 +5,7 @@ use iced::widget::text::Wrapping;
 use iced::widget::{container, row, text};
 use iced::{Alignment, Element, Length};
 
-use super::app::{App, Message};
+use super::app::{Msg, State};
 use super::theme::Tokens;
 use super::widgets::{RowEdge, RowHover};
 use super::{fonts, icons, widgets};
@@ -16,7 +16,7 @@ use crate::dashboard::list::{ListRow, RowAuthor};
 const VALUE_WIDTH: f32 = 128.0;
 
 /// Tile da categoria; sem categoria viva, o tile neutro com `circle-dashed`.
-pub(super) fn category_tile<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Message> {
+pub(super) fn category_tile<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Msg> {
     match (&r.category_icon, &r.category_color) {
         (Some(icon), Some(color)) => widgets::token_tile(t, icons::glyph(icon), color, 32.0),
         _ => widgets::token_tile(t, icons::CIRCLE_DASHED, "slate", 32.0),
@@ -24,18 +24,18 @@ pub(super) fn category_tile<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, 
 }
 
 /// Celula de autor de uma linha de lancamento.
-pub(super) fn author_cell<'a>(app: &'a App, r: &'a ListRow) -> Element<'a, Message> {
+pub(super) fn author_cell<'a>(app: &'a State, r: &'a ListRow) -> Element<'a, Msg> {
     author_cell_of(app, r.author.as_ref())
 }
 
 /// Avatar de 22 + nome; sem autor visivel, `circle-dashed` em `idle` e "—". Serve as
 /// linhas de lancamento e as de movimentacao de reserva.
 pub(super) fn author_cell_of<'a>(
-    app: &'a App,
+    app: &'a State,
     author: Option<&'a RowAuthor>,
-) -> Element<'a, Message> {
+) -> Element<'a, Msg> {
     let t = app.iced.tokens;
-    let (avatar, name): (Element<'a, Message>, String) = match author {
+    let (avatar, name): (Element<'a, Msg>, String) = match author {
         Some(author) => (
             widgets::avatar(
                 t,
@@ -66,7 +66,7 @@ pub(super) fn author_cell_of<'a>(
 
 /// Valor da linha (o texto vem pronto do modelo, mascarado com "Ocultar valores"): receita na
 /// cor de receita, despesa na cor do texto (so a receita ganha cor, como pede o README).
-pub(super) fn value_cell<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Message> {
+pub(super) fn value_cell<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Msg> {
     let color = match r.kind {
         Kind::Income => t.income_fg,
         Kind::Expense => t.text,
@@ -87,20 +87,20 @@ pub(super) fn value_cell<'a>(t: &'static Tokens, r: &ListRow) -> Element<'a, Mes
 /// parametro: 52 nos lancamentos e nas conversas, 56 nas movimentacoes de reserva, livre
 /// (`None`) na pessoa conectada, que cresce com as linhas de meta.
 pub(super) fn hover_row<'a>(
-    app: &'a App,
+    app: &'a State,
     id: &str,
-    content: impl Into<Element<'a, Message>>,
+    content: impl Into<Element<'a, Msg>>,
     padding: [u16; 2],
     edge: RowEdge,
     height: Option<f32>,
-) -> Element<'a, Message> {
+) -> Element<'a, Msg> {
     widgets::list_row(
         app.iced.tokens,
         content,
         RowHover {
             hovered: app.hover_row.as_deref() == Some(id),
-            enter: Message::HoverRow(id.to_string()),
-            exit: Message::UnhoverRow(id.to_string()),
+            enter: Msg::HoverRow(id.to_string()),
+            exit: Msg::UnhoverRow(id.to_string()),
         },
         height,
         padding,

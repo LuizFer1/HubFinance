@@ -3,6 +3,7 @@
 //! interface nova e a antiga gravarem exatamente a mesma coisa.
 
 use crate::assistant::settings::{ProviderChoice, Settings};
+use crate::ui_model::app::App;
 
 /// Dica da lista vazia; constante para o teste conferir o texto.
 pub const NO_MODELS_HINT: &str =
@@ -189,6 +190,34 @@ pub const CHOICES: [(ProviderChoice, &str, &str); 3] = [
         "OpenRouter. O resumo sai da sua rede.",
     ),
 ];
+
+/// O ultimo botao pode gravar? Ollama precisa de porta valida e de um modelo da lista que o
+/// teste trouxe **desta** porta (modelo de outra porta, ou de uma lista antiga, falharia na
+/// primeira pergunta); a nuvem, de modelo e de uma chave (a salva ou a digitada agora, que nao
+/// conta se for so espaco).
+pub fn can_finish(app: &App, setup: &AssistantSetup) -> bool {
+    if setup.saving.is_some() {
+        return false;
+    }
+    let view = &app.snapshot.assistant;
+    let ok = match setup.draft.choice {
+        ProviderChoice::None => true,
+        ProviderChoice::Local => {
+            let port = setup.draft.port();
+            let listed = match &view.models {
+                Some(Ok(models)) => setup
+                    .draft
+                    .local_model
+                    .as_ref()
+                    .is_some_and(|m| models.contains(m)),
+                _ => false,
+            };
+            port.is_some() && view.models_port == port && listed
+        }
+        ProviderChoice::Cloud => view.has_key || !app.key_input.trim().is_empty(),
+    };
+    ok && settings_to_save(&view.settings, &setup.draft).is_some()
+}
 
 #[cfg(test)]
 mod tests {

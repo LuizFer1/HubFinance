@@ -3,6 +3,7 @@
 //! tela, para a interface nova e os testes usarem as mesmas decisoes.
 
 use crate::hub::snapshot::{Snapshot, Status};
+use crate::ui_model::app::{App, Screen};
 
 /// Nucleo no ar (com ou sem rede local): o unico estado em que da para gerar codigo.
 pub fn is_up(snap: &Snapshot) -> bool {
@@ -22,6 +23,35 @@ pub fn guide_url(snap: &Snapshot) -> Option<String> {
     snap.addresses
         .first()
         .map(|ip| format!("http://{ip}:{}", snap.http_port))
+}
+
+// ---- o fluxo na tela ----
+
+/// Sem aparelho ativo e com o nucleo no ar: o fluxo ocupa a tela, sem modal. No `Starting` a
+/// lista ainda vem vazia do snapshot inicial, e o fluxo piscaria no boot de quem ja tem celular.
+///
+/// Conta pelo snapshot, e nao pela lista visivel: o aparelho com remocao pendente ainda conta.
+/// Senao o fluxo tomaria a tela durante o "Desfazer", e desfazer o esconderia de novo com o
+/// codigo do passo 3 valendo. O fluxo so substitui a lista depois que a remocao sai.
+pub fn in_screen_case(app: &App) -> bool {
+    is_up(&app.snapshot) && app.snapshot.devices.iter().all(|d| d.revoked)
+}
+
+/// O fluxo esta na tela, no lugar da lista?
+pub fn shows_in_screen_flow(app: &App) -> bool {
+    app.screen == Screen::Connection
+        && in_screen_case(app)
+        && !app.connect.as_ref().is_some_and(|f| f.modal)
+}
+
+/// O dialogo "Conectar um celular" esta aberto? E o que o Esc fecha e o que bloqueia os
+/// atalhos por baixo do scrim. Com o hub em falha (`shell::failure`, o mesmo criterio da casca)
+/// nao: o card de falha toma a tela, e um dialogo de pareamento por cima dele pediria um codigo
+/// que ninguem emite.
+pub fn dialog_open(app: &App) -> bool {
+    app.screen == Screen::Connection
+        && app.connect.as_ref().is_some_and(|f| f.modal)
+        && super::shell::failure(app).is_none()
 }
 
 /// Os tres passos do "Conectar um celular", na ordem em que a pessoa os faz.

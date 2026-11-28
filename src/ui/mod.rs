@@ -64,7 +64,7 @@ pub fn run(
     .font(fonts::PHOSPHOR_BYTES)
     .default_font(fonts::INTER)
     .antialiasing(true)
-    .theme(|app: &app::App, _window: window::Id| app.iced.iced_theme.clone())
+    .theme(|app: &app::State, _window: window::Id| app.iced.iced_theme.clone())
     .run()
 }
 

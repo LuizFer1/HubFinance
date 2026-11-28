@@ -2,7 +2,7 @@
 //! onde foi, O que vem, Últimos lançamentos e Quem lançou; sem lançamento, um dos estados de
 //! `shell::arrival` (abrindo, primeiro uso, aguardando ou "Sem dados").
 //!
-//! Tudo vem de `app.dashboard` (`GrafiteView`, calculado em `App::rebuild`) com os textos ja
+//! Tudo vem de `app.dashboard` (`GrafiteView`, calculado em `State::rebuild`) com os textos ja
 //! prontos: esta tela nao formata dinheiro, so escolhe tamanho, cor e lugar. Formatar aqui
 //! passaria por cima de "Ocultar valores", que mora no formatador do modelo.
 //!
@@ -17,7 +17,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Color, Element, Font, Length, Padding};
 
-use super::app::{App, Message, Screen};
+use super::app::{Msg, Screen, State};
 use super::charts::{
     EMPTY_HEIGHT, EMPTY_WIDTH, EmptyChartProgram, HISTORY_HEIGHT, HistoryProgram, MeterProgram,
     PACE_HEIGHT, PaceProgram, SwatchProgram,
@@ -152,13 +152,13 @@ struct Tile<'a> {
     grow: f32,
     bg: Option<(Color, f32)>,
     padding: Padding,
-    content: Element<'a, Message>,
+    content: Element<'a, Msg>,
 }
 
 /// Blocos com `flex-wrap`. Na mesma linha, os fundos tem a altura do mais alto (o `stretch`
 /// do design): o fundo vai numa camada por baixo (`Stack::push_under`), que o iced dimensiona
 /// pela camada de cima; `Fill` dentro de `scrollable` sozinho viraria zero.
-fn tiles<'a>(total: f32, gap: f32, row_gap: f32, items: Vec<Tile<'a>>) -> Element<'a, Message> {
+fn tiles<'a>(total: f32, gap: f32, row_gap: f32, items: Vec<Tile<'a>>) -> Element<'a, Msg> {
     let specs: Vec<(f32, f32)> = items.iter().map(|t| (t.basis, t.grow)).collect();
     let mut slots: Vec<Option<Tile<'a>>> = items.into_iter().map(Some).collect();
     let mut out = column![].spacing(row_gap);
@@ -195,7 +195,7 @@ fn tiles<'a>(total: f32, gap: f32, row_gap: f32, items: Vec<Tile<'a>>) -> Elemen
 
 // ---- tela ----
 
-pub fn view(app: &App) -> Element<'_, Message> {
+pub fn view(app: &State) -> Element<'_, Msg> {
     let v = &app.dashboard;
     let width = shell::content_width(app);
     let mut col = column![].spacing(GAP);
@@ -216,7 +216,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     col.width(Length::Fill).into()
 }
 
-fn section(app: &App, s: Section, width: f32) -> Element<'_, Message> {
+fn section(app: &State, s: Section, width: f32) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     match s {
         Section::Empty => empty_section(app),
@@ -232,12 +232,7 @@ fn section(app: &App, s: Section, width: f32) -> Element<'_, Message> {
 }
 
 /// Duas colunas (`2 1 520px` e `1 1 300px` do design).
-fn split<'a>(
-    app: &'a App,
-    left: &[Section],
-    right: &[Section],
-    width: f32,
-) -> Element<'a, Message> {
+fn split<'a>(app: &'a State, left: &[Section], right: &[Section], width: f32) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     let widths: Vec<f32> = flex_lines(width, GAP, &[(520.0, 2.0), (300.0, 1.0)])
         .into_iter()
@@ -309,7 +304,7 @@ fn tone_color(t: &'static Tokens, tone: Tone, neutral: Color) -> Color {
 
 /// Botao de informacao (icone 16) com o texto em tooltip embaixo, largura max. 280 (o `title`
 /// do design; o iced so mostra no hover).
-fn info<'a>(t: &'static Tokens, tip: &str) -> Element<'a, Message> {
+fn info<'a>(t: &'static Tokens, tip: &str) -> Element<'a, Msg> {
     tooltip(
         container(icons::icon(icons::INFO, 16.0, t.text_muted)).center(28),
         container(
@@ -328,7 +323,7 @@ fn info<'a>(t: &'static Tokens, tip: &str) -> Element<'a, Message> {
 }
 
 /// Quadrado/circulo de cor da legenda.
-fn swatch<'a>(color: Color, size: f32, radius: f32) -> Element<'a, Message> {
+fn swatch<'a>(color: Color, size: f32, radius: f32) -> Element<'a, Msg> {
     container(Space::new())
         .width(size)
         .height(size)
@@ -337,12 +332,12 @@ fn swatch<'a>(color: Color, size: f32, radius: f32) -> Element<'a, Message> {
 }
 
 /// Medidor em canvas (barra, preenchimento e marcas pontilhadas).
-fn meter<'a>(program: MeterProgram) -> Element<'a, Message> {
+fn meter<'a>(program: MeterProgram) -> Element<'a, Msg> {
     let h = program.height();
     canvas(program).width(Length::Fill).height(h).into()
 }
 
-fn link_button<'a>(t: &'static Tokens, label: &str, message: Message) -> Element<'a, Message> {
+fn link_button<'a>(t: &'static Tokens, label: &str, message: Msg) -> Element<'a, Msg> {
     // Linha inteira de 44 sem respiro lateral nem centralizacao: o link encosta na borda do
     // conteudo do card, como no design. Texto e seta herdam a cor do estilo, que muda com o
     // mouse.
@@ -363,7 +358,7 @@ fn link_button<'a>(t: &'static Tokens, label: &str, message: Message) -> Element
 
 // ---- negocio ----
 
-fn business(app: &App, width: f32) -> Element<'_, Message> {
+fn business(app: &State, width: f32) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let Some(b) = &app.dashboard.business else {
         return Space::new().into();
@@ -405,7 +400,7 @@ fn business(app: &App, width: f32) -> Element<'_, Message> {
     .into()
 }
 
-fn business_result<'a>(t: &'static Tokens, b: &BusinessBlock) -> Element<'a, Message> {
+fn business_result<'a>(t: &'static Tokens, b: &BusinessBlock) -> Element<'a, Msg> {
     let labeled = |label: &str, value: &str| {
         column![
             txt(label.to_string(), 12.0, t.text_muted),
@@ -434,7 +429,7 @@ fn business_result<'a>(t: &'static Tokens, b: &BusinessBlock) -> Element<'a, Mes
     .into()
 }
 
-fn business_capital<'a>(t: &'static Tokens, b: &BusinessBlock) -> Element<'a, Message> {
+fn business_capital<'a>(t: &'static Tokens, b: &BusinessBlock) -> Element<'a, Msg> {
     let value_row = |label: &str, value: &str, color: Color| {
         row![
             txt(label.to_string(), 14.0, t.text).width(Length::Fill),
@@ -461,7 +456,7 @@ fn business_capital<'a>(t: &'static Tokens, b: &BusinessBlock) -> Element<'a, Me
 
 // ---- como estou ----
 
-fn how_am_i(app: &App, width: f32) -> Element<'_, Message> {
+fn how_am_i(app: &State, width: f32) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let h = &app.dashboard.how_am_i;
     let body = tiles(
@@ -498,7 +493,7 @@ fn how_am_i(app: &App, width: f32) -> Element<'_, Message> {
     .into()
 }
 
-fn outlook_line<'a>(t: &'static Tokens, line: &Line) -> Element<'a, Message> {
+fn outlook_line<'a>(t: &'static Tokens, line: &Line) -> Element<'a, Msg> {
     let color = tone_color(t, line.tone, t.text);
     let words = txt(line.text.clone(), 18.0, color)
         .line_height(1.35)
@@ -522,7 +517,7 @@ fn outlook_line<'a>(t: &'static Tokens, line: &Line) -> Element<'a, Message> {
     }
 }
 
-fn balance_column(app: &App) -> Element<'_, Message> {
+fn balance_column(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let h = &app.dashboard.how_am_i;
     let b = &h.balance;
@@ -679,7 +674,7 @@ fn legend_line<'a>(
     width: f32,
     dashed: bool,
     label: &str,
-) -> Element<'a, Message> {
+) -> Element<'a, Msg> {
     row![
         canvas(SwatchProgram {
             color,
@@ -695,7 +690,7 @@ fn legend_line<'a>(
     .into()
 }
 
-fn pace_panel(app: &App) -> Element<'_, Message> {
+fn pace_panel(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let p = &app.dashboard.how_am_i.pace;
     let mut legend = row![legend_line(t, t.accent, 2.0, false, &p.legend_month)].spacing(16);
@@ -749,10 +744,10 @@ fn pace_panel(app: &App) -> Element<'_, Message> {
 
 // ---- reserva e historico ----
 
-fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
+fn reserve_body(app: &State, inner: f32) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let r = &app.dashboard.reserve;
-    let left: Element<'_, Message> = match &r.emergency {
+    let left: Element<'_, Msg> = match &r.emergency {
         EmergencyBlock::Present(e) => {
             let mut col = column![
                 row![
@@ -870,7 +865,7 @@ fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
     }
     right = right.push(column![
         widgets::divider(t),
-        link_button(t, &r.link, Message::SelectScreen(Screen::Reserves))
+        link_button(t, &r.link, Msg::SelectScreen(Screen::Reserves))
     ]);
     tiles(
         inner,
@@ -895,7 +890,7 @@ fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
     )
 }
 
-fn history_body(app: &App) -> Element<'_, Message> {
+fn history_body(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let h = &app.dashboard.history;
     let legend_item = |color: Color, label: &str| {
@@ -985,7 +980,7 @@ fn history_body(app: &App) -> Element<'_, Message> {
 
 // ---- para onde foi ----
 
-fn where_it_went(app: &App, width: f32) -> Element<'_, Message> {
+fn where_it_went(app: &State, width: f32) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let w = &app.dashboard.where_it_went;
     let plan = &w.plan;
@@ -1166,13 +1161,13 @@ struct CategoryRow<'a, 'b> {
     color: &'b str,
     name: &'b str,
     above_normal: Option<&'b str>,
-    amount: Element<'a, Message>,
+    amount: Element<'a, Msg>,
     meter: MeterProgram,
     note: text::Text<'a>,
     note_width: f32,
 }
 
-fn category_row<'a>(t: &'static Tokens, r: CategoryRow<'a, '_>) -> Element<'a, Message> {
+fn category_row<'a>(t: &'static Tokens, r: CategoryRow<'a, '_>) -> Element<'a, Msg> {
     let mut name = row![txt(r.name.to_string(), 14.0, t.text)]
         .spacing(10)
         .align_y(Alignment::Center);
@@ -1213,7 +1208,7 @@ fn category_row<'a>(t: &'static Tokens, r: CategoryRow<'a, '_>) -> Element<'a, M
 
 // ---- o que vem ----
 
-fn whats_next(app: &App, width: f32) -> Element<'_, Message> {
+fn whats_next(app: &State, width: f32) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let Some(w) = &app.dashboard.whats_next else {
         return Space::new().into();
@@ -1252,7 +1247,7 @@ fn whats_next(app: &App, width: f32) -> Element<'_, Message> {
     .into()
 }
 
-fn free_card(app: &App) -> Element<'_, Message> {
+fn free_card(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let Some(w) = &app.dashboard.whats_next else {
         return Space::new().into();
@@ -1325,7 +1320,7 @@ fn free_card(app: &App) -> Element<'_, Message> {
     col.into()
 }
 
-fn upcoming_row<'a>(t: &'static Tokens, u: &UpcomingLine) -> Element<'a, Message> {
+fn upcoming_row<'a>(t: &'static Tokens, u: &UpcomingLine) -> Element<'a, Msg> {
     let glyph = match &u.color {
         Some(_) => icons::glyph(&u.icon),
         None => icons::REPEAT,
@@ -1353,7 +1348,7 @@ fn upcoming_row<'a>(t: &'static Tokens, u: &UpcomingLine) -> Element<'a, Message
     .into()
 }
 
-fn upcoming_card(app: &App) -> Element<'_, Message> {
+fn upcoming_card(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let Some(w) = &app.dashboard.whats_next else {
         return Space::new().into();
@@ -1421,14 +1416,14 @@ fn upcoming_card(app: &App) -> Element<'_, Message> {
     if let Some(all) = &u.see_all
         && !app.upcoming_expanded
     {
-        col = col.push(link_button(t, all, Message::ExpandUpcoming));
+        col = col.push(link_button(t, all, Msg::ExpandUpcoming));
     }
     col.spacing(0).into()
 }
 
 // ---- ultimos lancamentos e quem lancou ----
 
-fn recent(app: &App) -> Element<'_, Message> {
+fn recent(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let r = &app.dashboard.recent;
     let mut list = column![];
@@ -1477,7 +1472,7 @@ fn recent(app: &App) -> Element<'_, Message> {
         container(link_button(
             t,
             &r.link,
-            Message::SelectScreen(Screen::Transactions)
+            Msg::SelectScreen(Screen::Transactions)
         ))
         .width(Length::Fill),
         info(t, &r.info),
@@ -1497,7 +1492,7 @@ fn recent(app: &App) -> Element<'_, Message> {
     .into()
 }
 
-fn people(app: &App) -> Option<Element<'_, Message>> {
+fn people(app: &State) -> Option<Element<'_, Msg>> {
     let t = app.iced.tokens;
     let p = app.dashboard.people.as_ref()?;
     let mut col = column![txt(p.title.clone(), 13.0, t.text_muted)].spacing(14);
@@ -1525,7 +1520,7 @@ fn people(app: &App) -> Option<Element<'_, Message>> {
 
 /// O lugar das secoes quando a conta nao tem lancamento: abrindo, primeiro uso, aguardando ou
 /// o vazio de sempre (`shell::arrival`). So acrescenta estados; com dados nada aqui roda.
-fn empty_section(app: &App) -> Element<'_, Message> {
+fn empty_section(app: &State) -> Element<'_, Msg> {
     match shell::screen_arrival(app, !app.dashboard.is_empty) {
         Arrival::Opening => shell::opening(app),
         Arrival::FirstUse => first_use_card(app),
@@ -1552,8 +1547,8 @@ const STEP_TITLE_WIDTH: f32 = 200.0;
 fn first_use_step<'a>(
     t: &'static Tokens,
     n: u8,
-    action: Option<Element<'a, Message>>,
-) -> Element<'a, Message> {
+    action: Option<Element<'a, Msg>>,
+) -> Element<'a, Msg> {
     let (title, body) = FIRST_USE_STEPS
         .get(usize::from(n).saturating_sub(1))
         .copied()
@@ -1588,7 +1583,7 @@ fn lan_note<'a>(t: &'static Tokens) -> text::Text<'a> {
 
 /// "Comece por aqui" (spec 8.2): nucleo no ar, hub vazio e nenhum aparelho pareado. Substitui o
 /// vazio com "Conectar um celular" da issue 02, que nao dizia o que vem depois de parear.
-fn first_use_card(app: &App) -> Element<'_, Message> {
+fn first_use_card(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let mut col = column![lead(t, "Comece por aqui")].spacing(20);
     if let Some(note) = no_network_note(app) {
@@ -1603,7 +1598,7 @@ fn first_use_card(app: &App) -> Element<'_, Message> {
 }
 
 /// Ha aparelho pareado mas nada chegou: quem o hub espera e o passo que falta (o 3, o sync).
-fn waiting_card(app: &App, line: String) -> Element<'_, Message> {
+fn waiting_card(app: &State, line: String) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let mut col = column![
         row![swatch(t.warning, 7.0, 3.5), lead(t, line)]
@@ -1624,12 +1619,12 @@ fn waiting_card(app: &App, line: String) -> Element<'_, Message> {
 const NO_NETWORK_NOTE: &str =
     "Conecte o computador ao Wi-Fi de casa para o celular encontrar o hub.";
 
-fn no_network_note(app: &App) -> Option<Element<'_, Message>> {
+fn no_network_note(app: &State) -> Option<Element<'_, Msg>> {
     (app.snapshot.status == Status::NoNetwork)
         .then(|| txt(NO_NETWORK_NOTE, 13.0, app.iced.tokens.warning).into())
 }
 
-fn empty_card(app: &App) -> Element<'_, Message> {
+fn empty_card(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let snap = &app.snapshot;
     let waiting = match snap.addresses.first() {
@@ -1701,7 +1696,7 @@ fn footer_text(updated_at: Option<&str>, count: usize, ignored: usize) -> String
 
 /// Rodape discreto; no estado vazio so aparece se houver linha ignorada (e o unico jeito de
 /// saber que algo chegou e nao entrou).
-fn footer(app: &App) -> Option<Element<'_, Message>> {
+fn footer(app: &State) -> Option<Element<'_, Msg>> {
     let v = &app.dashboard;
     if v.is_empty && v.ignored_total == 0 {
         return None;

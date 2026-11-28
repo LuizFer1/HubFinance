@@ -7,10 +7,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::config::UiPrefs;
+use crate::ui_model::app::Msg;
 
-/// `M` e a mensagem que `After` devolve ao `update`: generico ate a mensagem sair do toolkit.
 #[derive(Debug, Clone)]
-pub enum Effect<M> {
+pub enum Effect {
     /// Abre a janela (e guarda o id dela no estado, para os botoes da barra nao esperarem).
     OpenWindow,
     /// Desminimiza e pede foco para a janela que ja existe.
@@ -21,11 +21,11 @@ pub enum Effect<M> {
     /// Pergunta ao sistema se a janela esta maximizada; a resposta volta como mensagem.
     QueryMaximized,
     StartDrag,
-    /// Devolve `M` ao `update` depois do prazo (toasts, "Copiado", desligamento com garantia).
-    After(Duration, M),
+    /// Devolve a mensagem ao `update` depois do prazo (toasts, "Copiado", desligamento com garantia).
+    After(Duration, Msg),
     SavePrefs(UiPrefs),
     CopyToClipboard(String),
-    /// Abre a URL no navegador; se o sistema recusar, volta `Message::OpenUrlFailed`.
+    /// Abre a URL no navegador; se o sistema recusar, volta `Msg::OpenUrlFailed`.
     OpenUrl(&'static str),
     #[allow(dead_code)] // usado na Tarefa 28
     OpenFolder(PathBuf),

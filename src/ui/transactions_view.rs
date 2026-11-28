@@ -2,7 +2,7 @@
 //! agrupada por dia, com os tres vazios do design. E a unica tela com rolagem propria: filtros,
 //! resumo e cabecalho da tabela ficam fixos e so as linhas rolam (`shell::owns_scroll`).
 //!
-//! Tudo vem de `app.transactions` (calculado em `App::rebuild`); aqui so se monta a arvore.
+//! Tudo vem de `app.transactions` (calculado em `State::rebuild`); aqui so se monta a arvore.
 
 use iced::widget::text::Wrapping;
 use iced::widget::{
@@ -10,7 +10,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Color, Element, Length, Padding};
 
-use super::app::{App, Message};
+use super::app::{Msg, State};
 use super::rows::{author_cell, category_tile, hover_row, value_cell};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, alpha, mix, size, space, type_scale};
 use super::widgets::{ChipShape, RowEdge, SegmentedSize, SegmentedVariant, TagTone};
@@ -35,7 +35,7 @@ const MENU_ITEM: f32 = 34.0;
 const COLUMNS: [u16; 4] = [22, 13, 10, 10];
 const VALUE_WIDTH: f32 = 128.0;
 
-pub fn view(app: &App) -> Element<'_, Message> {
+pub fn view(app: &State) -> Element<'_, Msg> {
     // No boot o "Nenhum lançamento sincronizado" seria um vazio falso: o esqueleto comum das
     // telas de dados entra antes de filtros e tabela (que nem tem o que filtrar ainda).
     if shell::screen_arrival(app, !app.transactions.is_empty_hub) == Arrival::Opening {
@@ -70,7 +70,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
                     .width(Length::Fill)
                     .height(Length::Fill),
             )
-            .on_press(Message::CloseCategoryMenu),
+            .on_press(Msg::CloseCategoryMenu),
         );
         let menu = column![
             Space::new().height(MENU_OFFSET),
@@ -93,7 +93,7 @@ fn option_color(t: &'static Tokens, token: &str) -> Color {
 // ---- barra de filtros ----
 
 /// Linha com quebra (`wrap`), gap 8: categoria | autores | tipo | limpar.
-fn filter_bar(app: &App) -> Element<'_, Message> {
+fn filter_bar(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let mut bar = row![category_button(app), widgets::vdivider(t)]
         .spacing(8)
@@ -110,13 +110,13 @@ fn filter_bar(app: &App) -> Element<'_, Message> {
             icons::X,
             "Limpar filtros",
         )
-        .on_press(Message::ClearFilters);
+        .on_press(Msg::ClearFilters);
         bar = bar.push(clear);
     }
     bar.wrap().vertical_spacing(8).into()
 }
 
-fn category_button(app: &App) -> Element<'_, Message> {
+fn category_button(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let v = &app.transactions;
     let (label, dot) = match &v.selected_category {
@@ -138,7 +138,7 @@ fn category_button(app: &App) -> Element<'_, Message> {
         active,
         ChipShape::Rounded,
     )
-    .on_press(Message::ToggleCategoryMenu)
+    .on_press(Msg::ToggleCategoryMenu)
     .into()
 }
 
@@ -147,7 +147,7 @@ fn menu_height(options: usize) -> f32 {
     (options as f32 * MENU_ITEM).min(MENU_MAX_HEIGHT - 12.0)
 }
 
-fn category_menu(app: &App) -> Element<'_, Message> {
+fn category_menu(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let v = &app.transactions;
     let selected = app.filters.category.as_deref();
@@ -177,7 +177,7 @@ fn menu_item<'a>(
     t: &'static Tokens,
     option: &'a CategoryOption,
     selected: bool,
-) -> Element<'a, Message> {
+) -> Element<'a, Msg> {
     let check = icons::icon(
         icons::CHECK,
         14.0,
@@ -209,16 +209,16 @@ fn menu_item<'a>(
     .height(MENU_ITEM)
     .padding([0, 10])
     .style(theme::menu_item(t, selected))
-    .on_press(Message::PickCategory(option.key.clone()))
+    .on_press(Msg::PickCategory(option.key.clone()))
     .into()
 }
 
 /// "Todos" + um chip por perfil vivo (+ "Sem autor" quando o mes tem lancamento sem autor).
-fn author_chips(app: &App) -> Vec<Element<'_, Message>> {
+fn author_chips(app: &State) -> Vec<Element<'_, Msg>> {
     let t = app.iced.tokens;
     let v = &app.transactions;
     let authors = &app.filters.authors;
-    let chip = |content: Element<'static, Message>, padding_left: f32, active: bool, msg| {
+    let chip = |content: Element<'static, Msg>, padding_left: f32, active: bool, msg| {
         widgets::chip(t, content, active, ChipShape::Pill)
             .padding(Padding {
                 top: 0.0,
@@ -229,15 +229,15 @@ fn author_chips(app: &App) -> Vec<Element<'_, Message>> {
             .on_press(msg)
             .into()
     };
-    let mut chips: Vec<Element<'_, Message>> = vec![chip(
+    let mut chips: Vec<Element<'_, Msg>> = vec![chip(
         text("Todos").size(13).into(),
         14.0,
         authors.is_empty(),
-        Message::AllAuthors,
+        Msg::AllAuthors,
     )];
     for author in &v.authors {
         let photo = app.iced.user_avatars.get(&author.id);
-        let content: Element<'static, Message> = row![
+        let content: Element<'static, Msg> = row![
             widgets::avatar(t, &author.name, Some(&author.color), photo, 24.0),
             text(author.name.clone()).size(13),
         ]
@@ -248,11 +248,11 @@ fn author_chips(app: &App) -> Vec<Element<'_, Message>> {
             content,
             5.0,
             authors.contains(&author.id),
-            Message::ToggleAuthor(author.id.clone()),
+            Msg::ToggleAuthor(author.id.clone()),
         ));
     }
     if v.unauthored_chip {
-        let content: Element<'static, Message> = row![
+        let content: Element<'static, Msg> = row![
             container(icons::icon(icons::CIRCLE_DASHED, 22.0, t.idle())).center(24),
             text("Sem autor").size(13),
         ]
@@ -263,15 +263,15 @@ fn author_chips(app: &App) -> Vec<Element<'_, Message>> {
             content,
             5.0,
             authors.contains(NONE_KEY),
-            Message::ToggleAuthor(NONE_KEY.to_string()),
+            Msg::ToggleAuthor(NONE_KEY.to_string()),
         ));
     }
     chips
 }
 
-fn type_segment(app: &App) -> Element<'_, Message> {
+fn type_segment(app: &State) -> Element<'_, Msg> {
     let option = |kind: TypeFilter, label: &'static str| {
-        (label, app.filters.kind == kind, Message::SetType(kind))
+        (label, app.filters.kind == kind, Msg::SetType(kind))
     };
     widgets::segmented(
         app.iced.tokens,
@@ -292,7 +292,7 @@ fn type_segment(app: &App) -> Element<'_, Message> {
 /// que a tabela mostra (com filtro, so o filtrado), em 17 Regular com o rotulo em 12
 /// `text_muted` (8.3). Os valores vem prontos do modelo, ja mascarados com "Ocultar valores".
 /// Quebra em duas linhas quando nao cabe (728 de largura util).
-fn summary_line(app: &App) -> Element<'_, Message> {
+fn summary_line(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let list = &app.transactions.list;
     let count = widgets::value_line(
@@ -369,10 +369,7 @@ fn visible_columns(width: f32) -> Visible {
 
 /// Celulas nas colunas da tabela (gap 16, padding horizontal 20), sem as que a largura tirou.
 /// O valor fica alinhado a direita numa coluna fixa, como toda coluna de dinheiro.
-fn columns<'a>(
-    visible: Visible,
-    cells: [Element<'a, Message>; 5],
-) -> iced::widget::Row<'a, Message> {
+fn columns<'a>(visible: Visible, cells: [Element<'a, Msg>; 5]) -> iced::widget::Row<'a, Msg> {
     let [desc, cat, author, pay, value] = cells;
     let [w0, w1, w2, w3] = COLUMNS;
     let mut line = row![
@@ -390,10 +387,10 @@ fn columns<'a>(
         .align_y(Alignment::Center)
 }
 
-fn table(app: &App) -> Element<'_, Message> {
+fn table(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let v = &app.transactions;
-    let head = |label: &'static str| -> Element<'_, Message> {
+    let head = |label: &'static str| -> Element<'_, Msg> {
         text(label)
             .size(12)
             .font(fonts::INTER_MEDIUM)
@@ -471,7 +468,7 @@ fn table(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-fn table_row<'a>(app: &'a App, r: &'a ListRow, visible: Visible) -> Element<'a, Message> {
+fn table_row<'a>(app: &'a State, r: &'a ListRow, visible: Visible) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     let mut description = row![
         category_tile(t, r),
@@ -565,7 +562,7 @@ fn empty_copy(v: &TransactionsView, filters: &Filters) -> (String, String, bool)
     }
 }
 
-fn empty(app: &App) -> Element<'_, Message> {
+fn empty(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let v = &app.transactions;
     let (title, body, show_clear) = empty_copy(v, &app.filters);
@@ -584,7 +581,7 @@ fn empty(app: &App) -> Element<'_, Message> {
                 ButtonSize::Regular,
                 "Limpar filtros",
             )
-            .on_press(Message::ClearFilters)
+            .on_press(Msg::ClearFilters)
             .into()
         })
     });

@@ -1,7 +1,7 @@
 //! Tela Analise em dois paineis (spec Grafite · Mesa 8.5): os achados de `advisor` a esquerda
 //! (sempre, sem rede) e o assistente a direita, cada um com a propria rolagem. Na janela minima
 //! (728 de largura util) os paineis viram um segmentado [Achados | Conversa]. Tudo vem de
-//! `app.analysis` (calculado em `App::rebuild`) e do snapshot; aqui so se monta a arvore.
+//! `app.analysis` (calculado em `State::rebuild`) e do snapshot; aqui so se monta a arvore.
 
 use std::borrow::Cow;
 
@@ -10,13 +10,12 @@ use iced::widget::{
 };
 use iced::{Alignment, Color, Element, Length, Padding};
 
-use super::app::{AnalysisTab, App, CopyTarget, Message, awaiting_cloud_consent};
+use super::app::{AnalysisTab, CopyTarget, Msg, State, awaiting_cloud_consent};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, Tone, radius, size, space, type_scale};
 use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
 use super::{fonts, icons, rows, shell, widgets};
 use crate::advisor::{Finding, Severity};
-use crate::assistant::prompt::OPENING_REQUEST;
-use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
+use crate::assistant::view::{MessageRole, MessageView, OpenConversation};
 use crate::dashboard::money::MASK;
 use crate::ui_model::analysis::{
     Comparison, HIDDEN_VALUES_NOTE, INTRO, PREVIEW_SEND, PREVIEW_TITLE, assistant_status,
@@ -25,6 +24,10 @@ use crate::ui_model::analysis::{
     tokens_total_label, two_panels,
 };
 use crate::ui_model::time;
+
+pub(super) use crate::ui_model::analysis::{
+    conversations_of_book, data_changed, open_conversation, shown_consent,
+};
 
 /// Entre os cards da tela.
 const GAP: f32 = space::BETWEEN_CARDS;
@@ -43,7 +46,7 @@ const REPLY_MAX: f32 = 440.0;
 /// topo) e o dos achados, e so uma rolagem pode ter cada id.
 pub(super) const CHAT_SCROLL: &str = "conversa";
 
-pub fn view(app: &App) -> Element<'_, Message> {
+pub fn view(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let mut page = column![
         text(summary_line(&app.analysis.findings))
@@ -64,7 +67,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             err.as_str(),
             vec![
                 widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Configurar")
-                    .on_press(Message::ConfigureAssistant)
+                    .on_press(Msg::ConfigureAssistant)
                     .into(),
             ],
         ));
@@ -89,10 +92,10 @@ pub fn view(app: &App) -> Element<'_, Message> {
 }
 
 /// [Achados | Conversa] da janela estreita.
-fn tab_switch(app: &App) -> Element<'_, Message> {
+fn tab_switch(app: &State) -> Element<'_, Msg> {
     let current = app.analysis_tab;
     let option =
-        |label: &'static str, tab: AnalysisTab| (label, current == tab, Message::AnalysisTab(tab));
+        |label: &'static str, tab: AnalysisTab| (label, current == tab, Msg::AnalysisTab(tab));
     row![
         widgets::segmented(
             app.iced.tokens,
@@ -112,8 +115,8 @@ fn tab_switch(app: &App) -> Element<'_, Message> {
 /// Rolagem vertical de painel: cursor fino, longe da borda do card.
 fn panel_scroll<'a>(
     t: &'static Tokens,
-    content: impl Into<Element<'a, Message>>,
-) -> scrollable::Scrollable<'a, Message> {
+    content: impl Into<Element<'a, Msg>>,
+) -> scrollable::Scrollable<'a, Msg> {
     scrollable(content)
         .direction(scrollable::Direction::Vertical(
             scrollable::Scrollbar::new()
@@ -155,10 +158,10 @@ fn severity_glyph(s: Severity) -> &'static str {
 
 const SEVERITIES: [Severity; 3] = [Severity::Alert, Severity::Attention, Severity::GoodSign];
 
-fn findings_panel(app: &App) -> Element<'_, Message> {
+fn findings_panel(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let findings = &app.analysis.findings;
-    let content: Element<'_, Message> = if findings.is_empty() {
+    let content: Element<'_, Msg> = if findings.is_empty() {
         container(widgets::empty_state(
             t,
             widgets::empty_icon(t, icons::CHECK_CIRCLE),
@@ -208,7 +211,7 @@ fn findings_panel(app: &App) -> Element<'_, Message> {
 
 /// Um achado: tile de 28 na tinta de 10 % do tom, titulo 16 Medium, detalhe 14 `text_soft` e a
 /// acao 14 em `fg` (nao dourada: nao e clicavel).
-fn finding_row<'a>(app: &'a App, f: &'a Finding) -> Element<'a, Message> {
+fn finding_row<'a>(app: &'a State, f: &'a Finding) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     let tile = container(icons::icon(
         severity_glyph(f.severity),
@@ -249,11 +252,11 @@ fn finding_row<'a>(app: &'a App, f: &'a Finding) -> Element<'a, Message> {
 /// Duas barras de 6 px na mesma escala: o gasto na cor da gravidade e a referencia em neutro,
 /// cada uma com o valor a direita (mascarado com "Ocultar valores", como as barras do Resumo:
 /// o tamanho fica, o numero some).
-fn comparison_view<'a>(app: &App, severity: Severity, c: &Comparison) -> Element<'a, Message> {
+fn comparison_view<'a>(app: &State, severity: Severity, c: &Comparison) -> Element<'a, Msg> {
     use crate::dashboard::money::format_brl;
     let t = app.iced.tokens;
     let scale = c.real.max(c.reference) as f32;
-    let line = |label: &'static str, value: i64, color: Color| -> Element<'a, Message> {
+    let line = |label: &'static str, value: i64, color: Color| -> Element<'a, Msg> {
         let shown = if app.hide_values {
             MASK.to_string()
         } else {
@@ -301,7 +304,7 @@ const COMPARISON_VALUE: f32 = 96.0;
 
 // ---- assistente ----
 
-fn assistant_panel(app: &App) -> Element<'_, Message> {
+fn assistant_panel(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let open = open_conversation(app);
     let mut header = row![
@@ -323,7 +326,7 @@ fn assistant_panel(app: &App) -> Element<'_, Message> {
         header = header.push(text(tokens_total_label(open)).size(12).color(t.text_muted));
         header = header.push(
             widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Fechar")
-                .on_press(Message::CloseConversation),
+                .on_press(Msg::CloseConversation),
         );
     }
     header = header.push(widgets::icon_button(
@@ -331,11 +334,11 @@ fn assistant_panel(app: &App) -> Element<'_, Message> {
         icons::GEAR,
         ButtonSize::Compact,
         "Configurar assistente",
-        Some(Message::ConfigureAssistant),
+        Some(Msg::ConfigureAssistant),
     ));
     // Sem `Status::Failed` aqui: com o nucleo fora do ar o card de falha da casca toma a tela
     // inteira (`shell::failure`), e a Analise nem e montada.
-    let body: Element<'_, Message> = if let Some(open) = open {
+    let body: Element<'_, Msg> = if let Some(open) = open {
         conversation_body(app, open)
     } else {
         idle_body(app)
@@ -360,7 +363,7 @@ fn assistant_panel(app: &App) -> Element<'_, Message> {
 }
 
 /// Sem conversa aberta: conversar, ver o envelope e as conversas anteriores.
-fn idle_body(app: &App) -> Element<'_, Message> {
+fn idle_body(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let mut col = column![
         text("Converse sobre os achados desta conta. O assistente recebe só resumos e totais.")
@@ -373,14 +376,14 @@ fn idle_body(app: &App) -> Element<'_, Message> {
             ButtonSize::Regular,
             "Conversar sobre estes achados",
         )
-        .on_press(Message::StartConversation),
+        .on_press(Msg::StartConversation),
         widgets::action_button(
             t,
             ButtonKind::Link,
             ButtonSize::Compact,
             "Ver o que o assistente vê"
         )
-        .on_press(Message::ShowEnvelope),
+        .on_press(Msg::ShowEnvelope),
     ]
     .spacing(12)
     .width(Length::Fill);
@@ -390,53 +393,13 @@ fn idle_body(app: &App) -> Element<'_, Message> {
     panel_scroll(t, container(col).padding([16, 16])).into()
 }
 
-/// A conversa aberta, so se for da conta que a tela mostra: com a outra conta aberta ela falaria
-/// de numeros que nao estao na tela.
-pub(super) fn open_conversation(app: &App) -> Option<&OpenConversation> {
-    app.snapshot
-        .assistant
-        .open
-        .as_ref()
-        .filter(|c| c.book == app.book && !app.conversation_hidden(&c.id))
-}
-
-/// Os dados da conta mudaram desde que a conversa comecou (spec 3): o envelope guardado nela
-/// difere do de agora. Comparar o texto (e nao o ponteiro do `Arc` do dataset) faz valer
-/// tambem para conversa reaberta do historico e ignora sync que nao mexeu nesta conta.
-pub(super) fn data_changed(app: &App) -> bool {
-    open_conversation(app).is_some_and(|c| c.envelope != app.envelope_now)
-}
-
-/// Conversas da conta que a tela mostra (cada uma e presa a uma conta).
-pub(super) fn conversations_of_book(app: &App) -> Vec<&ConversationSummary> {
-    app.snapshot
-        .assistant
-        .conversations
-        .iter()
-        .filter(|c| c.book == app.book && !app.conversation_hidden(&c.id))
-        .collect()
-}
-
-/// "Cancelar" na previa da nuvem. So apaga a conversa que e exatamente a abertura automatica
-/// recem-criada (uma pergunta, a `OPENING_REQUEST`) e sem nada chegando: nada nunca foi enviado
-/// e guarda-la deixaria lixo no historico. Qualquer outra (reaberta do historico com erro, com
-/// resposta, com pergunta da pessoa, ou com uma resposta local ainda chegando) tem o que
-/// guardar: o "Cancelar" so fecha a previa. Esc e o scrim nunca apagam (`ClosePreview`).
-pub(super) fn cancel_preview_message(open: &OpenConversation, busy: bool) -> Option<Message> {
-    let only_opening = matches!(
-        open.messages.as_slice(),
-        [m] if m.role == MessageRole::User && m.content == OPENING_REQUEST
-    );
-    (only_opening && !busy).then(|| Message::DeleteConversation(open.id.clone()))
-}
-
-fn hidden_values_note(app: &App) -> Option<&'static str> {
+fn hidden_values_note(app: &State) -> Option<&'static str> {
     app.hide_values.then_some(HIDDEN_VALUES_NOTE)
 }
 
 /// A conversa: mensagens na rolagem propria (ancorada embaixo, acompanha o texto que chega) e o
 /// campo de pergunta fixo no pe do painel.
-fn conversation_body<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, Message> {
+fn conversation_body<'a>(app: &'a State, open: &'a OpenConversation) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     let view = &app.snapshot.assistant;
     // Nuvem sem a previa aprovada: nada saiu, e o "Tentar de novo" sob a pergunta de abertura
@@ -478,7 +441,7 @@ fn conversation_body<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a
                         ButtonSize::Compact,
                         "Nova conversa",
                     )
-                    .on_press(Message::StartConversation)
+                    .on_press(Msg::StartConversation)
                     .into(),
                 ],
             ))
@@ -491,7 +454,7 @@ fn conversation_body<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a
         );
     }
     col = col.push(scroll).push(widgets::divider(t));
-    let foot: Element<'a, Message> = if awaiting {
+    let foot: Element<'a, Msg> = if awaiting {
         awaiting_foot(t)
     } else {
         chat_input(app)
@@ -500,7 +463,7 @@ fn conversation_body<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a
 }
 
 /// Campo de pergunta com "Enviar", fixo no pe do painel.
-fn chat_input(app: &App) -> Element<'_, Message> {
+fn chat_input(app: &State) -> Element<'_, Msg> {
     let t = app.iced.tokens;
     let view = &app.snapshot.assistant;
     // Sem `on_input` o campo fica desabilitado enquanto ha resposta chegando.
@@ -510,9 +473,7 @@ fn chat_input(app: &App) -> Element<'_, Message> {
         .style(theme::input(t))
         .width(Length::Fill);
     if !view.busy {
-        input = input
-            .on_input(Message::ChatInput)
-            .on_submit(Message::ChatSubmit);
+        input = input.on_input(Msg::ChatInput).on_submit(Msg::ChatSubmit);
     }
     // "Enviar" ao lado do Enter: quem nao sabe do Enter nao fica sem saida. Desabilitado nas
     // mesmas condicoes em que `ChatSubmit` nao faria nada.
@@ -520,14 +481,14 @@ fn chat_input(app: &App) -> Element<'_, Message> {
     // Botao padrao de 36 e o campo na mesma altura: texto de 14 com a altura de linha padrao e
     // 9 de respiro (14 x 1,3 + 18 = 36,2).
     let send = widgets::action_button(t, ButtonKind::Primary, ButtonSize::Regular, "Enviar")
-        .on_press_maybe(can_send.then_some(Message::ChatSubmit));
+        .on_press_maybe(can_send.then_some(Msg::ChatSubmit));
     row![input, send]
         .spacing(8)
         .align_y(Alignment::Center)
         .into()
 }
 
-fn message_view<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<'a, Message> {
+fn message_view<'a>(app: &'a State, m: &'a MessageView, is_last: bool) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     match m.role {
         MessageRole::User => {
@@ -554,7 +515,7 @@ fn message_view<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<
                         .size(11)
                         .color(t.text_muted)
                         .width(Length::Fill),
-                    widgets::copy_button(t, copied, Some(Message::CopyReply(m.id.clone()))),
+                    widgets::copy_button(t, copied, Some(Msg::CopyReply(m.id.clone()))),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
@@ -584,11 +545,11 @@ fn message_view<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<
 /// O corpo da resposta: o Markdown ja interpretado do cache (`IcedSide::replies`), ou o texto puro.
 /// O cache so vale para o mesmo texto e o mesmo estado do olho: um cache montado com os valores
 /// a mostra nunca e desenhado com "Ocultar valores" ligado.
-fn reply_body<'a>(app: &'a App, m: &'a MessageView) -> Element<'a, Message> {
+fn reply_body<'a>(app: &'a State, m: &'a MessageView) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     // Sem cache valido (snapshot que ainda nao passou por `refresh_replies`): o mesmo caminho
     // do cache, em texto puro. O fonte so mascarado deixaria passar o que o Markdown remonta.
-    let fallback = || -> Element<'a, Message> {
+    let fallback = || -> Element<'a, Msg> {
         let r = render_reply(&m.content, app.hide_values);
         let shown = match r.shown {
             ReplyShown::Plain(s) => s,
@@ -625,7 +586,7 @@ fn reply_body<'a>(app: &'a App, m: &'a MessageView) -> Element<'a, Message> {
 
 /// Resposta chegando: texto puro (mascarado). O Markdown so entra quando ela termina: um numero
 /// cortado entre dois pedacos nao seria reconhecido pela mascara num parse incremental.
-fn streaming_view<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> {
+fn streaming_view<'a>(app: &'a State, partial: &'a str) -> Element<'a, Msg> {
     let t = app.iced.tokens;
     let shown = if partial.is_empty() {
         Cow::Borrowed("…")
@@ -652,7 +613,7 @@ fn streaming_view<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> {
         .size(14)
         .line_height(1.5),
         widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Compact, "Parar")
-            .on_press(Message::ChatStop),
+            .on_press(Msg::ChatStop),
     ]
     .spacing(8)
     .max_width(REPLY_MAX)
@@ -805,9 +766,9 @@ struct ReplyViewer {
     t: &'static Tokens,
 }
 
-impl<'a> markdown::Viewer<'a, Message> for ReplyViewer {
-    fn on_link_click(_url: markdown::Uri) -> Message {
-        Message::Noop
+impl<'a> markdown::Viewer<'a, Msg> for ReplyViewer {
+    fn on_link_click(_url: markdown::Uri) -> Msg {
+        Msg::Noop
     }
 
     fn image(
@@ -816,7 +777,7 @@ impl<'a> markdown::Viewer<'a, Message> for ReplyViewer {
         _url: &'a markdown::Uri,
         _title: &'a str,
         alt: &markdown::Text,
-    ) -> Element<'a, Message> {
+    ) -> Element<'a, Msg> {
         rich_text(alt.spans(settings.style))
             .size(settings.text_size)
             .into()
@@ -828,7 +789,7 @@ impl<'a> markdown::Viewer<'a, Message> for ReplyViewer {
         _language: Option<&'a str>,
         _code: &'a str,
         lines: &'a [markdown::Text],
-    ) -> Element<'a, Message> {
+    ) -> Element<'a, Msg> {
         widgets::inset(
             self.t,
             column(lines.iter().map(|line| {
@@ -848,7 +809,7 @@ impl<'a> markdown::Viewer<'a, Message> for ReplyViewer {
 /// Com ele ligado, as respostas anteriores do assistente passam antes por `plain_text`: sao
 /// Markdown, e "R$ **1500**" ou "R\$ 1.500" so viram dinheiro que a mascara reconhece depois de
 /// interpretados.
-pub(super) fn preview_shown(app: &App, open: &OpenConversation) -> String {
+pub(super) fn preview_shown(app: &State, open: &OpenConversation) -> String {
     if !app.hide_values {
         return preview_body(open);
     }
@@ -859,7 +820,7 @@ pub(super) fn preview_shown(app: &App, open: &OpenConversation) -> String {
 
 /// Pe da conversa de nuvem que espera aprovacao: nada saiu, e o campo de pergunta da lugar ao
 /// caminho para a previa (que tambem abre sozinha ao comecar a conversa).
-fn awaiting_foot(t: &'static Tokens) -> Element<'static, Message> {
+fn awaiting_foot(t: &'static Tokens) -> Element<'static, Msg> {
     column![
         text("Nada saiu ainda. Veja o que vai para o OpenRouter antes de enviar.")
             .size(13)
@@ -873,25 +834,18 @@ fn awaiting_foot(t: &'static Tokens) -> Element<'static, Message> {
                 ButtonSize::Regular,
                 "Ver prévia e enviar"
             )
-            .on_press(Message::ShowCloudPreview),
+            .on_press(Msg::ShowCloudPreview),
         ],
     ]
     .spacing(space::M)
     .into()
 }
 
-/// A conversa da previa aberta: so enquanto ela for a aberta e esperar aprovacao. A previa e
-/// presa ao id, entao nunca mostra (nem aprova) outra conversa.
-pub(super) fn shown_consent(app: &App) -> Option<&OpenConversation> {
-    let id = app.consent_preview.as_deref()?;
-    awaiting_cloud_consent(app).filter(|o| o.id == id)
-}
-
 /// Dialogo "Enviar para a nuvem?" (8.5): o envelope **desta conversa** e as mensagens que vao
 /// no pedido (o que de fato sai; o `Resend` do nucleo le o mesmo texto), modelo, retencao e o
 /// aviso de valores ocultos. Na tela o texto segue o "Ocultar valores"; o que sai nunca e
 /// mascarado. Esc e o scrim so fecham; so o "Cancelar" pode apagar a abertura recem-criada.
-pub(super) fn consent_dialog(app: &App) -> Option<Element<'_, Message>> {
+pub(super) fn consent_dialog(app: &State) -> Option<Element<'_, Msg>> {
     let open = shown_consent(app)?;
     let t = app.iced.tokens;
     let cloud = &app.snapshot.assistant.settings.cloud;
@@ -956,9 +910,9 @@ pub(super) fn consent_dialog(app: &App) -> Option<Element<'_, Message>> {
         row![
             Space::new().width(Length::Fill),
             widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Regular, "Cancelar")
-                .on_press(Message::CancelPreview),
+                .on_press(Msg::CancelPreview),
             widgets::action_button(t, ButtonKind::Primary, ButtonSize::Regular, PREVIEW_SEND)
-                .on_press(Message::ApproveCloudSend),
+                .on_press(Msg::ApproveCloudSend),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -970,26 +924,26 @@ pub(super) fn consent_dialog(app: &App) -> Option<Element<'_, Message>> {
         app.window_size.w,
         640.0,
         Some(height),
-        Message::ClosePreview,
+        Msg::ClosePreview,
         app.motion.scrim(),
     ))
 }
 
 /// Secundario, e nao de perigo: tentar de novo nao apaga nem envia nada novo.
-fn retry_button(t: &'static Tokens) -> Element<'static, Message> {
+fn retry_button(t: &'static Tokens) -> Element<'static, Msg> {
     widgets::action_button(
         t,
         ButtonKind::Secondary,
         ButtonSize::Compact,
         "Tentar de novo",
     )
-    .on_press(Message::ChatRetry)
+    .on_press(Msg::ChatRetry)
     .into()
 }
 
 /// Conversas anteriores da conta que a tela mostra, com data e hora (todas se chamam "Análise
 /// de <mês>"), abrir e apagar com "Desfazer".
-fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
+fn conversation_list(app: &State) -> Option<Element<'_, Msg>> {
     let t = app.iced.tokens;
     let items = conversations_of_book(app);
     if items.is_empty() {
@@ -1003,7 +957,7 @@ fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
     };
     let delete_all =
         widgets::action_button(t, delete_kind, ButtonSize::Compact, delete_all_label(armed))
-            .on_press(Message::DeleteAllConversations);
+            .on_press(Msg::DeleteAllConversations);
     let mut col = column![
         row![
             widgets::kicker(t, "Conversas anteriores"),
@@ -1023,9 +977,9 @@ fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
             .padding([6, 8])
             .width(Length::Fill)
             .style(theme::plain(t.text))
-            .on_press(Message::OpenConversation(c.id.clone()));
+            .on_press(Msg::OpenConversation(c.id.clone()));
         let delete = widgets::action_button(t, ButtonKind::Danger, ButtonSize::Compact, "Apagar")
-            .on_press(Message::AskDeleteConversation(c.id.clone()));
+            .on_press(Msg::AskDeleteConversation(c.id.clone()));
         let line = row![title, delete].spacing(8).align_y(Alignment::Center);
         col = col.push(rows::hover_row(
             app,
@@ -1041,15 +995,15 @@ fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
 
 /// O texto da prévia como aparece na tela: com "Ocultar valores" ligado cada R$ vira a máscara
 /// (quem esconde os valores não os quer à vista nem aqui). O que SAI para o assistente é
-/// sempre `App::current_envelope`, sem máscara; a máscara é só de quem olha.
-pub(super) fn preview_text(app: &App) -> Option<Cow<'_, str>> {
+/// sempre `State::current_envelope`, sem máscara; a máscara é só de quem olha.
+pub(super) fn preview_text(app: &State) -> Option<Cow<'_, str>> {
     app.envelope_preview.as_deref().map(|s| mask(app, s))
 }
 
 /// Sobreposição "O que o assistente vê": o envelope inteiro, rolável, com "Fechar". Mesmo
 /// padrão do modal de remoção: fundo escurecido que fecha ao clicar e a caixa por cima, que
 /// engole o clique.
-pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
+pub(super) fn envelope_dialog(app: &State) -> Option<Element<'_, Msg>> {
     let t = app.iced.tokens;
     let preview = preview_text(app)?;
     let header = text("O que o assistente vê")
@@ -1072,7 +1026,7 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
     .height(Length::Fill)
     .padding(4);
     let close = widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Regular, "Fechar")
-        .on_press(Message::CloseEnvelope);
+        .on_press(Msg::CloseEnvelope);
     let height = (app.window_size.h - 96.0).clamp(240.0, 640.0);
     Some(widgets::dialog(
         t,
@@ -1087,7 +1041,7 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
         app.window_size.w,
         720.0,
         Some(height),
-        Message::CloseEnvelope,
+        Msg::CloseEnvelope,
         app.motion.scrim(),
     ))
 }
@@ -1095,7 +1049,7 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
 /// "Ocultar valores": os textos dos achados trazem o dinheiro ja formatado ("R$ 1.234,56"),
 /// entao a tela troca cada valor pela mascara em vez de formatar de novo. Sem isto o numero
 /// vazaria por cima do botao de ocultar.
-fn mask<'a>(app: &App, s: &'a str) -> Cow<'a, str> {
+fn mask<'a>(app: &State, s: &'a str) -> Cow<'a, str> {
     if app.hide_values {
         Cow::Owned(mask_str(s))
     } else {
@@ -1107,8 +1061,10 @@ fn mask<'a>(app: &App, s: &'a str) -> Cow<'a, str> {
 mod tests {
     use super::*;
     use crate::advisor::FindingKind;
+    use crate::assistant::prompt::OPENING_REQUEST;
     use crate::assistant::settings::{ProviderChoice, Settings};
     use crate::dashboard::money::MASK_DIGITS;
+    use crate::ui_model::analysis::cancel_preview_message;
     use crate::ui_model::analysis::tests::{conversation_with, msg};
     use crate::ui_model::effect::Effect;
 
@@ -1135,7 +1091,7 @@ mod tests {
         use crate::ui::app::tests::app_with_fixtures;
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
-        let _ = crate::ui::app::update(&mut app, Message::ShowEnvelope);
+        let _ = crate::ui::app::update(&mut app, Msg::ShowEnvelope);
         let full = app.current_envelope();
         assert!(full.contains("R$ "), "o envelope do exemplo traz dinheiro");
 
@@ -1166,7 +1122,7 @@ mod tests {
         let fresh = conversation_with(vec![opening()]);
         assert!(matches!(
             cancel_preview_message(&fresh, false),
-            Some(Message::DeleteConversation(id)) if id == "C1"
+            Some(Msg::DeleteConversation(id)) if id == "C1"
         ));
         assert!(cancel_preview_message(&fresh, true).is_none());
         // Conversa local com erro, reaberta do historico com a nuvem configurada: tem o que
@@ -1189,7 +1145,7 @@ mod tests {
         use crate::ui::app::{Screen, update};
         let dir = tempfile::tempdir().unwrap();
         let (mut app, mut rx, _tx) = app_with_fixtures(dir.path());
-        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        let _ = update(&mut app, Msg::SelectScreen(Screen::Analysis));
         let mut cloud = Settings {
             provider: ProviderChoice::Cloud,
             ..Settings::default()
@@ -1204,10 +1160,10 @@ mod tests {
         let _ = shell::root(&app);
         while rx.try_recv().is_ok() {}
         // Esc/scrim e "Cancelar" so fecham a previa: nada sai para o nucleo.
-        let _ = update(&mut app, Message::ClosePreview);
+        let _ = update(&mut app, Msg::ClosePreview);
         assert!(app.consent_preview.is_none());
         app.consent_preview = Some("C1".into());
-        let _ = update(&mut app, Message::CancelPreview);
+        let _ = update(&mut app, Msg::CancelPreview);
         assert!(app.consent_preview.is_none());
         assert!(
             rx.try_recv().is_err(),
@@ -1223,7 +1179,7 @@ mod tests {
         app.consent_preview = Some("C1".into());
         assert!(crate::ui::app::awaiting_cloud_consent(&app).is_none());
         assert!(consent_dialog(&app).is_none());
-        let _ = update(&mut app, Message::CancelPreview);
+        let _ = update(&mut app, Msg::CancelPreview);
         assert!(
             rx.try_recv().is_err(),
             "a conversa com resposta chegando ficou"
@@ -1231,7 +1187,7 @@ mod tests {
         // Terminada a resposta, a abertura sozinha e apagada pelo "Cancelar".
         app.snapshot.assistant.busy = false;
         app.consent_preview = Some("C1".into());
-        let _ = update(&mut app, Message::CancelPreview);
+        let _ = update(&mut app, Msg::CancelPreview);
         assert!(matches!(
             rx.try_recv(),
             Ok(Command::Assistant(AssistantCommand::Delete(id))) if id == "C1"
@@ -1261,18 +1217,18 @@ mod tests {
         assert!(two_panels(1144.0));
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
-        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        let _ = update(&mut app, Msg::SelectScreen(Screen::Analysis));
         app.window_size.w = 1024.0;
         assert_eq!(shell::content_width(&app), 728.0);
         assert!(!two_panels(shell::content_width(&app)));
         assert_eq!(app.analysis_tab, AnalysisTab::Findings);
         for tab in [AnalysisTab::Chat, AnalysisTab::Findings] {
-            let _ = update(&mut app, Message::AnalysisTab(tab));
+            let _ = update(&mut app, Msg::AnalysisTab(tab));
             assert_eq!(app.analysis_tab, tab);
             let _ = shell::root(&app);
         }
         // Abrir uma conversa leva ao painel da conversa.
-        let _ = update(&mut app, Message::OpenConversation("C1".into()));
+        let _ = update(&mut app, Msg::OpenConversation("C1".into()));
         assert_eq!(app.analysis_tab, AnalysisTab::Chat);
         app.window_size.w = 1440.0;
         assert!(two_panels(shell::content_width(&app)));
@@ -1393,7 +1349,7 @@ mod tests {
         use crate::ui::app::{Screen, update};
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
-        let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
+        let _ = update(&mut app, Msg::SelectScreen(Screen::Analysis));
         let mut reply = msg(MessageRole::Assistant, None);
         reply.id = "R1".into();
         reply.content = "Gastou **R$ 1.234,56** no mercado.".into();
@@ -1401,27 +1357,27 @@ mod tests {
         open.book = app.book;
         let mut snapshot = app.snapshot.clone();
         snapshot.assistant.open = Some(open);
-        let _ = update(&mut app, Message::Snapshot(Box::new(snapshot)));
+        let _ = update(&mut app, Msg::Snapshot(Box::new(snapshot)));
 
         app.hide_values = false;
-        app.refresh_replies();
+        app.sync();
         assert_eq!(
             app.iced.replies["R1"].copy,
             "Gastou **R$ 1.234,56** no mercado."
         );
-        let _ = update(&mut app, Message::ToggleHideValues);
+        let _ = update(&mut app, Msg::ToggleHideValues);
         assert!(app.hide_values);
         // A troca do olho refaz o cache: nada montado com os valores a mostra fica valendo.
         let cached = &app.iced.replies["R1"];
         assert!(cached.hidden);
         // O texto desenhado, nao o fonte: sem as marcas do Markdown.
         assert_eq!(cached.copy, format!("Gastou {MASK} no mercado."));
-        let effects = crate::ui::app::step(&mut app, Message::CopyReply("R1".into()));
+        let effects = crate::ui::app::step(&mut app, Msg::CopyReply("R1".into()));
         assert!(matches!(
             effects.as_slice(),
             [
                 Effect::CopyToClipboard(_),
-                Effect::After(_, Message::CopyExpired)
+                Effect::After(_, Msg::CopyExpired)
             ]
         ));
         assert!(app.is_copied(CopyTarget::Reply));
@@ -1429,7 +1385,7 @@ mod tests {
         let _ = view(&app);
         // Mensagem que nao esta na conversa aberta: nada a copiar.
         app.copied = None;
-        let effects = crate::ui::app::step(&mut app, Message::CopyReply("X".into()));
+        let effects = crate::ui::app::step(&mut app, Msg::CopyReply("X".into()));
         assert!(effects.is_empty());
         assert!(!app.is_copied(CopyTarget::Reply));
     }

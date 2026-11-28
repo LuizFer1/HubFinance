@@ -1,5 +1,5 @@
 //! Tipos de janela sem toolkit: o id, o tamanho e a borda de redimensionar. Cada toolkit
-//! traduz de e para os seus (o adaptador iced mantem o mapa de ids).
+//! traduz de e para os seus (o adaptador do toolkit mantem o mapa de ids).
 
 /// Id da janela como o modelo a ve. Opaco: so se compara. Quem sabe qual e a janela de verdade
 /// e o adaptador do toolkit.

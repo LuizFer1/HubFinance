@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use iced::widget::{image, qr_code};
 use iced::{Element, Subscription, Task, window};
 use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
@@ -145,7 +144,6 @@ pub enum AnalysisTab {
 /// textura do toolkit mora em `IcedSide`, com a mesma chave.
 pub struct Avatar {
     pub uri: String,
-    #[allow(dead_code)] // usado na Tarefa 6: a GPUI decodifica a foto a partir dos bytes
     pub bytes: Vec<u8>,
 }
 
@@ -278,10 +276,6 @@ pub struct App {
     pub(super) chat_input: String,
     /// Painel da Analise no segmentado da janela estreita.
     pub(super) analysis_tab: AnalysisTab,
-    /// Respostas do assistente ja interpretadas (Markdown), pelo id da mensagem. O `view` so le
-    /// (o Markdown do iced desenha a partir de itens que precisam viver fora dele); quem monta
-    /// e `refresh_replies`, a cada snapshot e a cada troca do olho.
-    pub(super) replies: HashMap<String, super::analysis_view::CachedReply>,
     /// A resposta cujo "Copiar" virou "Copiado" (`CopyTarget::Reply`).
     pub(super) copied_reply: Option<String>,
     /// Dialogo "Configurar assistente" (8.6); `None` = fechado.
@@ -530,7 +524,6 @@ impl App {
             hide_values: prefs.hide_values,
             chat_input: String::new(),
             analysis_tab: AnalysisTab::Findings,
-            replies: HashMap::new(),
             copied_reply: None,
             assistant_setup: None,
             consent_preview: None,
@@ -559,7 +552,7 @@ impl App {
     pub(super) fn refresh_replies(&mut self) {
         let hidden = self.hide_values;
         let Some(open) = self.snapshot.assistant.open.as_ref() else {
-            self.replies.clear();
+            self.iced.replies.clear();
             return;
         };
         let current: HashSet<&str> = open
@@ -568,17 +561,20 @@ impl App {
             .filter(|m| m.role == crate::assistant::view::MessageRole::Assistant)
             .map(|m| m.id.as_str())
             .collect();
-        self.replies.retain(|id, _| current.contains(id.as_str()));
+        self.iced
+            .replies
+            .retain(|id, _| current.contains(id.as_str()));
         for m in &open.messages {
             if m.role != crate::assistant::view::MessageRole::Assistant {
                 continue;
             }
             let fresh = self
+                .iced
                 .replies
                 .get(&m.id)
                 .is_some_and(|c| c.hidden == hidden && c.content == m.content);
             if !fresh {
-                self.replies.insert(
+                self.iced.replies.insert(
                     m.id.clone(),
                     super::analysis_view::render_reply(&m.content, hidden),
                 );
@@ -849,11 +845,8 @@ impl App {
             .into_iter()
             .filter_map(|user| Some((user.id.clone(), user.avatar.clone()?)))
             .collect();
-        self.user_avatars = sync_avatars(
-            std::mem::take(&mut self.user_avatars),
-            &mut self.iced.user_avatars,
-            wanted,
-        );
+        self.user_avatars = sync_avatars(std::mem::take(&mut self.user_avatars), wanted);
+        self.iced.sync_user_textures(&self.user_avatars);
     }
 
     /// Refaz os tokens a partir da preferencia e do sistema. So mexe no que se desenha (nunca
@@ -889,11 +882,8 @@ impl App {
             .iter()
             .filter_map(|p| Some((p.device_id.clone(), p.avatar_uri.clone()?)))
             .collect();
-        self.avatars = sync_avatars(
-            std::mem::take(&mut self.avatars),
-            &mut self.iced.avatars,
-            wanted,
-        );
+        self.avatars = sync_avatars(std::mem::take(&mut self.avatars), wanted);
+        self.iced.sync_device_textures(&self.avatars);
     }
 
     /// Pessoas que a tela mostra: sem a da remocao pendente (ela some na hora, como no design).
@@ -1097,10 +1087,8 @@ fn handle(app: &mut App, message: Message) -> Vec<Effect<Message>> {
             let new_token = s.pairing.as_ref().map(|p| &p.token);
             let old_token = app.snapshot.pairing.as_ref().map(|p| &p.token);
             if new_token != old_token {
-                app.iced.qr = s
-                    .pairing
-                    .as_ref()
-                    .and_then(|p| qr_code::Data::new(&p.qr_url).ok());
+                app.iced
+                    .sync_qr(s.pairing.as_ref().map(|p| p.qr_url.as_str()));
             }
             // Aparelho novo enquanto o fluxo esta na tela: o pareamento terminou. Pelos ids ativos
             // (um aparelho removido pode parear de novo) e so com o nucleo ja no ar antes: no
@@ -1562,6 +1550,7 @@ fn handle(app: &mut App, message: Message) -> Vec<Effect<Message>> {
             // O mesmo texto da tela: mascarado com o olho ligado (decisao registrada em
             // `CachedReply::copy`). Sem cache valido, monta na hora pelo mesmo caminho.
             let copy = match app
+                .iced
                 .replies
                 .get(&id)
                 .filter(|c| c.hidden == app.hide_values && c.content == m.content)
@@ -2197,33 +2186,26 @@ fn system_theme(mode: iced::theme::Mode) -> Message {
 }
 
 /// Fotos de um conjunto (aparelhos ou perfis) a partir dos pares `(chave, data URI)`: reaproveita
-/// foto e textura quando o URI nao mudou, e so decodifica o que e novo ou trocou. Chave que saiu
-/// do conjunto perde a textura junto.
+/// a foto quando o URI nao mudou, e so decodifica o que e novo ou trocou. A textura do toolkit
+/// e refeita em `IcedSide`, a partir destes bytes.
 fn sync_avatars(
     mut old: HashMap<String, Avatar>,
-    handles: &mut HashMap<String, image::Handle>,
     wanted: Vec<(String, String)>,
 ) -> HashMap<String, Avatar> {
     let mut avatars = HashMap::new();
-    let mut kept = HashMap::new();
     for (key, uri) in wanted {
         match old.remove(&key) {
-            Some(prev) if prev.uri == uri && handles.contains_key(&key) => {
-                if let Some(handle) = handles.remove(&key) {
-                    kept.insert(key.clone(), handle);
-                }
+            Some(prev) if prev.uri == uri => {
                 avatars.insert(key, prev);
             }
             _ => {
                 let Some(bytes) = avatar_bytes(&uri) else {
                     continue;
                 };
-                kept.insert(key.clone(), image::Handle::from_bytes(bytes.clone()));
                 avatars.insert(key, Avatar { uri, bytes });
             }
         }
     }
-    *handles = kept;
     avatars
 }
 

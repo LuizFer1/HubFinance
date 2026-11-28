@@ -581,7 +581,7 @@ fn message_view<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<
     }
 }
 
-/// O corpo da resposta: o Markdown ja interpretado do cache (`App::replies`), ou o texto puro.
+/// O corpo da resposta: o Markdown ja interpretado do cache (`IcedSide::replies`), ou o texto puro.
 /// O cache so vale para o mesmo texto e o mesmo estado do olho: um cache montado com os valores
 /// a mostra nunca e desenhado com "Ocultar valores" ligado.
 fn reply_body<'a>(app: &'a App, m: &'a MessageView) -> Element<'a, Message> {
@@ -597,6 +597,7 @@ fn reply_body<'a>(app: &'a App, m: &'a MessageView) -> Element<'a, Message> {
         text(shown).size(14).line_height(1.5).color(t.text).into()
     };
     let Some(cached) = app
+        .iced
         .replies
         .get(&m.id)
         .filter(|c| c.hidden == app.hide_values && c.content == m.content)
@@ -667,7 +668,7 @@ pub(super) enum ReplyShown {
     Plain(String),
 }
 
-/// Resposta pronta para desenhar, guardada em `App::replies` pelo id da mensagem. `hidden` e
+/// Resposta pronta para desenhar, guardada em `IcedSide::replies` pelo id da mensagem. `hidden` e
 /// `content` sao a chave de validade: o `view` so usa o cache se os dois baterem com agora.
 pub(super) struct CachedReply {
     pub hidden: bool,
@@ -1404,11 +1405,14 @@ mod tests {
 
         app.hide_values = false;
         app.refresh_replies();
-        assert_eq!(app.replies["R1"].copy, "Gastou **R$ 1.234,56** no mercado.");
+        assert_eq!(
+            app.iced.replies["R1"].copy,
+            "Gastou **R$ 1.234,56** no mercado."
+        );
         let _ = update(&mut app, Message::ToggleHideValues);
         assert!(app.hide_values);
         // A troca do olho refaz o cache: nada montado com os valores a mostra fica valendo.
-        let cached = &app.replies["R1"];
+        let cached = &app.iced.replies["R1"];
         assert!(cached.hidden);
         // O texto desenhado, nao o fonte: sem as marcas do Markdown.
         assert_eq!(cached.copy, format!("Gastou {MASK} no mercado."));

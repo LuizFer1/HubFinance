@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use iced::widget::{canvas, image, qr_code};
 use iced::window;
 
+use super::analysis_view::CachedReply;
+use super::app::Avatar;
 use super::theme::Tokens;
 use crate::ui_model::window::WindowId;
 
@@ -29,6 +31,10 @@ pub struct IcedSide {
     pub(super) avatars: HashMap<String, image::Handle>,
     /// `user_id` -> textura da foto do perfil.
     pub(super) user_avatars: HashMap<String, image::Handle>,
+    /// Respostas do assistente ja interpretadas (Markdown), pelo id da mensagem. O Markdown do
+    /// iced desenha a partir de itens que precisam viver fora dele; o `view` so le, e quem monta
+    /// e `App::refresh_replies`, a cada snapshot e a cada troca do olho.
+    pub(super) replies: HashMap<String, CachedReply>,
     /// `WindowId` do modelo -> id do iced. O modelo so conhece o primeiro.
     windows: HashMap<WindowId, window::Id>,
 }
@@ -45,8 +51,22 @@ impl IcedSide {
             iced_theme: tokens.iced_theme(),
             avatars: HashMap::new(),
             user_avatars: HashMap::new(),
+            replies: HashMap::new(),
             windows: HashMap::new(),
         }
+    }
+
+    /// Refaz a matriz do QR a partir da URL do pareamento (`None` apaga).
+    pub(super) fn sync_qr(&mut self, url: Option<&str>) {
+        self.qr = url.and_then(|u| qr_code::Data::new(u).ok());
+    }
+
+    pub(super) fn sync_device_textures(&mut self, avatars: &HashMap<String, Avatar>) {
+        sync_textures(&mut self.avatars, avatars);
+    }
+
+    pub(super) fn sync_user_textures(&mut self, avatars: &HashMap<String, Avatar>) {
+        sync_textures(&mut self.user_avatars, avatars);
     }
 
     pub(super) fn clear_charts(&self) {
@@ -78,4 +98,19 @@ impl IcedSide {
 /// sem consultar o mapa.
 pub fn model_id(id: window::Id) -> WindowId {
     WindowId(id.to_string().parse().unwrap_or(0))
+}
+
+/// Reaproveita a textura enquanto o mesmo valor viver: o `Handle` e identificado pelos bytes, e
+/// refaze-lo a cada snapshot subiria a foto de novo para a GPU. So a chave nova ou de foto
+/// trocada ganha textura; chave que saiu do conjunto perde a dela.
+fn sync_textures(handles: &mut HashMap<String, image::Handle>, avatars: &HashMap<String, Avatar>) {
+    handles.retain(|key, _| avatars.contains_key(key));
+    for (key, avatar) in avatars {
+        let stale = handles.get(key).is_none_or(
+            |h| !matches!(h, image::Handle::Bytes(_, b) if b.as_ref() == avatar.bytes.as_slice()),
+        );
+        if stale {
+            handles.insert(key.clone(), image::Handle::from_bytes(avatar.bytes.clone()));
+        }
+    }
 }

@@ -22,7 +22,6 @@ use super::charts::{
     EMPTY_HEIGHT, EMPTY_WIDTH, EmptyChartProgram, HISTORY_HEIGHT, HistoryProgram, MeterProgram,
     PACE_HEIGHT, PaceProgram, SwatchProgram,
 };
-use super::shell::Arrival;
 use super::theme::{self, ButtonKind, ButtonSize, Tokens};
 use super::widgets::{Bar, CompactTone};
 use super::{fonts, icons, shell, widgets};
@@ -31,6 +30,7 @@ use crate::dashboard::grafite::{
 };
 use crate::dashboard::money::group_thousands;
 use crate::hub::snapshot::Status;
+use crate::ui_model::shell::Arrival;
 use crate::ui_model::time;
 
 /// Espaco entre blocos (o `gap: 16px` do `main`).

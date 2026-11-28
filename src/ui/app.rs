@@ -13,9 +13,7 @@ use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
 use tokio::sync::watch;
 
-use super::assistant_settings_view::SetupStep;
-use super::connection_view::{self, ConnectFlow, ConnectStep, PhoneOs};
-use super::remove_view;
+use super::connection_view;
 use super::theme::Tokens;
 use crate::assistant::secret::Secret;
 use crate::assistant::settings::ProviderChoice;
@@ -32,6 +30,8 @@ use crate::desktop::{Desktop, DesktopEvent, EventReceiver};
 use crate::hub::snapshot::{DeviceView, Snapshot, Status};
 use crate::hub::{AssistantCommand, Command, HubHandle};
 use crate::store::erase::{Area, AreaSet};
+use crate::ui_model::assistant_setup::SetupStep;
+use crate::ui_model::connect::{self, ConnectFlow, ConnectStep, PhoneOs};
 
 /// Quanto tempo "Copiado" fica no botao, como no prototipo.
 pub const COPIED_FOR: Duration = Duration::from_millis(1600);
@@ -288,7 +288,7 @@ pub struct App {
     /// A resposta cujo "Copiar" virou "Copiado" (`CopyTarget::Reply`).
     pub(super) copied_reply: Option<String>,
     /// Dialogo "Configurar assistente" (8.6); `None` = fechado.
-    pub(super) assistant_setup: Option<super::assistant_settings_view::AssistantSetup>,
+    pub(super) assistant_setup: Option<crate::ui_model::assistant_setup::AssistantSetup>,
     /// A previa de envio a nuvem aberta (8.5), pela conversa que ela mostra. Presa ao id: so
     /// aparece enquanto essa conversa for a aberta e ainda esperar aprovacao; reabrir do
     /// historico uma conversa local com a nuvem configurada nao a faz saltar sozinha.
@@ -727,7 +727,7 @@ impl App {
     /// (nao perde o que a pessoa digitou).
     fn open_setup(&mut self) {
         if self.assistant_setup.is_none() {
-            self.assistant_setup = Some(super::assistant_settings_view::AssistantSetup::open(
+            self.assistant_setup = Some(crate::ui_model::assistant_setup::AssistantSetup::open(
                 &self.snapshot.assistant.settings,
             ));
         }
@@ -1329,7 +1329,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
         Message::Desktop(DesktopEvent::CopyAddress) => {
             // Sem endereco (sem rede local) nao ha o que copiar; o icone ja esta com o ponto
             // de atencao e o tooltip diz "sem rede".
-            if let Some(url) = connection_view::hub_url(&app.snapshot)
+            if let Some(url) = connect::hub_url(&app.snapshot)
                 && let Err(err) = app.desktop.copy_text(&url)
             {
                 tracing::warn!("copiar endereco pela bandeja: {err}");
@@ -1578,8 +1578,8 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::Copy(target) => {
             let text = match target {
-                CopyTarget::Address => connection_view::hub_url(&app.snapshot),
-                CopyTarget::Guide => connection_view::guide_url(&app.snapshot),
+                CopyTarget::Address => connect::hub_url(&app.snapshot),
+                CopyTarget::Guide => connect::guide_url(&app.snapshot),
                 CopyTarget::DataDir => Some(app.snapshot.data_dir.display().to_string()),
                 CopyTarget::LogsDir => Some(
                     config::logs_dir(&app.snapshot.data_dir)
@@ -1762,7 +1762,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             };
             // So uma remocao desfazivel por vez: a anterior vai agora.
             app.commit_pending();
-            let toast = remove_view::toast_text(&base, &data, dialog.selected);
+            let toast = crate::ui_model::remove::toast_text(&base, &data, dialog.selected);
             let action = if orphan {
                 PendingAction::Erase(dialog.selected)
             } else {
@@ -2013,7 +2013,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             }
             let saved = &app.snapshot.assistant.settings;
             let Some(settings) =
-                super::assistant_settings_view::settings_to_save(saved, &setup.draft)
+                crate::ui_model::assistant_setup::settings_to_save(saved, &setup.draft)
             else {
                 return Task::none();
             };
@@ -2306,6 +2306,7 @@ pub(super) mod tests {
     use crate::desktop::{Fake, Headless};
     use crate::store::erase::DeviceData;
 
+    use super::super::remove_view;
     use super::*;
 
     /// App de teste com canais de verdade e a integracao do sistema escolhida: o receptor de
@@ -3362,13 +3363,13 @@ pub(super) mod tests {
         // O passo 2 desenha sem panico e os textos trazem as contagens.
         let _ = remove_view::dialog(&app).expect("modal aberto");
         let selected = app.confirm_remove.as_ref().unwrap().selected;
-        let text = remove_view::confirm_text(&data(), selected);
+        let text = crate::ui_model::remove::confirm_text(&data(), selected);
         assert!(text.contains("3 metas"), "{text}");
         assert!(text.contains("100 lançamentos"), "{text}");
         assert!(text.contains("2 reservas com 14 movimentos"), "{text}");
         assert!(text.contains("1 recorrência com 2 reajustes"), "{text}");
         assert_eq!(
-            remove_view::confirm_label(&data(), selected, false),
+            crate::ui_model::remove::confirm_label(&data(), selected, false),
             "Remover e apagar 122 itens"
         );
         let _ = update(&mut app, Message::ConfirmRemove);
@@ -3484,7 +3485,7 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::ToggleArea(Area::Reserves));
         let _ = update(&mut app, Message::RemoveContinue);
         assert_eq!(
-            remove_view::confirm_label(&data(), only(Area::Reserves), true),
+            crate::ui_model::remove::confirm_label(&data(), only(Area::Reserves), true),
             "Apagar 16 itens"
         );
         let _ = update(&mut app, Message::ConfirmRemove);
@@ -4847,7 +4848,7 @@ pub(super) mod tests {
         assert!(app.confirm_delete_all.is_none());
     }
 
-    fn setup(app: &App) -> &super::super::assistant_settings_view::AssistantSetup {
+    fn setup(app: &App) -> &crate::ui_model::assistant_setup::AssistantSetup {
         app.assistant_setup.as_ref().expect("dialogo aberto")
     }
 
@@ -4866,7 +4867,7 @@ pub(super) mod tests {
 
     #[test]
     fn dialogo_anda_pelos_passos_e_so_grava_no_ultimo_botao() {
-        use super::super::assistant_settings_view::SetupStep;
+        use crate::ui_model::assistant_setup::SetupStep;
         let dir = tempfile::tempdir().unwrap();
         let (mut app, mut rx) = assistant_app(dir.path(), Settings::default());
         let _ = update(&mut app, Message::ConfigureAssistant);
@@ -5264,7 +5265,7 @@ pub(super) mod tests {
 
     #[test]
     fn dialogos_do_assistente_montam_em_todos_os_estados() {
-        use super::super::assistant_settings_view::SetupStep;
+        use crate::ui_model::assistant_setup::SetupStep;
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx) = cloud_app(dir.path());
         let _ = update(&mut app, Message::ConfigureAssistant);
@@ -5459,7 +5460,7 @@ pub(super) mod tests {
             .push(msg(MessageRole::User, "pergunta-pendente"));
         app.snapshot.assistant.open = Some(conv);
         let open = super::awaiting_cloud_consent(&app).unwrap();
-        let body = super::super::analysis_view::preview_body(open);
+        let body = crate::ui_model::analysis::preview_body(open);
         let payload = open.payload();
         // A janela corta o comeco (e avanca ate uma pergunta): nem tudo cabe.
         assert!(payload.len() > 2 && payload.len() <= 1 + MAX_TURNS * 2);
@@ -5481,9 +5482,7 @@ pub(super) mod tests {
         assert!(!body.contains("falha-que-nao-vai"));
         assert!(body.ends_with("Você: pergunta-pendente"));
         // Com mensagens anteriores a introducao deixa de falar so da pergunta de abertura.
-        assert!(
-            !super::super::analysis_view::PREVIEW_INTRO_EARLIER.contains("pergunta de abertura")
-        );
+        assert!(!crate::ui_model::analysis::PREVIEW_INTRO_EARLIER.contains("pergunta de abertura"));
         let _ = super::super::analysis_view::view(&app);
     }
 
@@ -5510,7 +5509,7 @@ pub(super) mod tests {
         assert_eq!(app.consent_preview.as_deref(), Some("C1"));
         let open = super::super::analysis_view::shown_consent(&app).expect("previa aberta");
         // O texto do dialogo e o do payload (a mesma montagem do envio).
-        let body = super::super::analysis_view::preview_body(open);
+        let body = crate::ui_model::analysis::preview_body(open);
         for turn in open.payload().iter().skip(1) {
             assert!(body.contains(&turn.content), "{}", turn.content);
         }

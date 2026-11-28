@@ -4,6 +4,12 @@
 //! sem fonte e sem relogio de verdade (o "agora" entra por parametro). Os toolkits so
 //! desenham o que este modulo decide e traduzem suas teclas e eventos para os tipos daqui.
 
+pub mod analysis;
+pub mod assistant_setup;
+pub mod connect;
 pub mod keys;
 pub mod measure;
+pub mod remove;
+pub mod settings;
+pub mod shell;
 pub mod time;

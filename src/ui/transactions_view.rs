@@ -12,7 +12,6 @@ use iced::{Alignment, Color, Element, Length, Padding};
 
 use super::app::{App, Message};
 use super::rows::{author_cell, category_tile, hover_row, value_cell};
-use super::shell::Arrival;
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, alpha, mix, size, space, type_scale};
 use super::widgets::{ChipShape, RowEdge, SegmentedSize, SegmentedVariant, TagTone};
 use super::{fonts, icons, shell, widgets};
@@ -22,6 +21,7 @@ use crate::dashboard::list::{
 use crate::dashboard::money::group_thousands;
 use crate::dashboard::periods::month_long;
 use crate::dashboard::view::TransactionsView;
+use crate::ui_model::shell::Arrival;
 
 /// Entre filtros, resumo e tabela: o espaco entre blocos de toda tela (7.4).
 const GAP: f32 = space::BETWEEN_CARDS;

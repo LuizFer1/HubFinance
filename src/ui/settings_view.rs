@@ -13,9 +13,8 @@ use super::app::{App, CopyTarget, Message};
 use super::theme::{ButtonKind, ButtonSize, Tokens, space, type_scale};
 use super::widgets::{SegmentedSize, SegmentedVariant};
 use super::{fonts, icons, widgets};
-use crate::assistant::settings::{ProviderChoice, Settings};
 use crate::config::{self, ThemeMode};
-use crate::hub::snapshot::Snapshot;
+use crate::ui_model::settings::{about_lines, assistant_summary, network_note};
 
 /// Largura maxima da coluna: linhas mais largas afastam demais o rotulo do controle.
 const COLUMN_MAX: f32 = 720.0;
@@ -151,22 +150,6 @@ fn startup_rows(app: &App) -> Option<Vec<Element<'_, Message>>> {
     Some(vec![switch, note.into()])
 }
 
-/// Resumo de uma linha da configuracao do assistente, o mesmo criterio de `Settings`: o que
-/// esta escolhido, e se a nuvem esta com o envio desligado.
-pub(super) fn assistant_summary(settings: &Settings) -> String {
-    match settings.provider {
-        ProviderChoice::None => "Desligado · só os achados, sem conversa".into(),
-        ProviderChoice::Local => match &settings.local.model {
-            Some(model) => format!("Ollama local, {model}"),
-            None => "Ollama local, nenhum modelo escolhido".into(),
-        },
-        ProviderChoice::Cloud if settings.cloud.enabled => {
-            format!("OpenRouter, {}", settings.cloud.model)
-        }
-        ProviderChoice::Cloud => format!("OpenRouter, {} · envio desligado", settings.cloud.model),
-    }
-}
-
 /// "Configurar" abre o dialogo em passos do assistente aqui mesmo, por cima de Ajustes.
 fn assistant_row(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
@@ -268,22 +251,6 @@ fn releases_link(app: &App) -> Element<'_, Message> {
     .into()
 }
 
-/// Textos de "Sobre", separados do layout para o teste.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct AboutLines {
-    pub version: String,
-    pub data_dir: String,
-    pub logs_dir: String,
-}
-
-pub(super) fn about_lines(snap: &Snapshot) -> AboutLines {
-    AboutLines {
-        version: format!("{} v{}", config::HUB_NAME, config::VERSION),
-        data_dir: snap.data_dir.display().to_string(),
-        logs_dir: config::logs_dir(&snap.data_dir).display().to_string(),
-    }
-}
-
 /// Caminho com um espaco de largura zero depois de cada separador: o iced so quebra linha em
 /// oportunidade de quebra do Unicode, e `\` nao e uma (com `Word` a quebra cairia no meio de
 /// um nome, com `Glyph` em qualquer letra). Assim ela cai entre pastas. So para exibir:
@@ -299,22 +266,12 @@ fn breakable_path(path: &str) -> String {
     out
 }
 
-/// Rodape de "Sobre". Com a nuvem do assistente como destino, "nunca consulta a internet"
-/// deixaria de ser verdade; o criterio e o mesmo do envio (`Settings::destination`), entao o
-/// texto muda exatamente quando algo pode sair.
-pub(super) fn network_note(settings: &Settings) -> &'static str {
-    if settings.destination().is_some_and(|d| d.is_cloud()) {
-        "Só o assistente na nuvem sai da rede, e só quando você envia."
-    } else {
-        "Este programa nunca consulta a internet"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::app::tests::{app_with, with_tray};
     use super::super::app::{Screen, update};
     use super::*;
+    use crate::hub::snapshot::Snapshot;
 
     #[test]
     fn tela_ajustes_monta_com_e_sem_bandeja() {
@@ -337,27 +294,6 @@ mod tests {
     }
 
     #[test]
-    fn resumo_do_assistente_por_escolha() {
-        let mut s = Settings::default();
-        assert_eq!(
-            assistant_summary(&s),
-            "Desligado · só os achados, sem conversa"
-        );
-        s.provider = ProviderChoice::Local;
-        assert_eq!(
-            assistant_summary(&s),
-            "Ollama local, nenhum modelo escolhido"
-        );
-        s.local.model = Some("llama3.1:8b".into());
-        assert_eq!(assistant_summary(&s), "Ollama local, llama3.1:8b");
-        s.provider = ProviderChoice::Cloud;
-        s.cloud.model = "x/y".into();
-        assert_eq!(assistant_summary(&s), "OpenRouter, x/y · envio desligado");
-        s.cloud.enabled = true;
-        assert_eq!(assistant_summary(&s), "OpenRouter, x/y");
-    }
-
-    #[test]
     fn caminho_quebra_so_depois_do_separador() {
         assert_eq!(
             breakable_path(r"C:\Users\ana"),
@@ -367,39 +303,5 @@ mod tests {
         // Tirando o espaco de largura zero volta o caminho exato.
         let path = r"C:\x\HubFinance\data\logs";
         assert_eq!(breakable_path(path).replace('\u{200B}', ""), path);
-    }
-
-    #[test]
-    fn rodape_diz_que_so_a_nuvem_sai_da_rede() {
-        let mut s = Settings::default();
-        assert_eq!(network_note(&s), "Este programa nunca consulta a internet");
-        s.provider = ProviderChoice::Local;
-        s.cloud.enabled = true;
-        assert_eq!(network_note(&s), "Este programa nunca consulta a internet");
-        s.provider = ProviderChoice::Cloud;
-        s.cloud.enabled = false;
-        assert_eq!(network_note(&s), "Este programa nunca consulta a internet");
-        s.cloud.enabled = true;
-        assert_eq!(
-            network_note(&s),
-            "Só o assistente na nuvem sai da rede, e só quando você envia."
-        );
-    }
-
-    #[test]
-    fn sobre_mostra_versao_e_as_duas_pastas() {
-        let snap = Snapshot {
-            data_dir: std::path::PathBuf::from("C:/x/HubFinance/data"),
-            ..Snapshot::default()
-        };
-        let lines = about_lines(&snap);
-        assert_eq!(lines.version, format!("HubFinance v{}", config::VERSION));
-        assert_eq!(lines.data_dir, "C:/x/HubFinance/data");
-        assert_eq!(
-            lines.logs_dir,
-            config::logs_dir(&snap.data_dir).display().to_string()
-        );
-        assert!(lines.logs_dir.starts_with(&lines.data_dir));
-        assert!(lines.logs_dir.ends_with("logs"));
     }
 }

@@ -261,7 +261,7 @@ mod tests {
         app.cat_menu_open = true;
         assert!(is(shortcut(&app, &esc()), "Some(CloseCategoryMenu)"));
         // O dialogo de configuracao fica por cima do menu, e vale em qualquer tela.
-        app.assistant_setup = Some(crate::ui::assistant_settings_view::AssistantSetup::open(
+        app.assistant_setup = Some(crate::ui_model::assistant_setup::AssistantSetup::open(
             &Default::default(),
         ));
         assert!(is(shortcut(&app, &esc()), "Some(CloseAssistantSetup)"));
@@ -286,7 +286,7 @@ mod tests {
         assert!(shortcut(&app, &alt(Named::ArrowLeft, Code::ArrowLeft)).is_none());
         // O mesmo com "Configurar assistente" aberto.
         app.envelope_preview = None;
-        app.assistant_setup = Some(crate::ui::assistant_settings_view::AssistantSetup::open(
+        app.assistant_setup = Some(crate::ui_model::assistant_setup::AssistantSetup::open(
             &Default::default(),
         ));
         assert!(shortcut(&app, &ctrl_digit('2', Code::Digit2)).is_none());
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn esc_fecha_o_conectar_um_celular_e_os_atalhos_param_por_baixo() {
-        use super::super::connection_view::ConnectFlow;
+        use crate::ui_model::connect::ConnectFlow;
         let (mut app, _dir) = app();
         app.screen = Screen::Connection;
         app.connect = Some(ConnectFlow::new(true));

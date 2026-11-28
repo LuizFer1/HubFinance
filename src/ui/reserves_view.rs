@@ -17,7 +17,6 @@ use super::charts::{
     series_color,
 };
 use super::rows::{author_cell_of, hover_row};
-use super::shell::Arrival;
 use super::theme::{self, Tokens, space, type_scale};
 use super::widgets::{Bar, RowEdge, StatSize, TagTone};
 use super::{fonts, icons, shell, widgets};
@@ -28,6 +27,7 @@ use crate::dashboard::reserves::{
     ReserveColor, ReserveShare,
 };
 use crate::dashboard::view::ReservesView;
+use crate::ui_model::shell::Arrival;
 
 /// Entre os blocos da tela: o espaco entre cards de toda tela (7.4).
 const GAP: f32 = space::BETWEEN_CARDS;

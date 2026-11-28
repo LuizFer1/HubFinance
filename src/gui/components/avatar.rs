@@ -1,8 +1,10 @@
 //! Avatar: foto (bytes decodificados uma vez por perfil) ou inicial sobre a cor do perfil.
 //!
-//! A foto vira `Arc<gpui::Image>` **uma vez**, fora do `render` (`photo`): o GPUI guarda a
-//! textura pelo id do `Image`, entao um `Arc` novo a cada quadro decodificaria a foto de novo
-//! 60 vezes por segundo.
+//! A foto vira `Arc<gpui::Image>` **uma vez**, fora do `render` (`photo`). O GPUI identifica o
+//! `Image` pelo hash dos bytes e guarda a textura por esse id, entao um `Arc` novo a cada quadro
+//! NAO decodifica de novo; o custo real e o `to_vec()` + o hash da foto inteira a cada quadro.
+//! Se a decodificacao falhar (cabecalho valido, dados corrompidos), `with_fallback` desenha a
+//! inicial sobre a cor do perfil em vez de um circulo vazio.
 
 use std::sync::Arc;
 
@@ -95,15 +97,32 @@ impl RenderOnce for Avatar {
             .size(px(self.size))
             .rounded_full()
             .overflow_hidden();
-        match self.photo {
-            Some(photo) => base.child(img(photo).size_full().object_fit(ObjectFit::Cover)),
-            None => base
-                .bg(profile_color(&self.color_token, t))
-                // Texto escuro sobre a cor do perfil: as cores sao claras o bastante nos dois temas.
-                .text_color(t.on_highlight)
-                .text_size(px(self.size * 0.42))
+        let color = profile_color(&self.color_token, t);
+        let on = t.on_highlight;
+        let size = self.size;
+        let letter = SharedString::from(initial(&self.name));
+        // Texto escuro sobre a cor do perfil: as cores sao claras o bastante nos dois temas.
+        let badge = move || {
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .size_full()
+                .bg(color)
+                .text_color(on)
+                .text_size(px(size * 0.42))
                 .font_weight(fonts::weight(600))
-                .child(SharedString::from(initial(&self.name))),
+                .child(letter.clone())
+                .into_any_element()
+        };
+        match self.photo {
+            Some(photo) => base.child(
+                img(photo)
+                    .size_full()
+                    .object_fit(ObjectFit::Cover)
+                    .with_fallback(badge),
+            ),
+            None => base.child(badge()),
         }
     }
 }

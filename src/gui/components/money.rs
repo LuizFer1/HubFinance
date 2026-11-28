@@ -24,6 +24,13 @@ pub const SIZES: [f32; 5] = [48.0, 30.0, 20.0, 15.0, 14.0];
 /// os cards ficam mais altos que o artboard.
 pub const LINE_HEIGHT: f32 = 1.05;
 
+/// "R$" menor (0,6em/500/opacidade 0,6)? No design so os tamanhos 15/20/30/48 levam o span
+/// interno; as linhas de tabela, "Recentes", tooltip e "Depois:" (12/13/14) desenham "R$" no
+/// tamanho e peso do valor. A mascara encolhe o "R$" em qualquer tamanho (`.oculto .v::before`).
+pub fn small_currency(size: f32, masked: bool) -> bool {
+    size >= 15.0 || masked
+}
+
 /// O corpo e so pontos de mascara (e tem algum): o valor esta oculto.
 pub fn is_masked(body: &str) -> bool {
     !body.is_empty() && body.chars().all(|c| c == '•')
@@ -120,7 +127,7 @@ impl RenderOnce for Money {
         if !parts.sign.is_empty() {
             row = row.child(SharedString::from(parts.sign));
         }
-        if parts.currency {
+        if parts.currency && small_currency(size, masked) {
             row = row.child(
                 div()
                     .mr(px(size * 0.3))
@@ -129,6 +136,8 @@ impl RenderOnce for Money {
                     .text_color(color.opacity(0.6))
                     .child("R$"),
             );
+        } else if parts.currency {
+            row = row.child(div().mr(px(size * 0.3)).child("R$"));
         }
         row = row.child(div().child(SharedString::from(parts.body)));
         if masked {
@@ -173,6 +182,17 @@ mod tests {
         assert!(!p.body.chars().any(|c| c.is_ascii_digit()));
         let n = split(AXIS_MASK);
         assert!(!n.currency && is_masked(&n.body), "{n:?}");
+    }
+
+    #[test]
+    fn r_cifrao_menor_so_a_partir_de_15px_ou_oculto() {
+        for z in [15.0, 20.0, 30.0, 48.0] {
+            assert!(small_currency(z, false), "{z}");
+        }
+        for z in [12.0, 13.0, 14.0] {
+            assert!(!small_currency(z, false), "{z}");
+            assert!(small_currency(z, true), "{z} oculto");
+        }
     }
 
     #[test]

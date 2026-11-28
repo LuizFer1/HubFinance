@@ -1,4 +1,9 @@
 //! Estado vazio: ícone num círculo `accent_900`, título, texto e botão opcional.
+//!
+//! **Contrato: sem padding nem card próprio.** No artboard Estados o estado vazio É o card
+//! (`padding: 32px 24px` no lugar dos 24 padrão), então quem usa envolve em
+//! `Card::new(t).px(px(24.0)).py(px(32.0))`. Se o componente também tivesse padding, ele se
+//! somaria ao do `Card` (48/56 px) e os títulos quebrariam de linha.
 
 use gpui::{
     AnyElement, App, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div, px,
@@ -48,8 +53,6 @@ impl RenderOnce for EmptyState {
             .items_center()
             .justify_center()
             .gap(px(12.0))
-            .px(px(24.0))
-            .py(px(32.0))
             .text_center()
             .child(
                 div()

@@ -6,6 +6,8 @@
 //! mesmo anel de `focus::ring`. As colunas seguem o artboard: Padrão, Hover, Pressionado, Foco,
 //! Desabilitado.
 
+use std::sync::{Arc, LazyLock};
+
 use gpui::{AnyElement, Div, IntoElement, SharedString, div, prelude::*, px};
 
 use super::avatar::{Avatar, photo};
@@ -31,6 +33,10 @@ use crate::gui::icons::Icon;
 use crate::gui::theme::Tokens;
 
 /// `HUBFINANCE_DEMO=componentes`.
+/// Foto da vitrine montada uma vez: `photo` copia e faz hash de todos os bytes a cada chamada.
+static DEMO_PHOTO: LazyLock<Option<Arc<gpui::Image>>> =
+    LazyLock::new(|| photo(include_bytes!("../../../assets/brand/hubfinance-512.png")));
+
 pub fn requested() -> bool {
     std::env::var_os("HUBFINANCE_DEMO").is_some_and(|v| v == "componentes" || v == "dados")
 }
@@ -285,9 +291,7 @@ fn data_section(t: &'static Tokens) -> impl IntoElement {
             row()
                 .child(Avatar::new("Luiz", "sky", t))
                 .child(Avatar::new("Ágata", "rose", t).size(48.0))
-                .child(Avatar::new("Foto", "sky", t).photo(photo(include_bytes!(
-                    "../../../assets/brand/hubfinance-512.png"
-                ))))
+                .child(Avatar::new("Foto", "sky", t).photo(DEMO_PHOTO.clone()))
                 .child(CategoryTile::new("shopping-cart", "orange", t))
                 .child(CategoryTile::new("desconhecida", "violet", t))
                 .child(StatusChip::new(Kind::Ok, "Emergência coberta", t))
@@ -334,6 +338,8 @@ fn data_section(t: &'static Tokens) -> impl IntoElement {
                             "Nada foi guardado ou retirado em maio\u{a0}de\u{a0}2025.",
                             t,
                         ))
+                        .px(px(24.0))
+                        .py(px(32.0))
                         .w(px(300.0)),
                 )
                 .child(
@@ -352,6 +358,8 @@ fn data_section(t: &'static Tokens) -> impl IntoElement {
                                 t,
                             )),
                         )
+                        .px(px(24.0))
+                        .py(px(32.0))
                         .w(px(300.0)),
                 ),
         )

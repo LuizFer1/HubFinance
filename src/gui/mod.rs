@@ -7,13 +7,14 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
+use futures::StreamExt;
 use gpui::{
     App, Bounds, Context, QuitMode, Render, Window, WindowBounds, WindowOptions, div, prelude::*,
     px, rgb, size,
 };
 
 use crate::config::UiPrefs;
-use crate::desktop::{Desktop, EventReceiver};
+use crate::desktop::{Desktop, DesktopEvent, EventReceiver};
 use crate::hub::snapshot::Status;
 use crate::hub::{Command, HubHandle};
 
@@ -41,7 +42,7 @@ pub fn run(
     _prefs: UiPrefs,
     _prefs_dir: PathBuf,
     desktop: Rc<dyn Desktop>,
-    _events: EventReceiver,
+    mut events: EventReceiver,
     open_window: bool,
 ) {
     // Explicit: sem janela o hub continua na bandeja; so `cx.quit()` encerra o processo.
@@ -49,36 +50,60 @@ pub fn run(
         .with_quit_mode(QuitMode::Explicit)
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
-            if !open_window {
-                return;
+            if open_window {
+                open_main_window(&handle, desktop.as_ref(), cx);
             }
-            let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
-            let opened = cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(960.0), px(640.0))),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let has_tray = desktop.has_tray();
+            // Provisorio da Tarefa 1: so reabre a janela vazia e desliga. A Tarefa 7 troca
+            // isto pelo `ui_model`, que leva os eventos para as telas (Aparelhos, endereco).
+            cx.spawn(async move |cx| {
+                while let Some(event) = events.next().await {
                     let handle = handle.clone();
-                    window.on_window_should_close(cx, move |_window, cx| {
-                        // Com bandeja so fecha a janela; sem ela fechar desliga o hub, e o
-                        // processo sai quando o nucleo avisa `Stopped` (ou em 5 s).
-                        if !has_tray {
-                            shutdown(handle.clone(), cx);
+                    let desktop = desktop.clone();
+                    cx.update(|cx| match event {
+                        DesktopEvent::Quit => shutdown(handle, cx),
+                        DesktopEvent::OpenWindow | DesktopEvent::ConnectPhone => {
+                            open_main_window(&handle, desktop.as_ref(), cx);
                         }
-                        has_tray
+                        DesktopEvent::CopyAddress => {}
                     });
-                    cx.new(|_| Empty)
-                },
-            );
-            if let Err(err) = opened {
-                tracing::error!("janela gpui nao abriu: {err}");
-                return;
-            }
-            cx.activate(true);
+                }
+            })
+            .detach();
         });
+}
+
+/// Abre a janela principal, ou traz a que ja existe para a frente (nunca duas).
+fn open_main_window(handle: &HubHandle, desktop: &dyn Desktop, cx: &mut App) {
+    if let Some(existing) = cx.windows().into_iter().next() {
+        let _ = existing.update(cx, |_, window, _| window.activate_window());
+        cx.activate(true);
+        return;
+    }
+    let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
+    let has_tray = desktop.has_tray();
+    let handle = handle.clone();
+    let opened = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(960.0), px(640.0))),
+            ..Default::default()
+        },
+        |window, cx| {
+            window.on_window_should_close(cx, move |_window, cx| {
+                // Com bandeja so fecha a janela; sem ela fechar desliga o hub, e o
+                // processo sai quando o nucleo avisa `Stopped` (ou em 5 s).
+                if !has_tray {
+                    shutdown(handle.clone(), cx);
+                }
+                has_tray
+            });
+            cx.new(|_| Empty)
+        },
+    );
+    match opened {
+        Ok(_) => cx.activate(true),
+        Err(err) => tracing::error!("janela gpui nao abriu: {err}"),
+    }
 }
 
 /// Desligamento com ordem: `Shutdown`, depois `cx.quit()` quando o snapshot vier `Stopped`.

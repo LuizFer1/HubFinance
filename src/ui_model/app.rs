@@ -4814,7 +4814,7 @@ pub(crate) mod tests {
         assert!(app.assistant_setup.is_some());
     }
 
-    // --- testes que vieram da cola do iced: o modelo decide, o toolkit so monta ---
+    // --- testes que vieram da cola do toolkit: o modelo decide, o toolkit so monta ---
 
     fn count_effects(effects: &[Effect], is: impl Fn(&Effect) -> bool) -> usize {
         effects.iter().filter(|e| is(e)).count()

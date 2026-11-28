@@ -5,6 +5,7 @@
 //! desenha (`root`). As telas chegam nas tarefas seguintes.
 
 mod assets;
+mod charts;
 mod components;
 mod effects;
 mod fonts;

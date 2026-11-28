@@ -438,6 +438,7 @@ fn data_section(t: &'static Tokens) -> impl IntoElement {
         )
     };
     section("Dados", t)
+        .child(charts_row(t))
         .child(
             row()
                 .child(
@@ -551,5 +552,58 @@ fn data_section(t: &'static Tokens) -> impl IntoElement {
                         .py(px(32.0))
                         .w(px(300.0)),
                 ),
+        )
+}
+
+/// Um exemplo de cada grafico da Tarefa 16 (Historico, rosca, anel, area empilhada).
+fn charts_row(t: &'static Tokens) -> impl IntoElement {
+    use crate::gui::charts::bars::{BarMonth, BarTip, GroupedBars};
+    use crate::gui::charts::donut::Donut;
+    use crate::gui::charts::ring::Ring;
+    use crate::gui::charts::stacked::StackedArea;
+
+    let months: Vec<BarMonth> = [
+        None,
+        None,
+        Some((900_000, 700_000)),
+        Some((1_200_000, 800_000)),
+        Some((1_000_000, 1_100_000)),
+        Some((1_418_000, 1_131_000)),
+    ]
+    .into_iter()
+    .map(|values| BarMonth {
+        values,
+        tip: values.map(|_| BarTip {
+            title: "Mês".into(),
+            lines: vec![Line::Text("Receitas e despesas".into())],
+        }),
+    })
+    .collect();
+    div()
+        .flex()
+        .items_end()
+        .gap(px(24.0))
+        .child(
+            div()
+                .w(px(260.0))
+                .child(GroupedBars::new(months, 1_600_000, 140.0, t)),
+        )
+        .child(Donut::new(
+            vec![500, 300, 150, 40, 9],
+            t.chart[..5].to_vec(),
+            128.0,
+            t.divider,
+        ))
+        .child(Ring::new(0.756, 96.0, t.accent, t.divider))
+        .child(
+            div().w(px(260.0)).child(
+                StackedArea::new(
+                    vec![vec![100, 200, 300], vec![50, 100, 100]],
+                    vec![t.chart[0], t.chart[2]],
+                    600,
+                    120.0,
+                )
+                .partial(true),
+            ),
         )
 }

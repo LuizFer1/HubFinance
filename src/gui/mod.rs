@@ -11,6 +11,7 @@ mod fonts;
 mod icons;
 mod motion;
 mod root;
+mod shell;
 mod theme;
 
 use std::path::PathBuf;

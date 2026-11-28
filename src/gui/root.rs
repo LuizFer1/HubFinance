@@ -185,6 +185,7 @@ impl Render for HubWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let app = &self.state.read(cx).app;
         let tokens = Tokens::of(app.theme.is_dark(app.system_dark));
+        let maximized = app.maximized;
         let (title, subtitle) = shell::titles(app);
         let title = title.to_string();
         let state = self.state.clone();
@@ -228,11 +229,18 @@ impl Render for HubWindow {
             .font_family(fonts::FAMILY)
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
-            .gap_2()
-            .child(div().text_size(px(30.0)).child(title))
-            .child(div().text_size(px(14.0)).child(subtitle))
+            .child(super::shell::titlebar::render(tokens, maximized))
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .child(div().text_size(px(30.0)).child(title))
+                    .child(div().text_size(px(14.0)).child(subtitle)),
+            )
             .into_any_element()
     }
 }

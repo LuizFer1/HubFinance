@@ -285,10 +285,40 @@ pub const FILES: &[(&str, &[u8])] = &[
     ),
 ];
 
+/// Marca e glifos dos controles da janela: fora de `FILES` porque o teste de `icons.rs` exige
+/// que tudo ali tenha variante em `Icon`.
+pub const EXTRA_FILES: &[(&str, &[u8])] = &[
+    (
+        "brand/hubfinance-pequeno-fundo-escuro.svg",
+        include_bytes!("../../assets/brand/hubfinance-pequeno-fundo-escuro.svg"),
+    ),
+    (
+        "brand/hubfinance-pequeno-fundo-claro.svg",
+        include_bytes!("../../assets/brand/hubfinance-pequeno-fundo-claro.svg"),
+    ),
+    (
+        "window/minimize.svg",
+        include_bytes!("../../assets/window/minimize.svg"),
+    ),
+    (
+        "window/maximize.svg",
+        include_bytes!("../../assets/window/maximize.svg"),
+    ),
+    (
+        "window/restore.svg",
+        include_bytes!("../../assets/window/restore.svg"),
+    ),
+    (
+        "window/close.svg",
+        include_bytes!("../../assets/window/close.svg"),
+    ),
+];
+
 impl AssetSource for HubAssets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
         Ok(FILES
             .iter()
+            .chain(EXTRA_FILES)
             .find(|(name, _)| *name == path)
             .map(|(_, bytes)| Cow::Borrowed(*bytes)))
     }
@@ -296,6 +326,7 @@ impl AssetSource for HubAssets {
     fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
         Ok(FILES
             .iter()
+            .chain(EXTRA_FILES)
             .filter(|(name, _)| name.starts_with(path))
             .map(|(name, _)| SharedString::from(*name))
             .collect())

@@ -30,13 +30,13 @@ pub fn run(effect: Effect, state: &Entity<HubState>, cx: &mut App) {
             }
         }
         Effect::Minimize => {
-            // Tarefa 14: na barra propria o botao usa `window_control_area(Min)`.
+            // Na barra propria o botao e nativo (`window_control_area(Min)`); isto serve ao atalho.
             with_window(cx, |window, _| window.minimize_window());
         }
         Effect::ToggleMaximize => {
             // Windows: o `zoom_window` do gpui so manda SW_MAXIMIZE (gpui-pre-windows 0.3.14,
             // window.rs:949), entao uma janela ja maximizada nao volta ao normal por aqui.
-            // Tarefa 14: o botao da barra propria usa `window_control_area(Max)`.
+            // O botao da barra propria e nativo (`window_control_area(Max)`).
             with_window(cx, |window, _| window.zoom_window());
             // A resposta do sistema chega depois do `zoom`; o `Resized` consulta de novo.
             query_maximized(state, cx);
@@ -44,7 +44,7 @@ pub fn run(effect: Effect, state: &Entity<HubState>, cx: &mut App) {
         Effect::QueryMaximized => query_maximized(state, cx),
         Effect::StartDrag => {
             // Windows: `start_window_move` nao e sobrescrito na plataforma (vale o default vazio
-            // de platform.rs:1461), logo nao faz nada. Tarefa 14: arrastar vem de
+            // de platform.rs:1461), logo nao faz nada. Arrastar na barra propria vem de
             // `window_control_area(Drag)`, que o sistema resolve por hit-test (HTCAPTION).
             with_window(cx, |window, _| window.start_window_move());
         }

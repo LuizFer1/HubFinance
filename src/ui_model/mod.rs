@@ -9,6 +9,7 @@ pub mod app;
 pub mod assistant_setup;
 pub mod connect;
 pub mod effect;
+pub mod icons;
 pub mod keys;
 pub mod measure;
 pub mod motion;

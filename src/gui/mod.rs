@@ -4,8 +4,10 @@
 //! recebe snapshot, tique e eventos da bandeja, se executam os efeitos (`effects`) e se
 //! desenha (`root`). As telas chegam nas tarefas seguintes.
 
+mod assets;
 mod effects;
 mod fonts;
+mod icons;
 mod root;
 mod theme;
 
@@ -36,6 +38,7 @@ pub fn run(
 ) {
     // Explicit: sem janela o hub continua na bandeja; so `cx.quit()` encerra o processo.
     gpui_platform::application()
+        .with_assets(assets::HubAssets)
         .with_quit_mode(QuitMode::Explicit)
         .run(move |cx: &mut App| {
             gpui_component::init(cx);

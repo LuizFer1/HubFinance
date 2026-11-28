@@ -2,7 +2,6 @@
 //! por aqui, para a mesma descricao poder ser executada por outro toolkit sem mexer na
 //! transicao de estado.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -99,37 +98,10 @@ fn iced_window(app: &State) -> Option<window::Id> {
     app.window.and_then(|id| app.iced.iced_id(id))
 }
 
-/// Grava o `ui.json` fora da thread da UI (disco lento nao trava a janela). Falha so vira
-/// aviso: a preferencia e conforto, o tema ja trocou na tela.
-///
-/// Cada gravacao leva um numero tirado na thread da UI, na ordem dos cliques, e so escreve se
-/// for mais nova que a ultima escrita naquela pasta: duas threads nao tem ordem garantida, e
-/// sem isso trocar o tema logo depois de "Iniciar com o Windows" (ou o tema duas vezes) podia
-/// terminar com o arquivo da escolha anterior.
+/// Grava o `ui.json` fora da thread da UI; a ordem das gravacoes e garantida em
+/// `config::save_prefs_ordered`, que a interface GPUI usa igual.
 pub(super) fn save_prefs(prefs: UiPrefs, dir: PathBuf) -> futures::channel::oneshot::Receiver<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::{Mutex, OnceLock};
-
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    static WRITTEN: OnceLock<Mutex<HashMap<PathBuf, u64>>> = OnceLock::new();
-
-    let generation = NEXT.fetch_add(1, Ordering::Relaxed);
-    let (tx, rx) = futures::channel::oneshot::channel();
-    std::thread::spawn(move || {
-        let written = WRITTEN.get_or_init(Default::default);
-        // Envenenado = outra gravacao entrou em panico; a tabela continua coerente.
-        let mut written = written.lock().unwrap_or_else(|e| e.into_inner());
-        let last = written.entry(dir.clone()).or_insert(0);
-        if generation > *last {
-            if let Err(e) = prefs.save(&dir) {
-                tracing::warn!("nao foi possivel gravar ui.json em {}: {e}", dir.display());
-            }
-            *last = generation;
-        }
-        drop(written);
-        let _ = tx.send(());
-    });
-    rx
+    crate::config::save_prefs_ordered(prefs, dir)
 }
 
 /// Timer sem runtime: o executor da UI nao e tokio, entao o timer e uma thread comum + oneshot

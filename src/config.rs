@@ -246,6 +246,41 @@ impl UiPrefs {
     }
 }
 
+/// Grava o `ui.json` fora da thread da UI (disco lento nao trava a janela). Falha so vira
+/// aviso: a preferencia e conforto, o tema ja trocou na tela. Compartilhada pelos dois
+/// toolkits para a ordem das gravacoes valer em qualquer um.
+///
+/// Cada gravacao leva um numero tirado na thread da UI, na ordem dos cliques, e so escreve se
+/// for mais nova que a ultima escrita naquela pasta: duas threads nao tem ordem garantida, e
+/// sem isso trocar o tema logo depois de "Iniciar com o Windows" (ou o tema duas vezes) podia
+/// terminar com o arquivo da escolha anterior.
+pub fn save_prefs_ordered(prefs: UiPrefs, dir: PathBuf) -> futures::channel::oneshot::Receiver<()> {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Mutex, OnceLock};
+
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    static WRITTEN: OnceLock<Mutex<HashMap<PathBuf, u64>>> = OnceLock::new();
+
+    let generation = NEXT.fetch_add(1, Ordering::Relaxed);
+    let (tx, rx) = futures::channel::oneshot::channel();
+    std::thread::spawn(move || {
+        let written = WRITTEN.get_or_init(Default::default);
+        // Envenenado = outra gravacao entrou em panico; a tabela continua coerente.
+        let mut written = written.lock().unwrap_or_else(|e| e.into_inner());
+        let last = written.entry(dir.clone()).or_insert(0);
+        if generation > *last {
+            if let Err(e) = prefs.save(&dir) {
+                tracing::warn!("nao foi possivel gravar ui.json em {}: {e}", dir.display());
+            }
+            *last = generation;
+        }
+        drop(written);
+        let _ = tx.send(());
+    });
+    rx
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

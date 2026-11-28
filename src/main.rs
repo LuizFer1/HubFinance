@@ -45,8 +45,9 @@ fn main() -> std::process::ExitCode {
         Ok(instance) => Some(instance),
         Err(desktop::instance::InstanceError::AlreadyRunning) => {
             tracing::info!("ja ha um hub aberto para esta pasta; pedindo a janela dele");
-            // Aberto pelo Windows em cima de um hub que ja roda: so sai, sem puxar janela.
-            if !launch.autostart {
+            // Aberto pelo Windows (ou com `--background`) em cima de um hub que ja roda: so sai,
+            // sem puxar janela.
+            if !launch.autostart && !launch.background {
                 desktop::instance::notify_running(&config.data_dir);
             }
             return std::process::ExitCode::SUCCESS;

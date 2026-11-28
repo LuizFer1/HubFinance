@@ -43,14 +43,14 @@ pub(crate) fn dataset_of(rows: Vec<(&str, &str, bool, serde_json::Value)>) -> da
 pub(crate) const GRAFITE_TODAY: &str = "2026-11-19";
 
 /// Uma linha da fixture Grafite antes de virar `RawRow`: `(tabela, id, data)`, todas vivas.
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 pub(crate) type GrafiteRow = (&'static str, String, serde_json::Value);
 
 /// Linhas da fixture Grafite (spec do dashboard 3.1 e 3.1.1), as mesmas de `grafite.fake.ts` do
 /// app com os mesmos ids: a tabela 3.2 e conferida dos dois lados contra elas. Lista crua para
 /// um teste poder tirar uma linha antes de montar (o `delete` dos testes do app tira a linha do
 /// estado, o que nao e o mesmo que um tombstone para o dedupe de ocorrencia).
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 pub(crate) fn grafite_rows() -> Vec<GrafiteRow> {
     use serde_json::{Value, json};
 
@@ -550,7 +550,7 @@ pub(crate) fn grafite_rows() -> Vec<GrafiteRow> {
 }
 
 /// Monta um `Dataset` das linhas pelo `apply` de verdade (contrato etapa 1 e 2).
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 pub(crate) fn dataset_from(rows: Vec<GrafiteRow>) -> dataset::Dataset {
     let mut ds = dataset::Dataset::default();
     ds.apply(
@@ -568,7 +568,7 @@ pub(crate) fn dataset_from(rows: Vec<GrafiteRow>) -> dataset::Dataset {
 }
 
 /// A fixture Grafite inteira (conta pessoal; `books` vazio).
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 pub(crate) fn fixtures_grafite() -> dataset::Dataset {
     dataset_from(grafite_rows())
 }

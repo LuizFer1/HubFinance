@@ -4,16 +4,25 @@
 /// "a pessoa me abriu".
 pub const AUTOSTART_FLAG: &str = "--autostart";
 
+/// Abre so na bandeja, sem janela, mesmo com "Iniciar com o Windows" desligado: e o pedido
+/// explicito de quem lanca (atalho, script). `--autostart` e o Windows pedindo e depende da
+/// opcao; este e a pessoa pedindo e nao depende.
+pub const BACKGROUND_FLAG: &str = "--background";
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Launch {
     pub autostart: bool,
+    pub background: bool,
 }
 
 impl Launch {
     pub fn from_args<I: IntoIterator<Item = String>>(args: I) -> Launch {
-        Launch {
-            autostart: args.into_iter().any(|a| a == AUTOSTART_FLAG),
+        let mut launch = Launch::default();
+        for arg in args {
+            launch.autostart |= arg == AUTOSTART_FLAG;
+            launch.background |= arg == BACKGROUND_FLAG;
         }
+        launch
     }
 }
 
@@ -32,6 +41,9 @@ pub fn boot_mode(launch: Launch, autostart: Option<bool>) -> BootMode {
     match (launch.autostart, autostart) {
         (true, Some(false)) => BootMode::Exit,
         (true, Some(true)) => BootMode::TrayOnly,
+        // `--background` sozinho nao olha a opcao: so o `--autostart` e que se cala quando a
+        // opcao esta desligada (o valor `Run` esquecido), e ele ja foi decidido acima.
+        _ if launch.background => BootMode::TrayOnly,
         _ => BootMode::WithWindow,
     }
 }
@@ -59,8 +71,11 @@ mod tests {
 
     #[test]
     fn modo_de_abertura() {
-        let auto = Launch { autostart: true };
-        let normal = Launch { autostart: false };
+        let auto = Launch {
+            autostart: true,
+            ..Launch::default()
+        };
+        let normal = Launch::default();
         assert_eq!(boot_mode(auto, Some(false)), BootMode::Exit);
         assert_eq!(boot_mode(auto, Some(true)), BootMode::TrayOnly);
         // Sistema sem a opcao nunca sai: --autostart la seria um atalho feito a mao.
@@ -68,6 +83,22 @@ mod tests {
         assert_eq!(boot_mode(normal, Some(false)), BootMode::WithWindow);
         assert_eq!(boot_mode(normal, Some(true)), BootMode::WithWindow);
         assert_eq!(boot_mode(normal, None), BootMode::WithWindow);
+    }
+
+    #[test]
+    fn background_abre_so_na_bandeja_mesmo_com_a_opcao_desligada() {
+        let bg = args(&["x", "--background"]);
+        assert!(bg.background && !bg.autostart);
+        assert!(!args(&["--background=1"]).background);
+        for option in [None, Some(false), Some(true)] {
+            assert_eq!(boot_mode(bg, option), BootMode::TrayOnly);
+        }
+        // O `--autostart` com a opcao desligada continua saindo, mesmo junto do outro.
+        let both = args(&["--autostart", "--background"]);
+        assert_eq!(boot_mode(both, Some(false)), BootMode::Exit);
+        // Sem bandeja nao ha como voltar: a janela abre.
+        assert!(opens_window(boot_mode(bg, None), false));
+        assert!(!opens_window(boot_mode(bg, None), true));
     }
 
     #[test]

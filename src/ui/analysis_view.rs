@@ -1135,6 +1135,39 @@ mod tests {
         assert_eq!(shown.copy, "**R$ 1.234,56**");
     }
 
+    /// O "Copiar" sai de `ui_model::analysis::masked_reply` e a tela desenha com `render_reply`
+    /// (o parser Markdown do iced): sem este vinculo, com os valores ocultos o texto copiado
+    /// poderia diferir do que esta na tela. Vale ate a iced sair (Tarefa 39a).
+    #[test]
+    fn copiar_leva_o_mesmo_texto_que_o_desenho_da_tela() {
+        use crate::ui_model::analysis::masked_reply;
+        let cases = [
+            "Gastou **R$ 1.234,56** em mercado.",
+            "**Mercado:** R$ 1.234,56 em novembro.",
+            "1. Delivery: *R$ 612,00*\n2. Mercado: `R$ 980,10`\n",
+            "# Resumo\n\n- saldo -R$ 3,00\n- meta de 5.500,00\n\n> sobram 1.500 reais",
+            "Valor 1.**234**,56 com enfase no meio.",
+            "valor 1\\.234,56 hoje",
+            "Entidade &#49;.234,56 no texto.",
+            "```\ntotal R$ 9.876,54\n```",
+            "[R$ 10,00](https://exemplo.invalid) de link e ![R$ 20,00](img.png)",
+            "| Categoria | Valor |\n|---|---|\n| Mercado | R$ 1.**234**,56 |",
+            "| x | y |\n|---|---|\n| x | 1.~~234~~,56 |",
+            "| x | y |\n|---|---|\n| x | 1.<b>234</b>,56 |",
+            "Texto 1.<b>234</b>,56 inline",
+            "Antes.\n\n<br>\n\nDepois R$ 1.234,56\n\n- um 2.500,00\n",
+        ];
+        for case in cases {
+            for hidden in [true, false] {
+                assert_eq!(
+                    render_reply(case, hidden).copy,
+                    masked_reply(case, hidden).copy,
+                    "{case:?} (ocultos: {hidden})"
+                );
+            }
+        }
+    }
+
     /// A previa com o olho ligado mascara o texto que as respostas anteriores desenham; com ele
     /// desligado continua o payload exato, Markdown incluido.
     #[test]

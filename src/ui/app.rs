@@ -258,7 +258,6 @@ pub(super) mod tests {
     use crate::desktop::{DesktopEvent, Fake, Headless};
     use crate::hub::snapshot::DeviceView;
     use crate::hub::{AssistantCommand, Command};
-    use crate::store::erase::{AreaSet, DeviceData};
     use crate::ui_model::app::DELETE_ALL_ARMED_FOR;
     use crate::ui_model::app::tests as m;
     use crate::ui_model::app::tests::wait_prefs;
@@ -266,8 +265,8 @@ pub(super) mod tests {
         awaiting_conv, configured, data, drain, local_settings, msg, open_conv, phone,
         running_with, summary, view as device_view,
     };
-    use crate::ui_model::connect::{self, ConnectFlow};
-    use crate::ui_model::motion::{self, Scene};
+    use crate::ui_model::connect::ConnectFlow;
+    use crate::ui_model::motion::Scene;
 
     type Fixture = (
         State,
@@ -278,15 +277,6 @@ pub(super) mod tests {
     fn registered(mut app: State) -> State {
         app.window = Some(app.iced.register(window::Id::unique()));
         app
-    }
-
-    pub(crate) fn app_with_desktop(
-        snapshot: Snapshot,
-        dir: PathBuf,
-        desktop: Rc<dyn Desktop>,
-    ) -> Fixture {
-        let (a, rx, tx) = m::app_with_desktop(snapshot, dir, desktop);
-        (State::new(a), rx, tx)
     }
 
     pub(crate) fn app_with(snapshot: Snapshot, dir: PathBuf) -> Fixture {
@@ -398,60 +388,6 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn dialogo_liga_os_quadros_so_durante_a_entrada() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
-        // Com janela: sem ela as animacoes terminam na hora.
-        app.window = Some(app.iced.register(window::Id::unique()));
-        assert!(!app.motion.animating(), "parada, sem quadros");
-        let _ = update(&mut app, Msg::ShowEnvelope);
-        assert!(app.any_dialog_open());
-        assert!(app.motion.animating());
-        let _ = update(&mut app, Msg::Frame(Instant::now() + motion::SCRIM_IN));
-        assert!(!app.motion.animating());
-        assert_eq!(app.motion.scrim(), 1.0);
-    }
-
-    #[test]
-    fn trocar_de_tela() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
-        // Toda tela da navegacao, Ajustes inclusive; cada troca volta a rolagem ao topo (a
-        // tarefa do `snap_to`), porque o cabecalho fixo nao rola e so o conteudo tem posicao.
-        for screen in super::super::shell::nav_entries(&app).map(|e| e.screen) {
-            let effects = step(&mut app, Msg::SelectScreen(screen));
-            assert_eq!(app.screen, screen);
-            assert!(
-                matches!(effects.as_slice(), [Effect::ScrollToTop]),
-                "{screen:?}"
-            );
-        }
-        assert_eq!(app.screen, Screen::Settings);
-    }
-
-    #[test]
-    fn configurar_o_assistente_abre_o_dialogo_sem_trocar_de_tela() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
-        let _ = update(&mut app, Msg::SelectScreen(Screen::Settings));
-        assert_eq!(app.screen, Screen::Settings);
-        let _ = update(&mut app, Msg::ConfigureAssistant);
-        assert_eq!(app.screen, Screen::Settings);
-        assert!(app.assistant_setup.is_some());
-        assert!(super::super::assistant_settings_view::dialog(&app).is_some());
-        let _ = super::super::shell::root(&app);
-        // Ja aberto: nao refaz os rascunhos que a pessoa digitou.
-        let _ = update(&mut app, Msg::SetupPort("1234".into()));
-        let _ = update(&mut app, Msg::ConfigureAssistant);
-        assert_eq!(
-            app.assistant_setup
-                .as_ref()
-                .map(|s| s.draft.port_input.as_str()),
-            Some("1234")
-        );
-    }
-
-    #[test]
     fn trocar_o_tema_troca_os_tokens_e_grava_ui_json() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
@@ -523,114 +459,6 @@ pub(super) mod tests {
         assert!(app.is_copied(CopyTarget::ReleasesUrl));
     }
 
-    #[test]
-    fn apagar_tudo_marca_as_quatro_e_a_confirmacao_mostra_as_contagens() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx, _tx) = app_with_data(
-            dir.path(),
-            vec![device_view("D1", "Pixel 7", false, false, data())],
-        );
-        let _ = update(&mut app, Msg::AskRemove("D1".into()));
-        let _ = update(&mut app, Msg::SelectAllAreas);
-        assert_eq!(
-            app.confirm_remove.as_ref().unwrap().selected,
-            AreaSet::all()
-        );
-        let _ = update(&mut app, Msg::RemoveContinue);
-        // O passo 2 desenha sem panico e os textos trazem as contagens.
-        let _ = remove_view::dialog(&app).expect("modal aberto");
-        let selected = app.confirm_remove.as_ref().unwrap().selected;
-        let text = crate::ui_model::remove::confirm_text(&data(), selected);
-        assert!(text.contains("3 metas"), "{text}");
-        assert!(text.contains("100 lançamentos"), "{text}");
-        assert!(text.contains("2 reservas com 14 movimentos"), "{text}");
-        assert!(text.contains("1 recorrência com 2 reajustes"), "{text}");
-        assert_eq!(
-            crate::ui_model::remove::confirm_label(&data(), selected, false),
-            "Remover e apagar 122 itens"
-        );
-        let _ = update(&mut app, Msg::ConfirmRemove);
-        assert!(
-            app.pending_removal
-                .as_ref()
-                .unwrap()
-                .toast
-                .ends_with("122 itens serão apagados")
-        );
-        assert!(drain(&mut rx).is_empty(), "nada sai antes do prazo");
-        app.pending_removal.as_mut().unwrap().deadline = Instant::now();
-        let _ = update(&mut app, Msg::Tick);
-        assert_eq!(
-            drain(&mut rx),
-            vec![Command::RemoveDevice {
-                device_id: "D1".into(),
-                erase: AreaSet::all()
-            }]
-        );
-    }
-
-    #[test]
-    fn aviso_so_para_removido_com_dados_sem_decisao() {
-        let dir = tempfile::tempdir().unwrap();
-        let devices = vec![
-            device_view("ATIVO", "Ativo", false, false, data()),
-            device_view("ORFAO", "Orfao", true, false, data()),
-            device_view("MANTIDO", "Mantido", true, true, data()),
-            device_view("VAZIO", "Vazio", true, false, DeviceData::default()),
-        ];
-        let (mut app, _rx, _tx) = app_with_data(dir.path(), devices);
-        let ids: Vec<_> = app.orphans().iter().map(|d| d.device_id.clone()).collect();
-        assert_eq!(ids, vec!["ORFAO"]);
-        assert!(remove_view::orphan_banner(&app).is_some());
-        // Banco sem revogados: nada.
-        let (app2, _rx2, _tx2) = app_with_data(
-            dir.path(),
-            vec![device_view("ATIVO", "Ativo", false, false, data())],
-        );
-        assert!(app2.orphans().is_empty());
-        assert!(remove_view::orphan_banner(&app2).is_none());
-        // "Depois" esconde nesta sessao e nao grava nada.
-        let _ = update(&mut app, Msg::PostponeOrphans);
-        assert!(remove_view::orphan_banner(&app).is_none());
-        assert_eq!(app.orphans().len(), 1);
-    }
-
-    #[test]
-    fn depois_nao_envia_comando_e_o_aviso_volta_na_reabertura() {
-        let dir = tempfile::tempdir().unwrap();
-        let orphan = device_view("ORFAO", "Orfao", true, false, data());
-        let (mut app, mut rx, _tx) = app_with_data(dir.path(), vec![orphan.clone()]);
-        let _ = update(&mut app, Msg::PostponeOrphans);
-        assert!(drain(&mut rx).is_empty());
-        // Nova abertura: estado novo, mesmo banco.
-        let (app2, _rx2, _tx2) = app_with_data(dir.path(), vec![orphan]);
-        assert!(remove_view::orphan_banner(&app2).is_some());
-    }
-
-    #[test]
-    fn decidir_manter_tudo_de_removido_envia_keep_na_hora() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx, _tx) = app_with_data(
-            dir.path(),
-            vec![device_view("ORFAO", "Orfao", true, false, data())],
-        );
-        let _ = update(&mut app, Msg::DecideOrphan);
-        assert_eq!(
-            app.confirm_remove.as_ref().map(|d| d.device_id.as_str()),
-            Some("ORFAO")
-        );
-        // Com o modal aberto o aviso some.
-        assert!(remove_view::orphan_banner(&app).is_none());
-        let _ = remove_view::dialog(&app).expect("modal aberto");
-        let _ = update(&mut app, Msg::RemoveContinue);
-        assert_eq!(
-            drain(&mut rx),
-            vec![Command::KeepDeviceData("ORFAO".into())]
-        );
-        assert_eq!(app.confirm_remove, None);
-        assert_eq!(app.pending_removal, None);
-    }
-
     /// Monta a arvore do Dashboard nos estados da spec 7 e nas larguras dos dois lados de 1100:
     /// pega indice fora da lista, divisao por zero em layout e secao esquecida sem abrir janela.
     fn view_all_widths(app: &mut State) {
@@ -682,55 +510,6 @@ pub(super) mod tests {
         empty.set_today("2026-11-19".into());
         assert_eq!(empty.dashboard.sections(), vec![Section::Empty]);
         view_all_widths(&mut empty);
-    }
-
-    #[test]
-    fn com_bandeja_fechar_fecha_a_janela_e_nao_desliga() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _fake, mut rx) = with_tray(dir.path());
-        let id = app.window.unwrap();
-        let _ = update(&mut app, Msg::CloseRequested);
-        assert!(!app.closing);
-        assert!(
-            rx.try_recv().is_err(),
-            "nenhum comando, muito menos Shutdown"
-        );
-        // A janela so some quando o iced confirma (`close_events`).
-        assert_eq!(app.window, Some(id));
-        let _ = update(&mut app, Msg::WindowClosed(model_id(window::Id::unique())));
-        assert_eq!(app.window, Some(id), "outra janela nao e a nossa");
-        app.maximized = true;
-        app.window_size = Size::new(800.0, 600.0);
-        let _ = update(&mut app, Msg::WindowClosed(id));
-        assert_eq!(app.window, None);
-        assert!(!app.maximized);
-        assert_eq!(app.window_size, INITIAL_SIZE);
-    }
-
-    #[test]
-    fn com_bandeja_fechar_envia_a_remocao_pendente_sem_shutdown() {
-        let dir = tempfile::tempdir().unwrap();
-        let fake = Rc::new(Fake::with_tray());
-        let (mut app, mut rx, _tx) = app_with_desktop(
-            Snapshot {
-                devices: vec![device_view("D1", "Pixel 7", false, false, data())],
-                ..Snapshot::default()
-            },
-            dir.path().to_path_buf(),
-            fake,
-        );
-        app.window = Some(app.iced.register(window::Id::unique()));
-        let _ = update(&mut app, Msg::AskRemove("D1".into()));
-        let _ = update(&mut app, Msg::ConfirmRemove);
-        assert!(app.pending_removal.is_some());
-        let _ = update(&mut app, Msg::CloseRequested);
-        assert!(matches!(
-            rx.try_recv(),
-            Ok(Command::RemoveDevice { device_id, .. }) if device_id == "D1"
-        ));
-        assert!(rx.try_recv().is_err());
-        assert_eq!(app.pending_removal, None);
-        assert!(!app.closing);
     }
 
     #[test]
@@ -837,46 +616,6 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn abre_na_pessoal_sem_misturar_o_comercial() {
-        let dir = tempfile::tempdir().unwrap();
-        let (app, _tx) = app_with_business(dir.path(), true, false);
-        assert_eq!(app.book, Book::Personal);
-        // As fixtures tem 7 lancamentos; o comercial nao entra na contagem nem na lista.
-        assert_eq!(app.transactions.list.count, 7);
-        assert_eq!(
-            super::super::shell::transactions_count(&app),
-            crate::dashboard::fixtures().alive_transactions().count()
-        );
-        let plain = crate::dashboard::grafite::build_grafite(
-            &crate::dashboard::fixtures(),
-            "2026-09-24",
-            "2026-09",
-            Book::Personal,
-            false,
-        );
-        assert_eq!(app.dashboard.how_am_i, plain.how_am_i);
-    }
-
-    #[test]
-    fn escolher_comercial_mostra_so_a_conta_comercial_e_volta() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _tx) = app_with_business(dir.path(), true, false);
-        let _ = update(&mut app, Msg::SelectBook(Book::Business));
-        assert_eq!(app.book, Book::Business);
-        assert_eq!(app.dashboard.how_am_i.income.value, "R$ 900,00");
-        assert_eq!(app.dashboard.how_am_i.expense.value, "R$ 0,00");
-        assert_eq!(app.transactions.list.count, 1);
-        assert_eq!(super::super::shell::transactions_count(&app), 1);
-        assert_eq!(
-            crate::ui_model::shell::titles(&app).1,
-            "Padaria · somente leitura · dados do último sync"
-        );
-        let _ = update(&mut app, Msg::SelectBook(Book::Personal));
-        assert_eq!(app.book, Book::Personal);
-        assert_eq!(app.transactions.list.count, 7);
-    }
-
-    #[test]
     fn dashboard_comercial_monta_com_o_negocio_primeiro() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _tx) = app_with_business(dir.path(), true, false);
@@ -898,35 +637,6 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn previa_mostra_exatamente_o_render_do_envelope() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
-        let _ = update(&mut app, Msg::SelectScreen(Screen::Analysis));
-        assert!(app.envelope_preview.is_none());
-        let _ = update(&mut app, Msg::ShowEnvelope);
-        let expected = crate::assistant::envelope::render(&crate::assistant::envelope::build(
-            &app.analysis,
-            &app.scope,
-            &app.today,
-            app.book,
-        ));
-        assert_eq!(app.envelope_preview.as_deref(), Some(expected.as_str()));
-        assert_eq!(
-            app.envelope_preview.as_deref(),
-            Some(app.current_envelope().as_str())
-        );
-        assert!(
-            expected.contains("R$ "),
-            "o exemplo traz dinheiro no envelope"
-        );
-        // Aberta, a prévia monta (sobreposição) e fecha.
-        assert!(super::super::analysis_view::envelope_dialog(&app).is_some());
-        let _ = update(&mut app, Msg::CloseEnvelope);
-        assert!(app.envelope_preview.is_none());
-        assert!(super::super::analysis_view::envelope_dialog(&app).is_none());
-    }
-
-    #[test]
     fn previa_aberta_monta_pela_raiz_em_janelas_grandes_e_pequenas() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
@@ -944,19 +654,6 @@ pub(super) mod tests {
                 let _ = super::super::shell::root(&app);
             }
         }
-    }
-
-    #[test]
-    fn seletor_de_conta_aparece_na_analise_e_troca_os_achados() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _tx) = app_with_business(dir.path(), true, false);
-        let _ = update(&mut app, Msg::SelectScreen(Screen::Analysis));
-        assert!(super::super::shell::book_switch(&app).is_some());
-        let _ = update(&mut app, Msg::SelectBook(Book::Business));
-        assert_eq!(
-            app.analysis,
-            crate::advisor::analyze(&app.scope, &app.today)
-        );
     }
 
     /// So a montagem da view em dois passos; a navegacao e a gravacao no ultimo botao vivem em
@@ -1073,136 +770,6 @@ pub(super) mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn previa_mostra_o_envelope_da_propria_conversa_e_mascara_so_na_tela() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx) = cloud_app(dir.path());
-        // O envelope guardado na conversa (nao o de agora) e o que a previa mostra.
-        let env = "Gasto R$ 1.234,56 em mercado.";
-        app.snapshot.assistant.open = Some(awaiting_conv(app.book, env));
-        app.hide_values = false;
-        let open = super::awaiting_cloud_consent(&app).unwrap();
-        let shown = super::super::analysis_view::preview_shown(&app, open);
-        assert!(shown.starts_with(env), "{shown}");
-        assert_eq!(open.envelope, env, "o que sai nunca e mascarado");
-        app.hide_values = true;
-        let open = super::awaiting_cloud_consent(&app).unwrap();
-        let shown = super::super::analysis_view::preview_shown(&app, open);
-        assert!(!shown.contains("1.234"), "{shown}");
-        assert_eq!(open.envelope, env);
-        let _ = super::super::analysis_view::view(&app);
-    }
-
-    #[test]
-    fn previa_mostra_o_mesmo_que_vai_no_pedido_incluindo_as_mensagens_anteriores() {
-        use crate::assistant::prompt::{MAX_TURNS, Role};
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, _rx) = cloud_app(dir.path());
-        // Conversa respondida no modelo local e agora na nuvem: 12 pares e a pergunta pendente.
-        let mut conv = awaiting_conv(app.book, "ENV DA CONVERSA");
-        conv.messages.clear();
-        for i in 0..12 {
-            conv.messages
-                .push(msg(MessageRole::User, &format!("pergunta-{i}")));
-            conv.messages
-                .push(msg(MessageRole::Assistant, &format!("resposta-{i}")));
-        }
-        conv.messages
-            .push(msg(MessageRole::Error, "falha-que-nao-vai"));
-        conv.messages
-            .push(msg(MessageRole::User, "pergunta-pendente"));
-        app.snapshot.assistant.open = Some(conv);
-        let open = super::awaiting_cloud_consent(&app).unwrap();
-        let body = crate::ui_model::analysis::preview_body(open);
-        let payload = open.payload();
-        // A janela corta o comeco (e avanca ate uma pergunta): nem tudo cabe.
-        assert!(payload.len() > 2 && payload.len() <= 1 + MAX_TURNS * 2);
-        assert!(body.starts_with("ENV DA CONVERSA"));
-        // Cada turno do pedido aparece na previa, na mesma ordem e com o mesmo texto.
-        let mut from = 0;
-        for turn in payload.iter().skip(1) {
-            let who = if turn.role == Role::Assistant {
-                "Assistente"
-            } else {
-                "Você"
-            };
-            let line = format!("{who}: {}", turn.content);
-            let at = body[from..].find(&line).unwrap_or_else(|| panic!("{line}"));
-            from += at + line.len();
-        }
-        // O que a janela corta e o erro (que nunca vai ao modelo) tambem nao aparecem.
-        assert!(!body.contains("pergunta-0\n") && !body.contains("pergunta-0:"));
-        assert!(!body.contains("falha-que-nao-vai"));
-        assert!(body.ends_with("Você: pergunta-pendente"));
-        // Com mensagens anteriores a introducao deixa de falar so da pergunta de abertura.
-        assert!(!crate::ui_model::analysis::PREVIEW_INTRO_EARLIER.contains("pergunta de abertura"));
-        let _ = super::super::analysis_view::view(&app);
-    }
-
-    #[test]
-    fn previa_abre_em_dialogo_ao_conversar_na_nuvem_e_mostra_o_payload() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx) = cloud_app(dir.path());
-        let _ = update(&mut app, Msg::StartConversation);
-        let _ = drain(&mut rx);
-        assert!(app.consent_preview.is_none());
-        // O snapshot com a conversa nova esperando aprovacao abre a previa.
-        let snap = {
-            let mut s = app.snapshot.clone();
-            s.assistant.open = Some(awaiting_conv(app.book, "ENV DA CONVERSA"));
-            Msg::Snapshot(Box::new(s))
-        };
-        let _ = update(&mut app, snap);
-        assert_eq!(app.consent_preview.as_deref(), Some("C1"));
-        let open = crate::ui_model::analysis::shown_consent(&app).expect("previa aberta");
-        // O texto do dialogo e o do payload (a mesma montagem do envio).
-        let body = crate::ui_model::analysis::preview_body(open);
-        for turn in open.payload().iter().skip(1) {
-            assert!(body.contains(&turn.content), "{}", turn.content);
-        }
-        assert!(body.starts_with("ENV DA CONVERSA"));
-        assert!(super::super::analysis_view::consent_dialog(&app).is_some());
-        for hidden in [false, true] {
-            app.hide_values = hidden;
-            for (w, h) in [(1400.0, 900.0), (1024.0, 720.0), (300.0, 200.0)] {
-                app.window_size = Size::new(w, h);
-                let _ = super::super::shell::root(&app);
-            }
-        }
-        // "Cancelar": a abertura recem-criada (nada saiu) some e a previa fecha.
-        let _ = update(&mut app, Msg::CancelPreview);
-        assert!(app.consent_preview.is_none());
-        assert_eq!(
-            drain(&mut rx),
-            vec![Command::Assistant(AssistantCommand::Delete("C1".into()))]
-        );
-    }
-
-    #[test]
-    fn conversa_reaberta_esperando_aprovacao_nao_abre_a_previa_sozinha() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx) = cloud_app(dir.path());
-        let snap = {
-            let mut s = app.snapshot.clone();
-            s.assistant.open = Some(awaiting_conv(app.book, "ENV"));
-            Msg::Snapshot(Box::new(s))
-        };
-        let _ = update(&mut app, snap);
-        assert!(app.consent_preview.is_none());
-        assert!(super::super::analysis_view::consent_dialog(&app).is_none());
-        // O pe da conversa leva a ela.
-        let _ = update(&mut app, Msg::ShowCloudPreview);
-        assert_eq!(app.consent_preview.as_deref(), Some("C1"));
-        let _ = update(&mut app, Msg::ApproveCloudSend);
-        assert!(app.consent_preview.is_none());
-        assert_eq!(
-            drain(&mut rx),
-            vec![Command::Assistant(AssistantCommand::ApproveCloudSend(
-                "C1".into()
-            ))]
-        );
     }
 
     /// So a montagem da view: o toast do "Desfazer" monta pela raiz; o comportamento vive em
@@ -1324,61 +891,6 @@ pub(super) mod tests {
         app.snapshot.status = Status::Failed("porta ocupada".into());
         let _ = super::super::analysis_view::view(&app);
     }
-    #[test]
-    fn com_bandeja_fechar_zera_previa_envelope_e_remocao() {
-        let dir = tempfile::tempdir().unwrap();
-        let fake = Rc::new(Fake::with_tray());
-        let (mut app, _rx, _tx) = app_with_desktop(
-            Snapshot {
-                devices: vec![device_view("D1", "Pixel 7", false, false, data())],
-                ..Snapshot::default()
-            },
-            dir.path().to_path_buf(),
-            fake,
-        );
-        app.window = Some(app.iced.register(window::Id::unique()));
-        let _ = update(&mut app, Msg::AskRemove("D1".into()));
-        let _ = update(&mut app, Msg::ShowEnvelope);
-        app.preview_after = Some(Some("C1".into()));
-        assert!(app.confirm_remove.is_some());
-        assert!(app.envelope_preview.is_some());
-        let _ = update(&mut app, Msg::CloseRequested);
-        assert!(!app.closing);
-        assert!(app.confirm_remove.is_none());
-        assert!(app.envelope_preview.is_none());
-        assert!(app.preview_after.is_none());
-        assert!(!app.any_dialog_open());
-    }
-
-    #[test]
-    fn conectar_um_celular_nao_aparece_com_o_hub_em_falha() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx, _tx) = app_with(
-            running_with(vec![phone("D1", "Pixel 7")]),
-            dir.path().to_path_buf(),
-        );
-        let _ = update(&mut app, Msg::ConnectPhone);
-        assert!(connect::dialog_open(&app));
-        let _ = drain(&mut rx);
-        // O hub cai com o dialogo aberto: ele fecha e o codigo e cancelado.
-        let mut failed = running_with(vec![phone("D1", "Pixel 7")]);
-        failed.status = Status::Failed("porta ocupada".into());
-        let _ = update(&mut app, Msg::Snapshot(Box::new(failed)));
-        assert_eq!(app.connect, None);
-        assert!(drain(&mut rx).contains(&Command::CancelPairingToken));
-        assert!(super::super::connection_view::connect_dialog(&app).is_none());
-        // Pedir de novo (bandeja, estado vazio) leva a Aparelhos, com o card de falha, sem fluxo.
-        let _ = update(&mut app, Msg::ConnectPhone);
-        assert_eq!(app.screen, Screen::Connection);
-        assert_eq!(app.connect, None);
-        // Mesmo com um fluxo modal sobrando, o dialogo nao monta por cima da falha.
-        app.connect = Some(ConnectFlow::new(true));
-        assert!(!connect::dialog_open(&app));
-        assert!(!app.any_dialog_open());
-        assert!(super::super::connection_view::connect_dialog(&app).is_none());
-        let _ = super::super::shell::root(&app);
-    }
-
     #[test]
     fn cursor_so_pisca_com_janela_aberta() {
         let dir = tempfile::tempdir().unwrap();
@@ -1577,5 +1089,190 @@ pub(super) mod tests {
             assert!(std::time::Instant::now() < deadline, "ui.json: {prefs:?}");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// So a montagem; a abertura sem trocar de tela e os rascunhos vivem em `ui_model::app`
+    /// (`configurar_o_assistente_abre_o_dialogo_sem_trocar_de_tela`).
+    #[test]
+    fn configurar_o_assistente_monta() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        let _ = update(&mut app, Msg::SelectScreen(Screen::Settings));
+        let _ = update(&mut app, Msg::ConfigureAssistant);
+        assert!(super::super::assistant_settings_view::dialog(&app).is_some());
+        let _ = super::super::shell::root(&app);
+    }
+
+    /// So a montagem do passo 2; as contagens e o envio vivem em `ui_model::app`
+    /// (`apagar_tudo_marca_as_quatro_e_a_confirmacao_mostra_as_contagens`).
+    #[test]
+    fn apagar_tudo_monta() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_data(
+            dir.path(),
+            vec![device_view("D1", "Pixel 7", false, false, data())],
+        );
+        let _ = update(&mut app, Msg::AskRemove("D1".into()));
+        let _ = update(&mut app, Msg::SelectAllAreas);
+        let _ = update(&mut app, Msg::RemoveContinue);
+        let _ = remove_view::dialog(&app).expect("modal aberto");
+    }
+
+    /// So o aviso na tela; quem e orfao vive em `ui_model::app`
+    /// (`aviso_so_para_removido_com_dados_sem_decisao`).
+    #[test]
+    fn aviso_de_removido_monta() {
+        let dir = tempfile::tempdir().unwrap();
+        let orphan = device_view("ORFAO", "Orfao", true, false, data());
+        let (mut app, _rx, _tx) = app_with_data(dir.path(), vec![orphan]);
+        assert!(remove_view::orphan_banner(&app).is_some());
+        let (app2, _rx2, _tx2) = app_with_data(
+            dir.path(),
+            vec![device_view("ATIVO", "Ativo", false, false, data())],
+        );
+        assert!(remove_view::orphan_banner(&app2).is_none());
+        // "Depois" esconde nesta sessao.
+        let _ = update(&mut app, Msg::PostponeOrphans);
+        assert!(remove_view::orphan_banner(&app).is_none());
+    }
+
+    /// So o aviso na reabertura; o comando que nao sai vive em `ui_model::app`
+    /// (`depois_nao_envia_comando_e_o_aviso_volta_na_reabertura`).
+    #[test]
+    fn depois_monta_o_aviso_na_reabertura() {
+        let dir = tempfile::tempdir().unwrap();
+        let orphan = device_view("ORFAO", "Orfao", true, false, data());
+        let (mut app, _rx, _tx) = app_with_data(dir.path(), vec![orphan.clone()]);
+        let _ = update(&mut app, Msg::PostponeOrphans);
+        let (app2, _rx2, _tx2) = app_with_data(dir.path(), vec![orphan]);
+        assert!(remove_view::orphan_banner(&app2).is_some());
+    }
+
+    /// So a montagem; o `KeepDeviceData` na hora vive em `ui_model::app`
+    /// (`decidir_manter_tudo_de_removido_envia_keep_na_hora`).
+    #[test]
+    fn decidir_manter_tudo_monta_o_modal_sem_o_aviso() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_data(
+            dir.path(),
+            vec![device_view("ORFAO", "Orfao", true, false, data())],
+        );
+        let _ = update(&mut app, Msg::DecideOrphan);
+        // Com o modal aberto o aviso some.
+        assert!(remove_view::orphan_banner(&app).is_none());
+        let _ = remove_view::dialog(&app).expect("modal aberto");
+    }
+
+    /// So o seletor na tela; a troca dos achados vive em `ui_model::app`
+    /// (`seletor_de_conta_aparece_na_analise_e_troca_os_achados`).
+    #[test]
+    fn seletor_de_conta_monta_na_analise() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), true, false);
+        let _ = update(&mut app, Msg::SelectScreen(Screen::Analysis));
+        assert!(super::super::shell::book_switch(&app).is_some());
+        let _ = update(&mut app, Msg::SelectBook(Book::Business));
+        let _ = super::super::analysis_view::view(&app);
+    }
+
+    /// So a montagem da previa; o texto vive em `ui_model::app`
+    /// (`previa_mostra_exatamente_o_render_do_envelope`).
+    #[test]
+    fn previa_do_envelope_monta_e_fecha() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Msg::SelectScreen(Screen::Analysis));
+        let _ = update(&mut app, Msg::ShowEnvelope);
+        assert!(super::super::analysis_view::envelope_dialog(&app).is_some());
+        let _ = update(&mut app, Msg::CloseEnvelope);
+        assert!(super::super::analysis_view::envelope_dialog(&app).is_none());
+    }
+
+    /// So a montagem; o que a previa mostra vive em `ui_model::app`
+    /// (`previa_mostra_o_envelope_da_propria_conversa_e_mascara_so_na_tela`).
+    #[test]
+    fn previa_da_conversa_monta_com_e_sem_valores_ocultos() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = cloud_app(dir.path());
+        app.snapshot.assistant.open =
+            Some(awaiting_conv(app.book, "Gasto R$ 1.234,56 em mercado."));
+        for hidden in [false, true] {
+            app.hide_values = hidden;
+            let _ = super::super::analysis_view::view(&app);
+        }
+    }
+
+    /// So a montagem; a equivalencia com o pedido vive em `ui_model::app`
+    /// (`previa_mostra_o_mesmo_que_vai_no_pedido_incluindo_as_mensagens_anteriores`).
+    #[test]
+    fn previa_com_mensagens_anteriores_monta() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = cloud_app(dir.path());
+        let mut conv = awaiting_conv(app.book, "ENV DA CONVERSA");
+        conv.messages
+            .push(msg(MessageRole::User, "pergunta-pendente"));
+        app.snapshot.assistant.open = Some(conv);
+        let _ = super::super::analysis_view::view(&app);
+    }
+
+    /// So a montagem do dialogo; a previa e o `Delete` vivem em `ui_model::app`
+    /// (`previa_abre_em_dialogo_ao_conversar_na_nuvem_e_mostra_o_payload`).
+    #[test]
+    fn previa_em_dialogo_monta_em_todas_as_larguras() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = cloud_app(dir.path());
+        let _ = update(&mut app, Msg::StartConversation);
+        let snap = {
+            let mut s = app.snapshot.clone();
+            s.assistant.open = Some(awaiting_conv(app.book, "ENV DA CONVERSA"));
+            Msg::Snapshot(Box::new(s))
+        };
+        let _ = update(&mut app, snap);
+        assert!(super::super::analysis_view::consent_dialog(&app).is_some());
+        for hidden in [false, true] {
+            app.hide_values = hidden;
+            for (w, h) in [(1400.0, 900.0), (1024.0, 720.0), (300.0, 200.0)] {
+                app.window_size = Size::new(w, h);
+                let _ = super::super::shell::root(&app);
+            }
+        }
+        let _ = update(&mut app, Msg::CancelPreview);
+        assert!(super::super::analysis_view::consent_dialog(&app).is_none());
+    }
+
+    /// So a montagem; a previa que nao abre sozinha vive em `ui_model::app`
+    /// (`conversa_reaberta_esperando_aprovacao_nao_abre_a_previa_sozinha`).
+    #[test]
+    fn conversa_reaberta_nao_monta_o_dialogo_da_previa() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = cloud_app(dir.path());
+        let snap = {
+            let mut s = app.snapshot.clone();
+            s.assistant.open = Some(awaiting_conv(app.book, "ENV"));
+            Msg::Snapshot(Box::new(s))
+        };
+        let _ = update(&mut app, snap);
+        assert!(super::super::analysis_view::consent_dialog(&app).is_none());
+    }
+
+    /// So a montagem; o fluxo que fecha com o hub em falha vive em `ui_model::app`
+    /// (`conectar_um_celular_nao_aparece_com_o_hub_em_falha`).
+    #[test]
+    fn conectar_um_celular_monta_so_com_o_hub_no_ar() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(
+            running_with(vec![phone("D1", "Pixel 7")]),
+            dir.path().to_path_buf(),
+        );
+        let _ = update(&mut app, Msg::ConnectPhone);
+        assert!(super::super::connection_view::connect_dialog(&app).is_some());
+        let mut failed = running_with(vec![phone("D1", "Pixel 7")]);
+        failed.status = Status::Failed("porta ocupada".into());
+        let _ = update(&mut app, Msg::Snapshot(Box::new(failed)));
+        assert!(super::super::connection_view::connect_dialog(&app).is_none());
+        let _ = update(&mut app, Msg::ConnectPhone);
+        app.connect = Some(ConnectFlow::new(true));
+        assert!(super::super::connection_view::connect_dialog(&app).is_none());
+        let _ = super::super::shell::root(&app);
     }
 }

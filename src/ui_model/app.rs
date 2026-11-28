@@ -1988,6 +1988,7 @@ pub(crate) mod tests {
     use crate::dashboard::money::{MASK, leaks};
     use crate::desktop::{Fake, Headless};
     use crate::store::erase::DeviceData;
+    use crate::ui_model::motion;
 
     use super::*;
 
@@ -4811,5 +4812,773 @@ pub(crate) mod tests {
         // Aberto, sem "Salvando...", com o erro.
         assert_eq!(setup(&app).saving, None);
         assert!(app.assistant_setup.is_some());
+    }
+
+    // --- testes que vieram da cola do iced: o modelo decide, o toolkit so monta ---
+
+    fn count_effects(effects: &[Effect], is: impl Fn(&Effect) -> bool) -> usize {
+        effects.iter().filter(|e| is(e)).count()
+    }
+
+    #[test]
+    fn dialogo_liga_os_quadros_so_durante_a_entrada() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        // Com janela: sem ela as animacoes terminam na hora.
+        app.window = Some(WindowId(1));
+        assert!(!app.motion.animating(), "parada, sem quadros");
+        let _ = update(&mut app, Msg::ShowEnvelope);
+        assert!(app.any_dialog_open());
+        assert!(app.motion.animating());
+        let _ = update(&mut app, Msg::Frame(Instant::now() + motion::SCRIM_IN));
+        assert!(!app.motion.animating());
+        assert_eq!(app.motion.scrim(), 1.0);
+    }
+
+    #[test]
+    fn trocar_de_tela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        // Toda tela da navegacao, Ajustes inclusive; cada troca volta a rolagem ao topo, porque o
+        // cabecalho fixo nao rola e so o conteudo tem posicao.
+        for screen in shell::NAV_ORDER {
+            let effects = step(&mut app, Msg::SelectScreen(screen));
+            assert_eq!(app.screen, screen);
+            assert!(
+                matches!(effects.as_slice(), [Effect::ScrollToTop]),
+                "{screen:?}"
+            );
+        }
+        assert_eq!(app.screen, Screen::Settings);
+    }
+
+    #[test]
+    fn configurar_o_assistente_abre_o_dialogo_sem_trocar_de_tela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        let _ = update(&mut app, Msg::SelectScreen(Screen::Settings));
+        assert_eq!(app.screen, Screen::Settings);
+        let _ = update(&mut app, Msg::ConfigureAssistant);
+        assert_eq!(app.screen, Screen::Settings);
+        assert!(app.assistant_setup.is_some());
+        // Ja aberto: nao refaz os rascunhos que a pessoa digitou.
+        let _ = update(&mut app, Msg::SetupPort("1234".into()));
+        let _ = update(&mut app, Msg::ConfigureAssistant);
+        assert_eq!(
+            app.assistant_setup
+                .as_ref()
+                .map(|s| s.draft.port_input.as_str()),
+            Some("1234")
+        );
+    }
+
+    #[test]
+    fn apagar_tudo_marca_as_quatro_e_a_confirmacao_mostra_as_contagens() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_data(
+            dir.path(),
+            vec![view("D1", "Pixel 7", false, false, data())],
+        );
+        let _ = update(&mut app, Msg::AskRemove("D1".into()));
+        let _ = update(&mut app, Msg::SelectAllAreas);
+        assert_eq!(
+            app.confirm_remove.as_ref().unwrap().selected,
+            AreaSet::all()
+        );
+        let _ = update(&mut app, Msg::RemoveContinue);
+        // O passo 2 traz as contagens nos textos.
+        let selected = app.confirm_remove.as_ref().unwrap().selected;
+        let text = crate::ui_model::remove::confirm_text(&data(), selected);
+        assert!(text.contains("3 metas"), "{text}");
+        assert!(text.contains("100 lançamentos"), "{text}");
+        assert!(text.contains("2 reservas com 14 movimentos"), "{text}");
+        assert!(text.contains("1 recorrência com 2 reajustes"), "{text}");
+        assert_eq!(
+            crate::ui_model::remove::confirm_label(&data(), selected, false),
+            "Remover e apagar 122 itens"
+        );
+        let _ = update(&mut app, Msg::ConfirmRemove);
+        assert!(
+            app.pending_removal
+                .as_ref()
+                .unwrap()
+                .toast
+                .ends_with("122 itens serão apagados")
+        );
+        assert!(drain(&mut rx).is_empty(), "nada sai antes do prazo");
+        app.pending_removal.as_mut().unwrap().deadline = Instant::now();
+        let _ = update(&mut app, Msg::Tick);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::RemoveDevice {
+                device_id: "D1".into(),
+                erase: AreaSet::all()
+            }]
+        );
+    }
+
+    #[test]
+    fn aviso_so_para_removido_com_dados_sem_decisao() {
+        let dir = tempfile::tempdir().unwrap();
+        let devices = vec![
+            view("ATIVO", "Ativo", false, false, data()),
+            view("ORFAO", "Orfao", true, false, data()),
+            view("MANTIDO", "Mantido", true, true, data()),
+            view("VAZIO", "Vazio", true, false, DeviceData::default()),
+        ];
+        let (mut app, _rx, _tx) = app_with_data(dir.path(), devices);
+        let ids: Vec<_> = app.orphans().iter().map(|d| d.device_id.clone()).collect();
+        assert_eq!(ids, vec!["ORFAO"]);
+        assert!(!app.orphans_postponed);
+        // Banco sem revogados: nada.
+        let (app2, _rx2, _tx2) = app_with_data(
+            dir.path(),
+            vec![view("ATIVO", "Ativo", false, false, data())],
+        );
+        assert!(app2.orphans().is_empty());
+        // "Depois" esconde nesta sessao e nao grava nada.
+        let _ = update(&mut app, Msg::PostponeOrphans);
+        assert!(app.orphans_postponed);
+        assert_eq!(app.orphans().len(), 1);
+    }
+
+    #[test]
+    fn depois_nao_envia_comando_e_o_aviso_volta_na_reabertura() {
+        let dir = tempfile::tempdir().unwrap();
+        let orphan = view("ORFAO", "Orfao", true, false, data());
+        let (mut app, mut rx, _tx) = app_with_data(dir.path(), vec![orphan.clone()]);
+        let _ = update(&mut app, Msg::PostponeOrphans);
+        assert!(app.orphans_postponed);
+        assert!(drain(&mut rx).is_empty());
+        // Nova abertura: estado novo, mesmo banco.
+        let (app2, _rx2, _tx2) = app_with_data(dir.path(), vec![orphan]);
+        assert!(!app2.orphans_postponed);
+        assert_eq!(app2.orphans().len(), 1);
+    }
+
+    #[test]
+    fn decidir_manter_tudo_de_removido_envia_keep_na_hora() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with_data(
+            dir.path(),
+            vec![view("ORFAO", "Orfao", true, false, data())],
+        );
+        let _ = update(&mut app, Msg::DecideOrphan);
+        assert_eq!(
+            app.confirm_remove.as_ref().map(|d| d.device_id.as_str()),
+            Some("ORFAO")
+        );
+        let _ = update(&mut app, Msg::RemoveContinue);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::KeepDeviceData("ORFAO".into())]
+        );
+        assert_eq!(app.confirm_remove, None);
+        assert_eq!(app.pending_removal, None);
+    }
+
+    #[test]
+    fn abre_na_pessoal_sem_misturar_o_comercial() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, _tx) = app_with_business(dir.path(), true, false);
+        assert_eq!(app.book, Book::Personal);
+        // As fixtures tem 7 lancamentos; o comercial nao entra na contagem nem na lista.
+        assert_eq!(app.transactions.list.count, 7);
+        assert_eq!(
+            shell::transactions_count(&app),
+            crate::dashboard::fixtures().alive_transactions().count()
+        );
+        let plain = crate::dashboard::grafite::build_grafite(
+            &crate::dashboard::fixtures(),
+            "2026-09-24",
+            "2026-09",
+            Book::Personal,
+            false,
+        );
+        assert_eq!(app.dashboard.how_am_i, plain.how_am_i);
+    }
+
+    #[test]
+    fn escolher_comercial_mostra_so_a_conta_comercial_e_volta() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), true, false);
+        let _ = update(&mut app, Msg::SelectBook(Book::Business));
+        assert_eq!(app.book, Book::Business);
+        assert_eq!(app.dashboard.how_am_i.income.value, "R$ 900,00");
+        assert_eq!(app.dashboard.how_am_i.expense.value, "R$ 0,00");
+        assert_eq!(app.transactions.list.count, 1);
+        assert_eq!(shell::transactions_count(&app), 1);
+        assert_eq!(
+            shell::titles(&app).1,
+            "Padaria · somente leitura · dados do último sync"
+        );
+        let _ = update(&mut app, Msg::SelectBook(Book::Personal));
+        assert_eq!(app.book, Book::Personal);
+        assert_eq!(app.transactions.list.count, 7);
+    }
+
+    #[test]
+    fn seletor_de_conta_aparece_na_analise_e_troca_os_achados() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _tx) = app_with_business(dir.path(), true, false);
+        let _ = update(&mut app, Msg::SelectScreen(Screen::Analysis));
+        let _ = update(&mut app, Msg::SelectBook(Book::Business));
+        assert_eq!(
+            app.analysis,
+            crate::advisor::analyze(&app.scope, &app.today)
+        );
+    }
+
+    #[test]
+    fn previa_mostra_exatamente_o_render_do_envelope() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let _ = update(&mut app, Msg::SelectScreen(Screen::Analysis));
+        assert!(app.envelope_preview.is_none());
+        let _ = update(&mut app, Msg::ShowEnvelope);
+        let expected = crate::assistant::envelope::render(&crate::assistant::envelope::build(
+            &app.analysis,
+            &app.scope,
+            &app.today,
+            app.book,
+        ));
+        assert_eq!(app.envelope_preview.as_deref(), Some(expected.as_str()));
+        assert_eq!(
+            app.envelope_preview.as_deref(),
+            Some(app.current_envelope().as_str())
+        );
+        assert!(
+            expected.contains("R$ "),
+            "o exemplo traz dinheiro no envelope"
+        );
+        let _ = update(&mut app, Msg::CloseEnvelope);
+        assert!(app.envelope_preview.is_none());
+    }
+
+    #[test]
+    fn previa_mostra_o_envelope_da_propria_conversa_e_mascara_so_na_tela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = cloud_app(dir.path());
+        // O envelope guardado na conversa (nao o de agora) e o que a previa mostra.
+        let env = "Gasto R$ 1.234,56 em mercado.";
+        app.snapshot.assistant.open = Some(awaiting_conv(app.book, env));
+        app.hide_values = false;
+        let open = awaiting_cloud_consent(&app).unwrap();
+        let shown = analysis::preview_shown(&app, open);
+        assert!(shown.starts_with(env), "{shown}");
+        assert_eq!(open.envelope, env, "o que sai nunca e mascarado");
+        app.hide_values = true;
+        let open = awaiting_cloud_consent(&app).unwrap();
+        let shown = analysis::preview_shown(&app, open);
+        assert!(!shown.contains("1.234"), "{shown}");
+        assert_eq!(open.envelope, env);
+    }
+
+    #[test]
+    fn previa_mostra_o_mesmo_que_vai_no_pedido_incluindo_as_mensagens_anteriores() {
+        use crate::assistant::prompt::{MAX_TURNS, Role};
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx) = cloud_app(dir.path());
+        // Conversa respondida no modelo local e agora na nuvem: 12 pares e a pergunta pendente.
+        let mut conv = awaiting_conv(app.book, "ENV DA CONVERSA");
+        conv.messages.clear();
+        for i in 0..12 {
+            conv.messages
+                .push(msg(MessageRole::User, &format!("pergunta-{i}")));
+            conv.messages
+                .push(msg(MessageRole::Assistant, &format!("resposta-{i}")));
+        }
+        conv.messages
+            .push(msg(MessageRole::Error, "falha-que-nao-vai"));
+        conv.messages
+            .push(msg(MessageRole::User, "pergunta-pendente"));
+        app.snapshot.assistant.open = Some(conv);
+        let open = awaiting_cloud_consent(&app).unwrap();
+        let body = analysis::preview_body(open);
+        let payload = open.payload();
+        // A janela corta o comeco (e avanca ate uma pergunta): nem tudo cabe.
+        assert!(payload.len() > 2 && payload.len() <= 1 + MAX_TURNS * 2);
+        assert!(body.starts_with("ENV DA CONVERSA"));
+        // Cada turno do pedido aparece na previa, na mesma ordem e com o mesmo texto.
+        let mut from = 0;
+        for turn in payload.iter().skip(1) {
+            let who = if turn.role == Role::Assistant {
+                "Assistente"
+            } else {
+                "Você"
+            };
+            let line = format!("{who}: {}", turn.content);
+            let at = body[from..].find(&line).unwrap_or_else(|| panic!("{line}"));
+            from += at + line.len();
+        }
+        // O que a janela corta e o erro (que nunca vai ao modelo) tambem nao aparecem.
+        assert!(!body.contains("pergunta-0\n") && !body.contains("pergunta-0:"));
+        assert!(!body.contains("falha-que-nao-vai"));
+        assert!(body.ends_with("Você: pergunta-pendente"));
+        // Com mensagens anteriores a introducao deixa de falar so da pergunta de abertura.
+        assert!(!analysis::PREVIEW_INTRO_EARLIER.contains("pergunta de abertura"));
+    }
+
+    #[test]
+    fn previa_abre_em_dialogo_ao_conversar_na_nuvem_e_mostra_o_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = cloud_app(dir.path());
+        let _ = update(&mut app, Msg::StartConversation);
+        let _ = drain(&mut rx);
+        assert!(app.consent_preview.is_none());
+        // O snapshot com a conversa nova esperando aprovacao abre a previa.
+        let snap = {
+            let mut s = app.snapshot.clone();
+            s.assistant.open = Some(awaiting_conv(app.book, "ENV DA CONVERSA"));
+            Msg::Snapshot(Box::new(s))
+        };
+        let _ = update(&mut app, snap);
+        assert_eq!(app.consent_preview.as_deref(), Some("C1"));
+        let open = analysis::shown_consent(&app).expect("previa aberta");
+        // O texto do dialogo e o do payload (a mesma montagem do envio).
+        let body = analysis::preview_body(open);
+        for turn in open.payload().iter().skip(1) {
+            assert!(body.contains(&turn.content), "{}", turn.content);
+        }
+        assert!(body.starts_with("ENV DA CONVERSA"));
+        // "Cancelar": a abertura recem-criada (nada saiu) some e a previa fecha.
+        let _ = update(&mut app, Msg::CancelPreview);
+        assert!(app.consent_preview.is_none());
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::Delete("C1".into()))]
+        );
+    }
+
+    #[test]
+    fn conversa_reaberta_esperando_aprovacao_nao_abre_a_previa_sozinha() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = cloud_app(dir.path());
+        let snap = {
+            let mut s = app.snapshot.clone();
+            s.assistant.open = Some(awaiting_conv(app.book, "ENV"));
+            Msg::Snapshot(Box::new(s))
+        };
+        let _ = update(&mut app, snap);
+        assert!(app.consent_preview.is_none());
+        assert!(analysis::shown_consent(&app).is_none());
+        // O pe da conversa leva a ela.
+        let _ = update(&mut app, Msg::ShowCloudPreview);
+        assert_eq!(app.consent_preview.as_deref(), Some("C1"));
+        let _ = update(&mut app, Msg::ApproveCloudSend);
+        assert!(app.consent_preview.is_none());
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::ApproveCloudSend(
+                "C1".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn conectar_um_celular_nao_aparece_com_o_hub_em_falha() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx, _tx) = app_with(
+            running_with(vec![phone("D1", "Pixel 7")]),
+            dir.path().to_path_buf(),
+        );
+        let _ = update(&mut app, Msg::ConnectPhone);
+        assert!(connect::dialog_open(&app));
+        let _ = drain(&mut rx);
+        // O hub cai com o dialogo aberto: ele fecha e o codigo e cancelado.
+        let mut failed = running_with(vec![phone("D1", "Pixel 7")]);
+        failed.status = Status::Failed("porta ocupada".into());
+        let _ = update(&mut app, Msg::Snapshot(Box::new(failed)));
+        assert_eq!(app.connect, None);
+        assert!(drain(&mut rx).contains(&Command::CancelPairingToken));
+        assert!(!connect::dialog_open(&app));
+        // Pedir de novo (bandeja, estado vazio) leva a Aparelhos, com o card de falha, sem fluxo.
+        let _ = update(&mut app, Msg::ConnectPhone);
+        assert_eq!(app.screen, Screen::Connection);
+        assert_eq!(app.connect, None);
+        // Mesmo com um fluxo modal sobrando, o dialogo nao monta por cima da falha.
+        app.connect = Some(ConnectFlow::new(true));
+        assert!(!connect::dialog_open(&app));
+        assert!(!app.any_dialog_open());
+    }
+
+    #[test]
+    fn com_bandeja_fechar_fecha_a_janela_e_nao_desliga() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, mut rx) = with_tray(dir.path());
+        let id = app.window.unwrap();
+        let effects = update(&mut app, Msg::CloseRequested);
+        assert!(matches!(effects.as_slice(), [Effect::CloseWindow]));
+        assert!(!app.closing);
+        assert!(
+            rx.try_recv().is_err(),
+            "nenhum comando, muito menos Shutdown"
+        );
+        // A janela so some quando o toolkit confirma o fechamento.
+        assert_eq!(app.window, Some(id));
+        let _ = update(&mut app, Msg::WindowClosed(WindowId(99)));
+        assert_eq!(app.window, Some(id), "outra janela nao e a nossa");
+        app.maximized = true;
+        app.window_size = Size::new(800.0, 600.0);
+        let _ = update(&mut app, Msg::WindowClosed(id));
+        assert_eq!(app.window, None);
+        assert!(!app.maximized);
+        assert_eq!(app.window_size, INITIAL_SIZE);
+    }
+
+    #[test]
+    fn com_bandeja_fechar_envia_a_remocao_pendente_sem_shutdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = Rc::new(Fake::with_tray());
+        let (mut app, mut rx, _tx) = app_with_desktop(
+            Snapshot {
+                devices: vec![view("D1", "Pixel 7", false, false, data())],
+                ..Snapshot::default()
+            },
+            dir.path().to_path_buf(),
+            fake,
+        );
+        app.window = Some(WindowId(1));
+        let _ = update(&mut app, Msg::AskRemove("D1".into()));
+        let _ = update(&mut app, Msg::ConfirmRemove);
+        assert!(app.pending_removal.is_some());
+        let effects = update(&mut app, Msg::CloseRequested);
+        assert!(!effects.iter().any(|e| matches!(e, Effect::Exit)));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Command::RemoveDevice { device_id, .. }) if device_id == "D1"
+        ));
+        assert!(rx.try_recv().is_err());
+        assert_eq!(app.pending_removal, None);
+        assert!(!app.closing);
+    }
+
+    #[test]
+    fn com_bandeja_fechar_zera_previa_envelope_e_remocao() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = Rc::new(Fake::with_tray());
+        let (mut app, _rx, _tx) = app_with_desktop(
+            Snapshot {
+                devices: vec![view("D1", "Pixel 7", false, false, data())],
+                ..Snapshot::default()
+            },
+            dir.path().to_path_buf(),
+            fake,
+        );
+        app.window = Some(WindowId(1));
+        let _ = update(&mut app, Msg::AskRemove("D1".into()));
+        let _ = update(&mut app, Msg::ShowEnvelope);
+        app.preview_after = Some(Some("C1".into()));
+        assert!(app.confirm_remove.is_some());
+        assert!(app.envelope_preview.is_some());
+        let _ = update(&mut app, Msg::CloseRequested);
+        assert!(!app.closing);
+        assert!(app.confirm_remove.is_none());
+        assert!(app.envelope_preview.is_none());
+        assert!(app.preview_after.is_none());
+        assert!(!app.any_dialog_open());
+    }
+
+    // --- o contrato de efeitos que o executor de cada toolkit consome ---
+
+    #[test]
+    fn abrir_sem_janela_pede_uma_e_com_janela_pede_foco() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        app.window = None;
+        let effects = update(&mut app, Msg::Desktop(DesktopEvent::OpenWindow));
+        assert!(matches!(effects.as_slice(), [Effect::OpenWindow]));
+        app.window = Some(WindowId(1));
+        let effects = update(&mut app, Msg::Desktop(DesktopEvent::OpenWindow));
+        assert!(matches!(effects.as_slice(), [Effect::FocusWindow]));
+    }
+
+    #[test]
+    fn conectar_pela_bandeja_com_dialogo_aberto_so_pede_a_janela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        app.screen = Screen::Analysis;
+        app.envelope_preview = Some("envelope".into());
+        assert!(app.any_dialog_open());
+        app.window = None;
+        let effects = update(&mut app, Msg::Desktop(DesktopEvent::ConnectPhone));
+        assert!(matches!(effects.as_slice(), [Effect::OpenWindow]));
+        assert_eq!(app.screen, Screen::Analysis, "a tela por baixo nao muda");
+        assert!(app.connect.is_none());
+        assert!(app.envelope_preview.is_some(), "o dialogo continua");
+        // Com a janela aberta so traz o foco.
+        app.window = Some(WindowId(1));
+        let effects = update(&mut app, Msg::Desktop(DesktopEvent::ConnectPhone));
+        assert!(matches!(effects.as_slice(), [Effect::FocusWindow]));
+        assert_eq!(app.screen, Screen::Analysis);
+        assert!(app.connect.is_none());
+    }
+
+    #[test]
+    fn conectar_pela_bandeja_pede_a_janela_e_abre_o_fluxo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        app.window = None;
+        app.screen = Screen::Dashboard;
+        let effects = update(&mut app, Msg::Desktop(DesktopEvent::ConnectPhone));
+        assert_eq!(
+            count_effects(&effects, |e| matches!(e, Effect::OpenWindow)),
+            1
+        );
+        assert_eq!(
+            count_effects(&effects, |e| matches!(e, Effect::FocusWindow)),
+            0
+        );
+        assert_eq!(app.screen, Screen::Connection);
+        assert!(app.connect.is_some());
+        // Com a janela aberta: so o foco, e o fluxo nao recomeca.
+        app.window = Some(WindowId(1));
+        let effects = update(&mut app, Msg::Desktop(DesktopEvent::ConnectPhone));
+        assert_eq!(
+            count_effects(&effects, |e| matches!(e, Effect::OpenWindow)),
+            0
+        );
+        assert_eq!(
+            count_effects(&effects, |e| matches!(e, Effect::FocusWindow)),
+            1
+        );
+        assert_eq!(app.screen, Screen::Connection);
+        assert!(app.connect.is_some());
+    }
+
+    #[test]
+    fn falha_do_nucleo_pede_a_janela_so_na_transicao_para_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _fake, _rx) = with_tray(dir.path());
+        let opens =
+            |effects: &[Effect]| count_effects(effects, |e| matches!(e, Effect::OpenWindow));
+        let failed = || {
+            Msg::Snapshot(Box::new(Snapshot {
+                status: Status::Failed("porta ocupada".into()),
+                ..Snapshot::default()
+            }))
+        };
+        let running = || {
+            Msg::Snapshot(Box::new(Snapshot {
+                status: Status::Running,
+                ..Snapshot::default()
+            }))
+        };
+        // Com janela, a transicao nao pede outra.
+        assert!(app.window.is_some());
+        assert_eq!(opens(&update(&mut app, failed())), 0);
+        let _ = update(&mut app, running());
+        // Sem janela, a transicao pede uma ("falha silenciosa no login e o pior resultado").
+        app.window = None;
+        assert_eq!(opens(&update(&mut app, failed())), 1);
+        // A pessoa viu o erro e fechou: outro snapshot ainda `Failed` nao reabre.
+        app.window = None;
+        assert_eq!(opens(&update(&mut app, failed())), 0);
+        // Desligando: nao reabre.
+        let _ = update(&mut app, running());
+        app.closing = true;
+        assert_eq!(opens(&update(&mut app, failed())), 0);
+    }
+
+    fn save_prefs_of(effects: &[Effect]) -> Vec<UiPrefs> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::SavePrefs(p) => Some(p.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn alternar_ocultar_pede_a_gravacao_e_refaz_o_dashboard() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        assert!(!app.hide_values);
+        assert!(!app.dashboard.hidden);
+        assert_eq!(app.dashboard.header.hide_toggle, "Ocultar valores");
+        let shown = format!("{:?}", app.dashboard.how_am_i);
+        assert!(shown.contains("R$ "), "{shown}");
+        assert_eq!(app.transactions.list.income_label, "+R$ 6.500,00");
+        assert_eq!(app.transactions.synced_devices, 1);
+        let shown_transactions = app.transactions.clone();
+        let base = app.prefs();
+
+        let effects = update(&mut app, Msg::ToggleHideValues);
+        assert_eq!(
+            save_prefs_of(&effects),
+            vec![UiPrefs {
+                hide_values: true,
+                ..base.clone()
+            }]
+        );
+        assert!(app.hide_values);
+        assert!(app.dashboard.hidden);
+        assert_eq!(app.dashboard.header.hide_toggle, "Mostrar valores");
+        assert_eq!(app.dashboard.month, app.month());
+        let hidden = format!("{:?}", app.dashboard.how_am_i);
+        assert!(hidden.contains("•••"), "{hidden}");
+        assert_eq!(app.screen, Screen::Dashboard);
+        assert_eq!(leaks(&format!("{:#?}", app.transactions)), None);
+        assert_eq!(app.transactions.list.income_label, MASK);
+        assert_eq!(app.transactions.synced_devices, 1);
+        assert_eq!(app.transactions.list.count, shown_transactions.list.count);
+
+        // Trocar o tema leva a escolha junto (a gravacao e do arquivo inteiro).
+        let effects = update(&mut app, Msg::SetTheme(ThemeMode::Light));
+        assert_eq!(
+            save_prefs_of(&effects),
+            vec![UiPrefs {
+                theme: ThemeMode::Light,
+                hide_values: true,
+                ..base.clone()
+            }]
+        );
+
+        let effects = update(&mut app, Msg::ToggleHideValues);
+        assert_eq!(
+            save_prefs_of(&effects),
+            vec![UiPrefs {
+                theme: ThemeMode::Light,
+                hide_values: false,
+                ..base
+            }]
+        );
+        assert!(!app.dashboard.hidden);
+        assert_eq!(app.transactions, shown_transactions);
+    }
+
+    #[test]
+    fn reduzir_movimento_pede_a_gravacao_e_sobrevive_a_outra_preferencia() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
+        let base = app.prefs();
+        let effects = update(&mut app, Msg::ToggleReduceMotion);
+        assert!(app.motion.reduce());
+        assert_eq!(
+            save_prefs_of(&effects),
+            vec![UiPrefs {
+                reduce_motion: true,
+                ..base.clone()
+            }]
+        );
+        let _ = update(&mut app, Msg::ShowEnvelope);
+        assert!(!app.motion.animating(), "sem animacao com a opcao ligada");
+        assert_eq!(app.motion.scrim(), 1.0);
+        // A gravacao e do arquivo inteiro: trocar o olho nao apaga a escolha.
+        let effects = update(&mut app, Msg::ToggleHideValues);
+        assert_eq!(
+            save_prefs_of(&effects),
+            vec![UiPrefs {
+                reduce_motion: true,
+                hide_values: true,
+                ..base.clone()
+            }]
+        );
+        let effects = update(&mut app, Msg::ToggleReduceMotion);
+        assert_eq!(
+            save_prefs_of(&effects),
+            vec![UiPrefs {
+                reduce_motion: false,
+                hide_values: true,
+                ..base
+            }]
+        );
+    }
+
+    #[test]
+    fn trocar_o_tema_preserva_a_preferencia_de_autostart_nos_efeitos() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        fake.autostart.set(Some(true));
+        app.autostart = Some(true);
+        let base = app.prefs();
+        let effects = update(&mut app, Msg::SetAutostart(false));
+        assert_eq!(
+            save_prefs_of(&effects),
+            vec![UiPrefs {
+                autostart: Some(false),
+                ..base.clone()
+            }]
+        );
+        let effects = update(&mut app, Msg::SetTheme(ThemeMode::Light));
+        assert_eq!(
+            save_prefs_of(&effects),
+            vec![UiPrefs {
+                theme: ThemeMode::Light,
+                autostart: Some(false),
+                ..base
+            }]
+        );
+    }
+
+    #[test]
+    fn ligar_iniciar_com_o_windows_pede_a_gravacao_no_sistema_e_no_ui_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        assert_eq!(app.autostart, Some(false));
+        let base = app.prefs();
+        let effects = update(&mut app, Msg::SetAutostart(true));
+        assert_eq!(fake.autostart.get(), Some(true));
+        assert_eq!(app.autostart, Some(true));
+        assert_eq!(app.autostart_pref, Some(true));
+        assert!(!app.autostart_failed);
+        assert_eq!(
+            save_prefs_of(&effects),
+            vec![UiPrefs {
+                autostart: Some(true),
+                ..base
+            }]
+        );
+    }
+
+    #[test]
+    fn tema_sistema_segue_o_sistema_no_modelo_e_so_a_escolha_grava() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        fake.system_dark.set(Some(false));
+        let effects = update(&mut app, Msg::SetTheme(ThemeMode::System));
+        assert_eq!(app.theme, ThemeMode::System);
+        // Escolher "Sistema" le o sistema na hora: claro, sem esperar o tique.
+        assert!(!app.system_dark);
+        assert_eq!(save_prefs_of(&effects).len(), 1);
+        assert_eq!(save_prefs_of(&effects)[0].theme, ThemeMode::System);
+
+        // O sistema vai para o escuro: o tique percebe (caminho do Windows), sem gravar.
+        fake.system_dark.set(Some(true));
+        let effects = update(&mut app, Msg::Tick);
+        assert!(app.system_dark);
+        assert!(save_prefs_of(&effects).is_empty());
+        // Com o registro respondendo, o aviso do toolkit e ignorado: ele chega velho no Windows.
+        let _ = update(&mut app, Msg::SystemTheme(false));
+        assert!(app.system_dark);
+        // Sem registro (Linux), o aviso do toolkit troca.
+        fake.system_dark.set(None);
+        let effects = update(&mut app, Msg::SystemTheme(false));
+        assert!(!app.system_dark);
+        assert!(save_prefs_of(&effects).is_empty());
+        // Sem registro e sem aviso, o tique nao mexe.
+        let _ = update(&mut app, Msg::Tick);
+        assert!(!app.system_dark);
+        assert_eq!(app.theme, ThemeMode::System);
+    }
+
+    #[test]
+    fn tema_fixo_ignora_o_sistema() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, fake, _rx) = with_tray(dir.path());
+        fake.system_dark.set(Some(false));
+        assert_eq!(app.theme, ThemeMode::Dark);
+        let was_dark = app.system_dark;
+        let _ = update(&mut app, Msg::Tick);
+        assert_eq!(app.system_dark, was_dark, "o tique nao le o sistema");
+        fake.system_dark.set(None);
+        let _ = update(&mut app, Msg::SystemTheme(!was_dark));
+        assert_eq!(app.theme, ThemeMode::Dark);
+        // Voltar a "Sistema" usa o que o sistema disse por ultimo.
+        fake.system_dark.set(Some(false));
+        let _ = update(&mut app, Msg::SetTheme(ThemeMode::System));
+        assert_eq!(app.theme, ThemeMode::System);
+        assert!(!app.system_dark);
     }
 }

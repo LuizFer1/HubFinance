@@ -247,7 +247,6 @@ pub fn view(state: &State, window: window::Id) -> Element<'_, Msg> {
 pub(super) mod tests {
     use tokio::sync::{mpsc, watch};
 
-    use super::super::effects::save_prefs;
     use super::super::remove_view;
     use super::*;
     use crate::assistant::settings::{ProviderChoice, Settings};
@@ -572,30 +571,6 @@ pub(super) mod tests {
         let _ = super::super::connection_view::view(&app);
         app.autostart_failed = true;
         let _ = super::super::connection_view::view(&app);
-    }
-
-    #[test]
-    fn gravacao_antiga_que_chega_depois_nao_sobrescreve_a_nova() {
-        let dir = tempfile::tempdir().unwrap();
-        let first = save_prefs(
-            UiPrefs {
-                theme: ThemeMode::Dark,
-                ..UiPrefs::default()
-            },
-            dir.path().to_path_buf(),
-        );
-        let second = save_prefs(
-            UiPrefs {
-                theme: ThemeMode::Light,
-                ..UiPrefs::default()
-            },
-            dir.path().to_path_buf(),
-        );
-        futures::executor::block_on(async {
-            let _ = second.await;
-            let _ = first.await;
-        });
-        assert_eq!(UiPrefs::load(dir.path()).theme, ThemeMode::Light);
     }
 
     #[test]

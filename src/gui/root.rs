@@ -46,7 +46,7 @@ impl HubState {
 }
 
 /// Dono forte do estado durante o processo inteiro.
-#[allow(dead_code)] // so segura o dono forte; a leitura vem com as telas
+#[allow(dead_code)] // usado na Tarefa 8: so segura o dono forte ate as telas lerem
 pub struct HubGlobal(pub Entity<HubState>);
 
 impl Global for HubGlobal {}

@@ -286,6 +286,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gravacao_antiga_que_chega_depois_nao_sobrescreve_a_nova() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = save_prefs_ordered(
+            UiPrefs {
+                theme: ThemeMode::Dark,
+                ..UiPrefs::default()
+            },
+            dir.path().to_path_buf(),
+        );
+        let second = save_prefs_ordered(
+            UiPrefs {
+                theme: ThemeMode::Light,
+                ..UiPrefs::default()
+            },
+            dir.path().to_path_buf(),
+        );
+        futures::executor::block_on(async {
+            let _ = second.await;
+            let _ = first.await;
+        });
+        assert_eq!(UiPrefs::load(dir.path()).theme, ThemeMode::Light);
+    }
+
+    #[test]
     fn port_override_so_vale_em_debug_e_com_espaco_para_o_mais_um() {
         let os = |s: &'static str| Some(OsStr::new(s));
         assert_eq!(port_override(None, true), None);

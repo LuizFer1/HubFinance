@@ -7,8 +7,8 @@
 //! GPUI nao tem `transform` em `div`, e a cor ja marca o estado.
 
 use gpui::{
-    App, ClickEvent, ElementId, FocusHandle, Hsla, IntoElement, RenderOnce, SharedString, Window,
-    black, div, prelude::*, px,
+    App, ClickEvent, ElementId, FocusHandle, Hsla, IntoElement, RenderOnce, Role, SharedString,
+    Window, black, div, prelude::*, px,
 };
 
 use super::{focus, mix};
@@ -286,6 +286,7 @@ pub struct IconButton {
     glyph_size: f32,
     box_size: f32,
     glyph_color: Option<Hsla>,
+    aria_label: Option<SharedString>,
 }
 
 impl IconButton {
@@ -303,6 +304,7 @@ impl IconButton {
             glyph_size: 18.0,
             box_size: 36.0,
             glyph_color: None,
+            aria_label: None,
         }
     }
 
@@ -327,6 +329,12 @@ impl IconButton {
     /// Cor do glifo (padrao `text`). Sobre fundo invertido, como o do toast, `text` some.
     pub fn glyph_color(mut self, color: Hsla) -> IconButton {
         self.glyph_color = Some(color);
+        self
+    }
+
+    /// Nome acessivel: o botao so tem glifo, sem ele o leitor de tela nao diz o que ele faz.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> IconButton {
+        self.aria_label = Some(label.into());
         self
     }
 
@@ -372,6 +380,7 @@ impl RenderOnce for IconButton {
             .justify_center()
             .size(px(self.box_size))
             .rounded_full()
+            .when_some(self.aria_label, |d, l| d.role(Role::Button).aria_label(l))
             // Desabilitado nao entra na ordem do Tab: pararia num alvo sem anel e sem acao.
             .when_some(self.focus.filter(|_| enabled), |d, h| d.track_focus(&h))
             .when(enabled, |d| {

@@ -38,12 +38,18 @@ static DEMO_PHOTO: LazyLock<Option<Arc<gpui::Image>>> =
     LazyLock::new(|| photo(include_bytes!("../../../assets/brand/hubfinance-512.png")));
 
 pub fn requested() -> bool {
-    std::env::var_os("HUBFINANCE_DEMO").is_some_and(|v| v == "componentes" || v == "dados")
+    std::env::var_os("HUBFINANCE_DEMO")
+        .is_some_and(|v| v == "componentes" || v == "dados" || v == "campos")
 }
 
 /// `HUBFINANCE_DEMO=dados`: so a secao "Dados", sem rolar (a captura do smoke nao rola).
 fn only_data() -> bool {
     std::env::var_os("HUBFINANCE_DEMO").is_some_and(|v| v == "dados")
+}
+
+/// `HUBFINANCE_DEMO=campos`: so a secao de campos, dialogo e aviso, acima da dobra.
+fn only_fields() -> bool {
+    std::env::var_os("HUBFINANCE_DEMO").is_some_and(|v| v == "campos")
 }
 
 fn section(title: &'static str, t: &'static Tokens) -> Div {
@@ -214,6 +220,15 @@ pub fn render(t: &'static Tokens, fields: Option<&Fields>) -> AnyElement {
                 .child(Badge::new(2, t).dot()),
         );
 
+    if only_fields() {
+        return div()
+            .id("showcase")
+            .size_full()
+            .overflow_y_scroll()
+            .p(px(24.0))
+            .children(fields.map(|f| interaction_section(t, f)))
+            .into_any_element();
+    }
     let data = data_section(t);
     if only_data() {
         return div()

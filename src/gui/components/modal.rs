@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, ParentElement,
-    RenderOnce, SharedString, Styled as _, Window, div, prelude::*, px,
+    RenderOnce, Role, SharedString, Styled as _, Window, div, prelude::*, px,
 };
 
 use super::button::IconButton;
@@ -119,6 +119,9 @@ impl RenderOnce for Modal {
 
         let mut close = IconButton::new("modal-close", Icon::Close, t)
             .glyph_size(18.0)
+            // O design pinta o X do dialogo em `muted`, nao no `text` padrao.
+            .glyph_color(t.muted)
+            .aria_label("Fechar e cancelar")
             .ring_gap(t.surface);
         if let Some(h) = &self.close_focus {
             close = close.focus(h);
@@ -139,6 +142,7 @@ impl RenderOnce for Modal {
 
         let dialog = div()
             .id("modal-dialog")
+            .role(Role::Dialog)
             .flex()
             .flex_col()
             .gap(px(22.0))

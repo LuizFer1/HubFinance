@@ -190,7 +190,21 @@ impl Render for HubWindow {
         let state = self.state.clone();
         #[cfg(debug_assertions)]
         if super::components::showcase::requested() {
+            // Sem `Root` do gpui-component nao ha binding de Tab: a vitrine converte a tecla
+            // direto, como o `hub-root` faz via `Msg`.
             return div()
+                .id("showcase-root")
+                .track_focus(&self.focus)
+                .on_key_down(|event: &KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "tab" {
+                        if event.keystroke.modifiers.shift {
+                            window.focus_prev(cx);
+                        } else {
+                            window.focus_next(cx);
+                        }
+                        cx.stop_propagation();
+                    }
+                })
                 .size_full()
                 .bg(tokens.bg)
                 .text_color(tokens.text)

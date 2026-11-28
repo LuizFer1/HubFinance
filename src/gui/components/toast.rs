@@ -8,8 +8,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, BoxShadow, ClickEvent, ElementId, FocusHandle, IntoElement, RenderOnce, SharedString,
-    Subscription, Window, div, point, prelude::*, px,
+    App, BoxShadow, ClickEvent, ElementId, FocusHandle, IntoElement, RenderOnce, Role,
+    SharedString, Subscription, Window, div, point, prelude::*, px,
 };
 
 use super::button::IconButton;
@@ -227,6 +227,7 @@ impl RenderOnce for Toast {
             .glyph_size(16.0)
             // Sobre o fundo invertido do toast `text` some; o design pinta o X em `toast_muted`.
             .glyph_color(t.toast_muted)
+            .aria_label("Fechar aviso")
             .hover_bg(t.toast_fg.opacity(0.10))
             .ring_gap(t.toast_bg);
         if let Some(f) = &focus {
@@ -257,6 +258,7 @@ impl RenderOnce for Toast {
         let pause = self.on_pause;
         let body = div()
             .id(self.id)
+            .role(Role::Status)
             .relative()
             .overflow_hidden()
             .flex()

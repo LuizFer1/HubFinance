@@ -91,9 +91,10 @@ pub fn sync_area(state: &Entity<TextareaState>, value: &str, window: &mut Window
     }
 }
 
-/// Cor da borda: o anel de foco substitui a borda, entao ela so muda de tom com foco.
-pub fn border_color(focused: bool, t: &Tokens) -> Hsla {
-    if focused { t.accent_400 } else { t.divider }
+/// Cor da borda: com foco continua `divider`. O design so acrescenta o anel (`focus-visible`)
+/// sem mexer no border do campo; trocar a borda aqui daria dois acentos empilhados.
+pub fn border_color(_focused: bool, t: &Tokens) -> Hsla {
+    t.divider
 }
 
 #[derive(IntoElement)]
@@ -225,9 +226,9 @@ mod tests {
     use crate::gui::theme::{DARK, LIGHT};
 
     #[test]
-    fn borda_acende_so_com_foco() {
+    fn borda_continua_divider_com_foco() {
         for t in [&*DARK, &*LIGHT] {
-            assert_eq!(border_color(true, t), t.accent_400);
+            assert_eq!(border_color(true, t), t.divider);
             assert_eq!(border_color(false, t), t.divider);
         }
     }

@@ -68,7 +68,7 @@ impl RenderOnce for Stepper {
             let circle: AnyElement = match state {
                 StepState::Done => circle
                     .bg(t.accent_900)
-                    .child(icon(Icon::CheckW3, 12.0, t.accent_200))
+                    .child(icon(Icon::CheckW32, 12.0, t.accent_200))
                     .into_any_element(),
                 StepState::Current => circle
                     .bg(t.highlight)

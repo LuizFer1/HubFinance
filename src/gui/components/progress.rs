@@ -50,7 +50,7 @@ impl RenderOnce for Progress {
             .h(px(6.0))
             .w_full()
             .rounded_full()
-            .bg(self.track.unwrap_or(t.surface_2))
+            .bg(self.track.unwrap_or(t.divider))
             .overflow_hidden()
             .child(
                 div()

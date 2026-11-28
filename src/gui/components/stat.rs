@@ -1,12 +1,15 @@
 //! Estatistica: rotulo (muted), valor e nota opcional.
 
-use gpui::{App, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div, px};
+use gpui::{
+    App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div, px,
+};
 
 use super::money::Money;
 use crate::gui::theme::Tokens;
 
 #[derive(IntoElement)]
 pub struct Stat {
+    id: ElementId,
     label: SharedString,
     value: SharedString,
     note: Option<SharedString>,
@@ -16,11 +19,13 @@ pub struct Stat {
 
 impl Stat {
     pub fn new(
+        id: impl Into<ElementId>,
         label: impl Into<SharedString>,
         value: impl Into<SharedString>,
         tokens: &'static Tokens,
     ) -> Stat {
         Stat {
+            id: id.into(),
             label: label.into(),
             value: value.into(),
             note: None,
@@ -53,7 +58,7 @@ impl RenderOnce for Stat {
                     .text_color(t.muted)
                     .child(self.label),
             )
-            .child(Money::new(self.value, self.size, t))
+            .child(Money::new(self.id, self.value, self.size, t))
             .children(
                 self.note
                     .map(|n| div().text_size(px(12.0)).text_color(t.muted).child(n)),

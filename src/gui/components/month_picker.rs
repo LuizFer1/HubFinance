@@ -110,6 +110,7 @@ impl RenderOnce for MonthPicker {
             .px(px(4.0))
             .rounded_full()
             .bg(t.surface_2)
+            .text_size(px(14.0))
             .text_color(t.text)
             .font_weight(fonts::weight(600))
             .child(arrow(

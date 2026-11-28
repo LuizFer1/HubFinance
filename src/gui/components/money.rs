@@ -65,29 +65,31 @@ pub fn split(text: &str) -> Parts {
 pub struct Money {
     text: SharedString,
     size: f32,
-    id: Option<ElementId>,
+    id: ElementId,
     weight: u16,
     color: Option<Hsla>,
     tokens: &'static Tokens,
 }
 
 impl Money {
-    pub fn new(text: impl Into<SharedString>, size: f32, tokens: &'static Tokens) -> Money {
+    /// O id e obrigatorio: so o valor oculto o usa (para expor o rotulo), mas um padrao derivado
+    /// do tamanho colidia entre dois ocultos do mesmo tamanho sob o mesmo ancestral com id, e o
+    /// gpui faz `debug_assert!` em id de a11y duplicado quando ha leitor de tela ativo (no
+    /// release o segundo rotulo some em silencio). Cada tela passa um id unico.
+    pub fn new(
+        id: impl Into<ElementId>,
+        text: impl Into<SharedString>,
+        size: f32,
+        tokens: &'static Tokens,
+    ) -> Money {
         Money {
             text: text.into(),
             size,
-            id: None,
+            id: id.into(),
             weight: 600,
             color: None,
             tokens,
         }
-    }
-
-    /// Id estavel do elemento (so o valor oculto o usa, para expor o rotulo). Sem ele, um id
-    /// derivado do tamanho.
-    pub fn id(mut self, id: impl Into<ElementId>) -> Money {
-        self.id = Some(id.into());
-        self
     }
 
     pub fn weight(mut self, weight: u16) -> Money {
@@ -130,8 +132,7 @@ impl RenderOnce for Money {
         }
         row = row.child(div().child(SharedString::from(parts.body)));
         if masked {
-            let id = self.id.unwrap_or(ElementId::Integer(self.size as u64));
-            row.id(id)
+            row.id(self.id)
                 .role(Role::Label)
                 .aria_label(HIDDEN_LABEL)
                 .into_any_element()

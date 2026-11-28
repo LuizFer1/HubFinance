@@ -247,18 +247,23 @@ fn data_section(t: &'static Tokens) -> impl IntoElement {
             row()
                 .child(
                     Card::new(t)
-                        .child(Stat::new("Receitas", "R$ 14.180,00", t).note("novembro"))
+                        .child(
+                            Stat::new("stat-visivel", "Receitas", "R$ 14.180,00", t)
+                                .note("novembro"),
+                        )
                         .w(px(220.0)),
                 )
                 .child(
                     Card::new(t)
-                        .child(Stat::new("Receitas", MASK, t))
+                        .child(Stat::new("stat-oculto", "Receitas", MASK, t))
                         .w(px(220.0)),
                 )
                 .child(
                     Card::highlight(t)
                         .gap(px(10.0))
-                        .child(Money::new("R$ 6,3 mil", 20.0, t).color(t.on_highlight))
+                        .child(
+                            Money::new("money-meta", "R$ 6,3 mil", 20.0, t).color(t.on_highlight),
+                        )
                         .child(Progress::new(3.0, 4.0, t).fill(t.on_highlight))
                         .w(px(220.0)),
                 ),
@@ -266,15 +271,15 @@ fn data_section(t: &'static Tokens) -> impl IntoElement {
         .child(
             row()
                 .items_baseline()
-                .children(SIZES.map(|z| Money::new("R$ 12.345,67", z, t)))
-                .child(Money::new("−R$ 96,40", 15.0, t)),
+                .children(SIZES.map(|z| Money::new(("visivel", z as u64), "R$ 12.345,67", z, t)))
+                .child(Money::new("money-saida", "−R$ 96,40", 15.0, t)),
         )
         .child(
             row()
                 .items_baseline()
-                .children(SIZES.map(|z| Money::new(MASK, z, t).id(("oculto", z as u64))))
-                .child(Money::new("75,6%", 15.0, t))
-                .child(Money::new(AXIS_MASK, 15.0, t).id("oculto-num")),
+                .children(SIZES.map(|z| Money::new(("oculto", z as u64), MASK, z, t)))
+                .child(Money::new("money-pct", "75,6%", 15.0, t))
+                .child(Money::new("oculto-num", AXIS_MASK, 15.0, t)),
         )
         .child(
             row()

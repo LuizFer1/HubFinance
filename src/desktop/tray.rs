@@ -25,6 +25,26 @@ pub enum TrayIcon {
     Attention,
     /// Ponto vermelho: o hub nao subiu; a janela mostra o erro.
     Error,
+    /// Servidor parado: o desenho some a 45%, sem ponto.
+    #[allow(dead_code)] // usado na Tarefa 32
+    Off,
+}
+
+/// Nome do PNG embutido por estado **e** pelo tema da barra de tarefas. A barra e do Windows e
+/// pode divergir do tema do app: um desenho escuro sobre barra escura some, por isso os dois.
+/// `None` (o sistema nao diz) vale como barra escura, o padrao do Windows.
+pub fn icon_file(kind: TrayIcon, taskbar_dark: Option<bool>) -> &'static str {
+    let dark = taskbar_dark.unwrap_or(true);
+    match (kind, dark) {
+        (TrayIcon::Normal, true) => "tray-on-dark.png",
+        (TrayIcon::Normal, false) => "tray-on-light.png",
+        (TrayIcon::Attention, true) => "tray-offline-dark.png",
+        (TrayIcon::Attention, false) => "tray-offline-light.png",
+        (TrayIcon::Error, true) => "tray-error-dark.png",
+        (TrayIcon::Error, false) => "tray-error-light.png",
+        (TrayIcon::Off, true) => "tray-off-dark.png",
+        (TrayIcon::Off, false) => "tray-off-light.png",
+    }
 }
 
 /// So o estado do nucleo decide. Aparelho removido com dados a decidir fica de fora: o "Depois"
@@ -70,20 +90,49 @@ mod win {
     use crate::desktop::{DesktopEvent, EventSender};
     use crate::hub::snapshot::Status;
 
-    /// 32 px: o Windows reduz para 16 na barra; o PNG e independente do `build.rs`
+    /// 32 px: o Windows reduz para 16 na barra; os PNG sao independentes do `build.rs`
     /// (o `winresource` so avisa quando falha, e ai `Icon::from_resource` nao acharia nada).
-    const ICON_PNG: &[u8] = include_bytes!("../../assets/icon/32x32.png");
-    /// Variantes com o ponto de estado, geradas por `scripts/gen-icon.py` e commitadas.
-    const ATTENTION_PNG: &[u8] = include_bytes!("../../assets/icon/tray-attention.png");
-    const ERROR_PNG: &[u8] = include_bytes!("../../assets/icon/tray-error.png");
+    /// Gerados por `scripts/gen-icon.py` e commitados; a ordem e a de `ALL`.
+    const PNGS: [(&str, &[u8]); 8] = [
+        (
+            "tray-on-dark.png",
+            include_bytes!("../../assets/icon/tray-on-dark.png"),
+        ),
+        (
+            "tray-on-light.png",
+            include_bytes!("../../assets/icon/tray-on-light.png"),
+        ),
+        (
+            "tray-offline-dark.png",
+            include_bytes!("../../assets/icon/tray-offline-dark.png"),
+        ),
+        (
+            "tray-offline-light.png",
+            include_bytes!("../../assets/icon/tray-offline-light.png"),
+        ),
+        (
+            "tray-error-dark.png",
+            include_bytes!("../../assets/icon/tray-error-dark.png"),
+        ),
+        (
+            "tray-error-light.png",
+            include_bytes!("../../assets/icon/tray-error-light.png"),
+        ),
+        (
+            "tray-off-dark.png",
+            include_bytes!("../../assets/icon/tray-off-dark.png"),
+        ),
+        (
+            "tray-off-light.png",
+            include_bytes!("../../assets/icon/tray-off-light.png"),
+        ),
+    ];
 
     /// Guarda o `TrayIcon`: o icone some quando a ultima copia e descartada. As tres imagens
     /// sao decodificadas uma vez, no `install`: trocar de estado nao le PNG de novo.
     pub struct Tray {
         icon: TrayIcon,
-        normal: Icon,
-        attention: Icon,
-        error: Icon,
+        icons: Vec<(&'static str, Icon)>,
     }
 
     fn decode(png: &[u8]) -> Result<Icon, String> {
@@ -99,9 +148,15 @@ mod win {
     /// oculto na thread chamadora e as mensagens dele sao entregues pelo laco do winit, que
     /// roda nessa mesma thread. Os handlers rodam dentro desse laco e so empurram no canal.
     pub fn install(tx: EventSender) -> Result<Tray, String> {
-        let normal = decode(ICON_PNG)?;
-        let attention = decode(ATTENTION_PNG)?;
-        let error = decode(ERROR_PNG)?;
+        let icons = PNGS
+            .iter()
+            .map(|(name, bytes)| decode(bytes).map(|icon| (*name, icon)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let normal = icons
+            .iter()
+            .find(|(name, _)| *name == super::icon_file(Kind::Normal, None))
+            .map(|(_, icon)| icon.clone())
+            .ok_or("icone da bandeja ausente")?;
 
         let menu = Menu::new();
         menu.append_items(&[
@@ -149,12 +204,7 @@ mod win {
             .with_tooltip(tooltip(&Status::Starting, 0))
             .build()
             .map_err(|e| format!("bandeja: {e}"))?;
-        Ok(Tray {
-            icon,
-            normal,
-            attention,
-            error,
-        })
+        Ok(Tray { icon, icons })
     }
 
     impl Tray {
@@ -171,10 +221,11 @@ mod win {
 
         /// `false` = o sistema recusou (Explorer reiniciando, por exemplo).
         pub fn set_icon(&self, kind: Kind) -> bool {
-            let icon = match kind {
-                Kind::Normal => &self.normal,
-                Kind::Attention => &self.attention,
-                Kind::Error => &self.error,
+            // Lido a cada troca: a barra pode mudar de tema com o hub ligado, e o proximo
+            // estado ja sai no tema certo.
+            let name = super::icon_file(kind, crate::desktop::appearance::taskbar_dark());
+            let Some((_, icon)) = self.icons.iter().find(|(n, _)| *n == name) else {
+                return false;
             };
             match self.icon.set_icon(Some(icon.clone())) {
                 Ok(()) => true,
@@ -333,18 +384,44 @@ mod tests {
         );
     }
 
-    /// As variantes existem, sao PNG do mesmo tamanho do icone e diferem dele: o
-    /// `include_bytes!` do codigo Windows e o script de geracao concordam no nome.
+    /// Todo estado x tema da barra tem PNG embutido, 32 px, e o nome vem de `icon_file`.
     #[test]
-    fn variantes_do_icone_estao_no_repo() {
+    fn icone_por_estado_e_tema_da_barra() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icon");
-        let normal = std::fs::read(dir.join("32x32.png")).unwrap();
-        for name in ["tray-attention.png", "tray-error.png"] {
-            let bytes = std::fs::read(dir.join(name)).unwrap();
-            assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "{name}");
-            // Largura e altura no IHDR (bytes 16..24, big-endian).
-            assert_eq!(&bytes[16..24], &normal[16..24], "{name}");
-            assert_ne!(bytes, normal, "{name}");
+        let mut seen = std::collections::HashSet::new();
+        for kind in [
+            TrayIcon::Normal,
+            TrayIcon::Attention,
+            TrayIcon::Error,
+            TrayIcon::Off,
+        ] {
+            for dark in [Some(true), Some(false)] {
+                let name = icon_file(kind, dark);
+                assert!(seen.insert(name), "{name} repetido");
+                let bytes = std::fs::read(dir.join(name)).unwrap();
+                assert!(
+                    bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
+                    "{name}"
+                );
+                assert_eq!(&bytes[16..24], &[0, 0, 0, 32, 0, 0, 0, 32], "{name}");
+            }
         }
+        assert_eq!(seen.len(), 8);
+    }
+
+    #[test]
+    fn barra_sem_resposta_vale_escura() {
+        for kind in [
+            TrayIcon::Normal,
+            TrayIcon::Error,
+            TrayIcon::Attention,
+            TrayIcon::Off,
+        ] {
+            assert_eq!(icon_file(kind, None), icon_file(kind, Some(true)));
+        }
+        assert_eq!(
+            icon_file(TrayIcon::Normal, Some(false)),
+            "tray-on-light.png"
+        );
     }
 }

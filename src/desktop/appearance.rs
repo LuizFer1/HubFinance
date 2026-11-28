@@ -20,6 +20,20 @@ pub fn system_dark() -> Option<bool> {
     None
 }
 
+/// Tema da **barra de tarefas** (`SystemUsesLightTheme`), que no Windows e independente do dos
+/// aplicativos: o icone da bandeja precisa do desenho que contrasta com ela. `true` = escura;
+/// `None` = o sistema nao diz (fora do Windows, ou valor ausente), tratado como escura.
+#[cfg(all(windows, not(test)))]
+pub fn taskbar_dark() -> Option<bool> {
+    win::read_light_flag("SystemUsesLightTheme").map(|light| !light)
+}
+
+/// Fora do Windows e em teste: nunca le o registro (ver `system_dark`).
+#[cfg(any(not(windows), test))]
+pub fn taskbar_dark() -> Option<bool> {
+    None
+}
+
 #[cfg(all(windows, not(test)))]
 mod win {
     use std::ptr;
@@ -34,8 +48,12 @@ mod win {
     const VALUE_NAME: &str = "AppsUseLightTheme";
 
     pub fn apps_use_light_theme() -> Option<bool> {
+        read_light_flag(VALUE_NAME)
+    }
+
+    pub fn read_light_flag(value_name: &str) -> Option<bool> {
         let sub = wide(PERSONALIZE_KEY);
-        let name = wide(VALUE_NAME);
+        let name = wide(value_name);
         let mut value = 0u32;
         let mut size = u32::try_from(std::mem::size_of::<u32>()).ok()?;
         // SAFETY: ponteiros validos pelo tempo da chamada; `value` tem os 4 bytes que `size`

@@ -1,4 +1,4 @@
-"""Gera o icone do HubFinance em assets/icon/ a partir do tile da marca no design.
+"""Gera os icones do HubFinance em assets/icon/ a partir do pacote de marca em assets/brand/.
 
 Geracao offline, como freeze-inter.sh e oklch.py: o resultado e commitado e o build nunca
 roda este script. Uso, da raiz do repo:
@@ -7,117 +7,77 @@ roda este script. Uso, da raiz do repo:
 
 Requer Pillow (testado com 12.x).
 
-O desenho e o tile de 32px da barra lateral (raio 8, borda de 1px no acento, glifo
-house-line de 17px no acento-300) escalado: cada tamanho e desenhado de novo em vez de
-reduzido de um so mestre, para a borda continuar com 1px exato no tamanho 32 e nao virar um
-borrao nos tamanhos pequenos do Windows.
-
-Tambem gera as variantes da bandeja (`tray-attention.png`, `tray-error.png`, 32px): o mesmo
-tile com um ponto no canto inferior direito, laranja de atencao (`warning` do escuro) ou
-vermelho de erro (`expense` do claro, o mais fechado dos dois, que ainda se ve em 16px). O
-ponto tem um anel no fundo do tile para nao se misturar com a borda. A bandeja troca entre
-elas por estado (`desktop::tray::icon_for`).
+- `icon.ico` e copia de `assets/brand/hubfinance.ico` (o pacote ja traz as camadas certas).
+- `32/64/128/256/512x512.png` sao reducoes (LANCZOS) de `hubfinance-512.png`; `icon.icns` sai
+  do mesmo 512.
+- `tray-{on,error,offline,off}-{light,dark}.png` (32 px): `-light` = para barra de tarefas
+  CLARA (desenho escuro), `-dark` = para barra ESCURA (desenho claro). Estado e um ponto no canto
+  inferior direito com anel na cor do fundo da barra, para nao se misturar com o desenho:
+  erro (#F28B82 na barra escura, #B3261E na clara), sem rede (#F2994A / #975201); "off" (hub
+  parado) e a base a 45% de opacidade, sem ponto. `desktop::tray::icon_file` escolhe o nome.
 """
 
+import shutil
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
-FONT = ROOT / "assets" / "fonts" / "Phosphor.ttf"
+BRAND = ROOT / "assets" / "brand"
 OUT = ROOT / "assets" / "icon"
+EXPORT = BRAND / "hub-windows"
 
-BG = (0x16, 0x18, 0x26, 255)
-ACCENT = (0x91, 0x84, 0xD9, 255)
-ACCENT_300 = (0xD2, 0xCE, 0xFD, 255)
+SIZES = (32, 64, 128, 256, 512)
+TRAY = 32
 
-# Mesmo codepoint de `HOUSE_LINE` em src/ui/icons.rs; trocar a fonte sem conferir os dois
-# desenharia outro glifo sem erro nenhum.
-HOUSE_LINE = "\ue2c4"
+# (cor do ponto, cor do fundo da barra para o anel) por tema da barra.
+ERROR = {"light": (0xB3, 0x26, 0x1E), "dark": (0xF2, 0x8B, 0x82)}
+OFFLINE = {"light": (0x97, 0x52, 0x01), "dark": (0xF2, 0x99, 0x4A)}
+BAR_BG = {"light": (0xF3, 0xF3, 0xF3), "dark": (0x20, 0x20, 0x20)}
 
-# Medidas do tile no design, em px de um tile de 32.
-TILE = 32
-RADIUS = 8
-BORDER = 1
-GLYPH = 17
-
-# Desenho em escala maior e reducao com Lanczos: o ImageDraw nao suaviza bordas. O teto
-# evita uma imagem de 8192px para o tamanho 1024.
-SUPERSAMPLE = 8
-MAX_CANVAS = 4096
-
-# Cores do ponto das variantes: hex da paleta (`theme.rs`), nenhum novo.
-WARNING = (0xF2, 0x99, 0x4A, 255)
-EXPENSE = (0xCA, 0x55, 0x56, 255)
-# Em px de um tile de 32: o ponto ocupa o quarto inferior direito, com anel de 2px.
-BADGE = 14
-BADGE_RING = 2
-
-TRAY_SIZE = 32
-TRAY_VARIANTS = {"tray-attention.png": WARNING, "tray-error.png": EXPENSE}
-
-PNG_SIZES = [32, 64, 128, 256, 512, 1024]
-ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
+# Desenho em escala maior e reducao: o ImageDraw nao suaviza bordas.
+SS = 8
+DOT_R = 6  # raio do ponto, em px de 32
+RING = 2
+DOT_CENTER = (TRAY - 8, TRAY - 8)
 
 
-def render(size: int) -> Image.Image:
-    big = min(size * SUPERSAMPLE, max(MAX_CANVAS, size))
-    unit = big / TILE
-    img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    border = max(round(BORDER * unit), 1)
-    draw.rounded_rectangle(
-        (0, 0, big - 1, big - 1),
-        radius=round(RADIUS * unit),
-        fill=BG,
-        outline=ACCENT,
-        width=border,
-    )
-    font = ImageFont.truetype(str(FONT), round(GLYPH * unit))
-    # Centraliza pela caixa real do glifo, nao pela linha de base: o glifo do Phosphor nao
-    # ocupa a altura toda da fonte.
-    left, top, right, bottom = draw.textbbox((0, 0), HOUSE_LINE, font=font)
-    x = (big - (right - left)) / 2 - left
-    y = (big - (bottom - top)) / 2 - top
-    draw.text((x, y), HOUSE_LINE, font=font, fill=ACCENT_300)
-    return img.resize((size, size), Image.Resampling.LANCZOS)
+def with_dot(base: Image.Image, color: tuple[int, int, int], theme: str) -> Image.Image:
+    big = base.resize((TRAY * SS, TRAY * SS), Image.LANCZOS)
+    draw = ImageDraw.Draw(big)
+    cx, cy = (c * SS for c in DOT_CENTER)
+    ring = (DOT_R + RING) * SS
+    draw.ellipse((cx - ring, cy - ring, cx + ring, cy + ring), fill=(*BAR_BG[theme], 255))
+    r = DOT_R * SS
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(*color, 255))
+    return big.resize((TRAY, TRAY), Image.LANCZOS)
 
 
-def render_badged(size: int, color: tuple[int, int, int, int]) -> Image.Image:
-    """O tile com o ponto de estado, desenhado na mesma escala ampliada antes de reduzir."""
-    big = size * SUPERSAMPLE
-    unit = big / TILE
-    img = render(big).copy()
-    draw = ImageDraw.Draw(img)
-    outer = BADGE * unit
-    ring = BADGE_RING * unit
-    x1 = y1 = big - 1
-    x0 = y0 = big - outer
-    draw.ellipse((x0, y0, x1, y1), fill=BG)
-    draw.ellipse((x0 + ring, y0 + ring, x1 - ring, y1 - ring), fill=color)
-    return img.resize((size, size), Image.Resampling.LANCZOS)
+def faded(base: Image.Image, opacity: float) -> Image.Image:
+    out = base.copy()
+    alpha = out.getchannel("A").point(lambda a: round(a * opacity))
+    out.putalpha(alpha)
+    return out
 
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    rendered = {size: render(size) for size in sorted(set(PNG_SIZES + ICO_SIZES))}
-    for size in PNG_SIZES:
-        rendered[size].save(OUT / f"{size}x{size}.png", optimize=True)
-    # .ico com cada tamanho desenhado no proprio tamanho (append_images), nao reduzido do
-    # maior pelo Pillow.
-    ico = [rendered[size] for size in ICO_SIZES]
-    ico[-1].save(
-        OUT / "icon.ico",
-        sizes=[(s, s) for s in ICO_SIZES],
-        append_images=ico[:-1],
-    )
-    # O Pillow monta o .icns a partir do maior e reduz os demais; acima de 32px a borda ja
-    # tem mais de um pixel, entao a reducao nao perde nada visivel.
-    rendered[1024].save(OUT / "icon.icns")
-    for name, color in TRAY_VARIANTS.items():
-        render_badged(TRAY_SIZE, color).save(OUT / name, optimize=True)
-    for path in sorted(OUT.iterdir()):
-        print(f"{path.relative_to(ROOT)}  {path.stat().st_size} bytes")
+    for old in ("1024x1024.png", "tray-attention.png", "tray-error.png"):
+        (OUT / old).unlink(missing_ok=True)
+
+    shutil.copyfile(EXPORT / "hubfinance.ico", OUT / "icon.ico")
+    master = Image.open(EXPORT / "hubfinance-512.png").convert("RGBA")
+    for size in SIZES:
+        img = master if size == 512 else master.resize((size, size), Image.LANCZOS)
+        img.save(OUT / f"{size}x{size}.png", optimize=True)
+    master.save(OUT / "icon.icns", format="ICNS")
+
+    for theme in ("light", "dark"):
+        base = Image.open(EXPORT / f"bandeja-32-para-tema-{'claro' if theme == 'light' else 'escuro'}.png").convert("RGBA")
+        base.save(OUT / f"tray-on-{theme}.png", optimize=True)
+        with_dot(base, ERROR[theme], theme).save(OUT / f"tray-error-{theme}.png", optimize=True)
+        with_dot(base, OFFLINE[theme], theme).save(OUT / f"tray-offline-{theme}.png", optimize=True)
+        faded(base, 0.45).save(OUT / f"tray-off-{theme}.png", optimize=True)
 
 
 if __name__ == "__main__":

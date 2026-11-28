@@ -36,6 +36,9 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub https_port: u16,
     pub http_port: u16,
+    /// Endereco de escuta. Campo (e nao leitura do ambiente la no fundo) para os testes
+    /// poderem fixar o loopback: escutar em 0.0.0.0 dispara o alerta do Firewall do Windows.
+    pub bind_ip: IpAddr,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -62,6 +65,7 @@ impl Config {
             data_dir,
             https_port: port.unwrap_or(HTTPS_PORT),
             http_port: port.map_or(HTTP_PORT, |p| p + 1),
+            bind_ip: bind_ip_from_env(),
         })
     }
 

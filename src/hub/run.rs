@@ -22,7 +22,7 @@ use crate::desktop::secret::SecretStore;
 use crate::pairing::token::TokenBook;
 use crate::server::ca_http::{CaState, ca_router};
 use crate::server::router::full_api;
-use crate::server::serve::{Servers, bind_servers};
+use crate::server::serve::{Servers, bind_servers_on};
 use crate::server::state::{AppState, ServerEvent, rfc3339};
 use crate::store::erase::{AreaSet, DeviceData};
 use crate::store::{Store, StoreError};
@@ -160,12 +160,19 @@ async fn boot(
         now,
         events: events_tx.clone(),
     });
-    let servers = bind_servers(config.https_port, config.http_port, api, ca, &material)
-        .await
-        .map_err(|e| match e {
-            crate::server::serve::ServeError::Bind(port, _) => format!("Porta {port} em uso"),
-            other => other.to_string(),
-        })?;
+    let servers = bind_servers_on(
+        config.bind_ip,
+        config.https_port,
+        config.http_port,
+        api,
+        ca,
+        &material,
+    )
+    .await
+    .map_err(|e| match e {
+        crate::server::serve::ServeError::Bind(port, _) => format!("Porta {port} em uso"),
+        other => other.to_string(),
+    })?;
 
     snap.epoch = store.epoch().to_string();
     snap.https_port = servers.https_addr.port();

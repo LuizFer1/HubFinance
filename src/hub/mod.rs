@@ -138,6 +138,8 @@ mod tests {
             data_dir: dir.to_path_buf(),
             https_port: 0,
             http_port: 0,
+            // Loopback: o padrao (0.0.0.0) acenderia o alerta do Firewall a cada binario de teste.
+            bind_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
         }
     }
 

@@ -34,26 +34,7 @@ pub enum ServeError {
 
 /// Faz o bind com `std::net::TcpListener` ANTES de spawnar: porta ocupada vira erro aqui,
 /// no boot, e nao uma tarefa morrendo em silencio depois.
-pub async fn bind_servers(
-    https_port: u16,
-    http_port: u16,
-    api: Router,
-    ca: Router,
-    material: &TlsMaterial,
-) -> Result<Servers, ServeError> {
-    bind_servers_on(
-        crate::config::bind_ip_from_env(),
-        https_port,
-        http_port,
-        api,
-        ca,
-        material,
-    )
-    .await
-}
-
-/// O mesmo que `bind_servers` com o IP escolhido por quem chama (os testes usam o loopback).
-async fn bind_servers_on(
+pub async fn bind_servers_on(
     ip: std::net::IpAddr,
     https_port: u16,
     http_port: u16,

@@ -1230,7 +1230,7 @@ mod tests {
         )];
         if materialized {
             rows.push(expense_row(
-                &crate::dashboard::ids::stable_entity_id("RLUZ:2026-11"),
+                &crate::dashboard::ids::stable_entity_id_v1("RLUZ:2026-11"),
                 12_000,
                 "2026-11-12",
                 json!({ "categoryId": "CAT-CONTAS", "recurrenceId": "RLUZ",

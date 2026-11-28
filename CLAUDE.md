@@ -76,7 +76,7 @@ com um hub de verdade por curl.
 ## Layering
 
 `protocol/` é puro (sem rusqlite, axum, tokio, iced). `store/` é o único módulo com rusqlite;
-`server/` o único com axum; `ui/` o único com iced. `dashboard/` é puro (sem rusqlite, axum, tokio,
+`server/` o único com axum; `ui/` o único com iced. `gui/` é o único com gpui (migração em andamento, spec 2026-11-28); `HUBFINANCE_UI=gpui` abre a interface nova. `dashboard/` é puro (sem rusqlite, axum, tokio,
 iced): contrato de campos, dataset e agregações; a UI deriva as telas dele. `advisor/` é puro como
 `dashboard/` (lê só `dashboard/`). `assistant/` é o único módulo além de `store/` com rusqlite, e só
 abre o `assistant.db` (nunca o banco de sync; `store/` nunca abre o dele); é o único com `ureq`.

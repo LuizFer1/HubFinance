@@ -40,6 +40,11 @@ pulldown-cmark = { version = "0.12.2", default-features = false }
 # `spawn_blocking`. A feature `rustls` do ureq ja usa ring (mesmo provedor do servidor) e traz
 # os certificados raiz embutidos (webpki-roots), sem aws-lc-rs nem depender do sistema.
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+# GPUI (interface nova, migracao da spec 2026-11-28). Versao exata: a API e pre-1.0 e o crate e
+# de uma pessoa; subir de versao e tarefa propria.
+gpui = { package = "gpui-pre", version = "=0.3.14" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.14" }
+gpui-component = { version = "=0.11.0" }
 
 [dev-dependencies]
 tempfile = "3"
@@ -50,6 +55,12 @@ ttf-parser = "0.25"
 # Teste do caminho `log` -> `tracing` do ureq; as duas ja vem na arvore (tracing-subscriber, ureq).
 log = "0.4"
 tracing-log = "0.2"
+
+# O backend DirectX do GPUI, em debug, pede a camada de depuracao do DXGI; sem o recurso
+# "Ferramentas Graficas" do Windows isso loga ERROR (0x887A002D) a cada boot, o que quebraria o
+# criterio "log sem ERROR" do smoke. Sem debug-assertions so neste crate: o resto continua igual.
+[profile.dev.package.gpui-pre-windows]
+debug-assertions = false
 
 # Bandeja, instancia unica e chave Run: so no Windows. A tray-icon no Linux exige GTK e
 # libayatana-appindicator em tempo de build (e no .deb/AppImage), e o release.yml compila os

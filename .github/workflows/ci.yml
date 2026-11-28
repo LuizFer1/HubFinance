@@ -36,12 +36,14 @@ jobs:
 
       # O iced abre X11, Wayland e Vulkan por dlopen, entao o build nao precisa deles; os
       # cabecalhos so calam o aviso do pkg-config do tiny-xlib e do wayland-sys.
+      # iced (x11/wayland) e GPUI (fontconfig, freetype, xcb, vulkan). A lista do GPUI e ajustada
+      # pelo primeiro CI verde.
       - name: Dependencias de sistema (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libx11-dev libx11-xcb-dev libxkbcommon-dev libwayland-dev
+            pkg-config libx11-dev libx11-xcb-dev libxkbcommon-dev libwayland-dev \n            libfontconfig-dev libfreetype-dev libxkbcommon-x11-dev libxcb1-dev libvulkan-dev
 
       - uses: Swatinem/rust-cache@v2
 

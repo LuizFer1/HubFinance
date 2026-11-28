@@ -8,6 +8,7 @@ mod assistant;
 mod config;
 mod dashboard;
 mod desktop;
+mod gui;
 mod hub;
 mod logging;
 mod pairing;
@@ -17,7 +18,7 @@ mod store;
 mod tls;
 mod ui;
 
-fn main() -> iced::Result {
+fn main() -> std::process::ExitCode {
     // Lido antes de criar qualquer thread: em Unix o `time` so le o fuso com um unico thread
     // vivo. Sem ele, a janela e o arquivo de log mostram horas em UTC.
     let offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
@@ -33,7 +34,7 @@ fn main() -> iced::Result {
     // E o que faz "desligar a opcao" valer mesmo com um valor `Run` esquecido.
     let mode = desktop::args::boot_mode(launch, desktop::autostart::is_enabled());
     if mode == desktop::args::BootMode::Exit {
-        return Ok(());
+        return std::process::ExitCode::SUCCESS;
     }
     // Depois do config porque o arquivo mora no `data_dir`; antes de tudo o mais para que
     // qualquer aviso do boot ja caia no arquivo.
@@ -47,7 +48,7 @@ fn main() -> iced::Result {
             if !launch.autostart {
                 desktop::instance::notify_running(&config.data_dir);
             }
-            return Ok(());
+            return std::process::ExitCode::SUCCESS;
         }
         Err(err) => {
             // Sem a garantia de instancia unica o hub ainda funciona; so avisa.
@@ -95,7 +96,20 @@ fn main() -> iced::Result {
     let (handle, _nucleo) = hub::start(config, secrets);
     // `instance` (mutex e evento) vive ate o fim de `main`, e o kernel so solta os handles
     // quando o processo acaba: a segunda execucao so passa depois disso.
-    ui::run(
+    // So durante a migracao (spec 2026-11-28): a Tarefa 39a apaga a escolha e a iced.
+    if std::env::var_os("HUBFINANCE_UI").is_some_and(|v| v == "gpui") {
+        gui::run(
+            handle,
+            offset,
+            prefs,
+            prefs_dir,
+            desktop,
+            events_rx,
+            open_window,
+        );
+        return std::process::ExitCode::SUCCESS;
+    }
+    match ui::run(
         handle,
         offset,
         prefs,
@@ -103,5 +117,11 @@ fn main() -> iced::Result {
         desktop,
         events_rx,
         open_window,
-    )
+    ) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            tracing::error!("iced: {err}");
+            std::process::ExitCode::FAILURE
+        }
+    }
 }

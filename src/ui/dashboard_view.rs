@@ -733,7 +733,7 @@ fn pace_panel(app: &App) -> Element<'_, Message> {
                 chart: p,
                 today: app.dashboard.is_current,
                 tokens: t,
-                cache: &app.pace_cache,
+                cache: &app.iced.pace_cache,
             })
             .width(Length::Fill)
             .height(PACE_HEIGHT)
@@ -960,7 +960,7 @@ fn history_body(app: &App) -> Element<'_, Message> {
                 canvas(HistoryProgram {
                     chart,
                     tokens: t,
-                    cache: &app.history_cache,
+                    cache: &app.iced.history_cache,
                 })
                 .width(Length::Fill)
                 .height(HISTORY_HEIGHT),
@@ -1638,7 +1638,7 @@ fn empty_card(app: &App) -> Element<'_, Message> {
     };
     let sketch = canvas(EmptyChartProgram {
         tokens: t,
-        cache: &app.empty_cache,
+        cache: &app.iced.empty_cache,
     })
     .width(EMPTY_WIDTH)
     .height(EMPTY_HEIGHT);

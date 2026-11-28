@@ -236,7 +236,7 @@ fn author_chips(app: &App) -> Vec<Element<'_, Message>> {
         Message::AllAuthors,
     )];
     for author in &v.authors {
-        let photo = app.user_avatars.get(&author.id).map(|a| &a.handle);
+        let photo = app.iced.user_avatars.get(&author.id);
         let content: Element<'static, Message> = row![
             widgets::avatar(t, &author.name, Some(&author.color), photo, 24.0),
             text(author.name.clone()).size(13),
@@ -682,7 +682,7 @@ mod tests {
         let (mut app, _rx, _tx) = crate::ui::app::tests::app_with_fixtures(dir.path());
         app.screen = crate::ui::app::Screen::Transactions;
         for width in [1024.0, 1100.0, 1440.0] {
-            app.window_size.width = width;
+            app.window_size.w = width;
             let _ = view(&app);
         }
     }

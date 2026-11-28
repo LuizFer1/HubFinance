@@ -962,11 +962,11 @@ pub(super) fn consent_dialog(app: &App) -> Option<Element<'_, Message>> {
         .spacing(8)
         .align_y(Alignment::Center),
     );
-    let height = (app.window_size.height - 96.0).clamp(240.0, 600.0);
+    let height = (app.window_size.h - 96.0).clamp(240.0, 600.0);
     Some(widgets::dialog(
         t,
         col,
-        app.window_size.width,
+        app.window_size.w,
         640.0,
         Some(height),
         Message::ClosePreview,
@@ -1072,7 +1072,7 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
     .padding(4);
     let close = widgets::action_button(t, ButtonKind::Secondary, ButtonSize::Regular, "Fechar")
         .on_press(Message::CloseEnvelope);
-    let height = (app.window_size.height - 96.0).clamp(240.0, 640.0);
+    let height = (app.window_size.h - 96.0).clamp(240.0, 640.0);
     Some(widgets::dialog(
         t,
         column![
@@ -1083,7 +1083,7 @@ pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
         ]
         .spacing(12)
         .height(Length::Fill),
-        app.window_size.width,
+        app.window_size.w,
         720.0,
         Some(height),
         Message::CloseEnvelope,
@@ -1261,7 +1261,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
         let _ = update(&mut app, Message::SelectScreen(Screen::Analysis));
-        app.window_size.width = 1024.0;
+        app.window_size.w = 1024.0;
         assert_eq!(shell::content_width(&app), 728.0);
         assert!(!two_panels(shell::content_width(&app)));
         assert_eq!(app.analysis_tab, AnalysisTab::Findings);
@@ -1273,7 +1273,7 @@ mod tests {
         // Abrir uma conversa leva ao painel da conversa.
         let _ = update(&mut app, Message::OpenConversation("C1".into()));
         assert_eq!(app.analysis_tab, AnalysisTab::Chat);
-        app.window_size.width = 1440.0;
+        app.window_size.w = 1440.0;
         assert!(two_panels(shell::content_width(&app)));
         let _ = shell::root(&app);
     }

@@ -285,7 +285,7 @@ fn users_card(app: &App) -> Element<'_, Message> {
 
 fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<'a, Message> {
     let t = app.tokens;
-    let photo = app.avatars.get(&person.device_id).map(|a| &a.handle);
+    let photo = app.iced.avatars.get(&person.device_id);
     let avatar = widgets::avatar(
         t,
         &person.display_name,
@@ -416,9 +416,9 @@ pub(super) fn connect_dialog(app: &App) -> Option<Element<'_, Message>> {
     Some(widgets::dialog(
         app.tokens,
         flow_body(app, flow, true),
-        app.window_size.width,
+        app.window_size.w,
         FLOW_WIDTH,
-        Some(dialog_height(app.window_size.height)),
+        Some(dialog_height(app.window_size.h)),
         Message::ConnectClose,
         app.motion.scrim(),
     ))
@@ -659,7 +659,7 @@ fn pairing_block(app: &App) -> Element<'_, Message> {
         return col.push(frame(warning, 15.0)).into();
     }
 
-    match (&snap.pairing, &app.qr) {
+    match (&snap.pairing, &app.iced.qr) {
         (Some(pairing), Some(qr)) if pairing.expires_at > now && is_up(snap) => {
             let left = pairing
                 .expires_at
@@ -837,7 +837,7 @@ mod tests {
             app.snapshot.devices = devices;
             app.refresh_people();
             for width in [1024.0, 1440.0, 2560.0] {
-                app.window_size.width = width;
+                app.window_size.w = width;
                 let _ = view(&app);
                 for step in [
                     ConnectStep::WiFi,
@@ -872,7 +872,7 @@ mod tests {
                 qr_url: "http://192.168.0.12:7778/p/ABC123".into(),
             });
             let _ = super::super::app::update(&mut app, Message::Snapshot(Box::new(snap)));
-            assert!(app.qr.is_some());
+            assert!(app.iced.qr.is_some());
             app.connect = Some(ConnectFlow {
                 step: ConnectStep::Pair,
                 ..ConnectFlow::new(!app.snapshot.devices.is_empty())

@@ -7,14 +7,15 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use iced::widget::{canvas, image, qr_code};
-use iced::{Element, Size, Subscription, Task, window};
+use iced::widget::{image, qr_code};
+use iced::{Element, Subscription, Task, window};
 use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
 use tokio::sync::watch;
 
 use super::connection_view;
 use super::effects;
+use super::iced_side::{IcedSide, model_id};
 use super::theme::Tokens;
 use crate::assistant::secret::Secret;
 use crate::assistant::settings::ProviderChoice;
@@ -34,6 +35,8 @@ use crate::store::erase::{Area, AreaSet};
 use crate::ui_model::assistant_setup::SetupStep;
 use crate::ui_model::connect::{self, ConnectFlow, ConnectStep, PhoneOs, is_up};
 use crate::ui_model::effect::Effect;
+use crate::ui_model::motion::{self, Motion, Scene, ShownToast};
+use crate::ui_model::window::{ResizeEdge, Size, WindowId};
 
 /// Quanto tempo "Copiado" fica no botao, como no prototipo.
 pub const COPIED_FOR: Duration = Duration::from_millis(1600);
@@ -138,10 +141,12 @@ pub enum AnalysisTab {
     Chat,
 }
 
-/// Foto decodificada e o data URI de onde veio: so decodifica de novo quando o URI muda.
+/// Foto decodificada e o data URI de onde veio: so decodifica de novo quando o URI muda. A
+/// textura do toolkit mora em `IcedSide`, com a mesma chave.
 pub struct Avatar {
     pub uri: String,
-    pub handle: image::Handle,
+    #[allow(dead_code)] // usado na Tarefa 6: a GPUI decodifica a foto a partir dos bytes
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -172,14 +177,15 @@ impl Screen {
 pub struct App {
     pub(super) handle: HubHandle,
     pub(super) snapshot: Snapshot,
-    /// Reconstruido so quando o token muda: gerar a matriz a cada quadro e desperdicio.
-    pub(super) qr: Option<qr_code::Data>,
+    /// Tudo o que e tipo do iced (QR, caches de grafico, tema, texturas, ids de janela). A
+    /// Tarefa 6 tira daqui.
+    pub(super) iced: IcedSide,
     pub(super) closing: bool,
     /// Fuso local lido uma vez no `main`, antes de existirem outras threads.
     pub(super) offset: UtcOffset,
     /// `None` enquanto nao ha janela (boot por `--autostart`, ou fechada); sem ela os botoes
     /// da barra nao fazem nada (e o `warn!` sai uma vez so).
-    pub(super) window: Option<window::Id>,
+    pub(super) window: Option<WindowId>,
     pub(super) warned_no_window: bool,
     /// Maximizada, a moldura de redimensionar some: borda de janela maximizada nao arrasta.
     pub(super) maximized: bool,
@@ -193,13 +199,10 @@ pub struct App {
     /// o padrao do design, quando o sistema nao diz) e segue as trocas avisadas.
     pub(super) system_dark: bool,
     pub(super) tokens: &'static Tokens,
-    /// `Theme::custom` gera a paleta estendida a cada chamada; guardado para nao refazer isso
-    /// a cada quadro.
-    pub(super) iced_theme: iced::Theme,
     pub(super) screen: Screen,
     /// Onde fica o `ui.json` (o diretorio de dados do hub).
     pub(super) prefs_dir: PathBuf,
-    /// Largura da janela: o iced nao tem `auto-fit`, entao a tela decide colunas por ela.
+    /// Tamanho da janela: o toolkit nao tem `auto-fit`, entao a tela decide colunas por ele.
     pub(super) window_size: Size,
     /// Linhas de "Usuarios conectados", recalculadas so quando aparelhos ou dataset mudam.
     pub(super) people: Vec<Person>,
@@ -248,14 +251,6 @@ pub struct App {
     pub(super) envelope_preview: Option<String>,
     /// Menu de categoria da tela Lancamentos aberto.
     pub(super) cat_menu_open: bool,
-    /// Geometria dos graficos; limpa quando dados, mes, tema ou "Ocultar valores" mudam (os
-    /// rotulos em R$ ficam gravados nela).
-    pub(super) pace_cache: canvas::Cache,
-    pub(super) history_cache: canvas::Cache,
-    pub(super) empty_cache: canvas::Cache,
-    /// Grafico empilhado e esqueleto vazio da tela Reservas.
-    pub(super) reserves_cache: canvas::Cache,
-    pub(super) reserves_empty_cache: canvas::Cache,
     /// `user_id` -> foto, para as linhas e os chips de autor (`avatars` e por aparelho).
     pub(super) user_avatars: HashMap<String, Avatar>,
     /// `open::that_detached` falhou: a linha da versao mostra a URL com "Copiar".
@@ -268,7 +263,7 @@ pub struct App {
     /// Ultimo desenho mandado ao icone da bandeja; nasce `Normal`, que e o do `install`.
     pub(super) tray_icon: crate::desktop::tray::TrayIcon,
     /// As tres animacoes (scrim, toast, cursor) e o "Reduzir movimento".
-    pub(super) motion: super::motion::Motion,
+    pub(super) motion: Motion,
     /// "Iniciar com o Windows" como o sistema diz (cache do registro, lido no boot e depois de
     /// cada troca); `None` = sistema sem a opcao, e a secao some de Ajustes.
     pub(super) autostart: Option<bool>,
@@ -358,9 +353,9 @@ pub enum Message {
     CloseRequested,
     ForceExit,
     /// `window::open` respondeu: a janela existe e pode ser consultada.
-    WindowOpened(window::Id),
+    WindowOpened(WindowId),
     /// O iced fechou a janela (`close_events`): o id morreu com ela.
-    WindowClosed(window::Id),
+    WindowClosed(WindowId),
     /// Bandeja, menu ou segunda execucao: abrir a janela (ou traze-la) e "Desligar o hub", o
     /// unico caminho que encerra o processo quando ha bandeja.
     Desktop(DesktopEvent),
@@ -373,14 +368,14 @@ pub enum Message {
     /// A janela mudou de tamanho (arrasto, Win+seta, encaixe): guarda a largura e reconsulta
     /// se esta maximizada.
     Resized(Size),
-    Resize(window::Direction),
+    Resize(ResizeEdge),
     SelectScreen(Screen),
     SetTheme(ThemeMode),
     /// "Configurar" do assistente (Ajustes e o painel da Analise): abre o dialogo em passos.
     ConfigureAssistant,
     /// O sistema trocou entre escuro e claro (`system::theme_changes`), ou respondeu a
     /// consulta do boot (`system::theme`).
-    SystemTheme(iced::theme::Mode),
+    SystemTheme(bool),
     /// "Iniciar com o Windows" de Ajustes.
     SetAutostart(bool),
     Copy(CopyTarget),
@@ -494,7 +489,7 @@ impl App {
         let mut app = App {
             handle,
             snapshot,
-            qr: None,
+            iced: IcedSide::new(tokens),
             closing: false,
             offset,
             window: None,
@@ -504,7 +499,6 @@ impl App {
             theme: prefs.theme,
             system_dark,
             tokens,
-            iced_theme: tokens.iced_theme(),
             screen: Screen::default(),
             prefs_dir,
             window_size: INITIAL_SIZE,
@@ -528,11 +522,6 @@ impl App {
             analysis: crate::advisor::Analysis::default(),
             envelope_preview: None,
             cat_menu_open: false,
-            pace_cache: canvas::Cache::new(),
-            history_cache: canvas::Cache::new(),
-            empty_cache: canvas::Cache::new(),
-            reserves_cache: canvas::Cache::new(),
-            reserves_empty_cache: canvas::Cache::new(),
             user_avatars: HashMap::new(),
             releases_open_failed: false,
             autostart: desktop.autostart(),
@@ -555,7 +544,7 @@ impl App {
             desktop,
             tooltip: String::new(),
             tray_icon: crate::desktop::tray::TrayIcon::Normal,
-            motion: super::motion::Motion::new(prefs.reduce_motion, Instant::now()),
+            motion: Motion::new(prefs.reduce_motion, Instant::now()),
         };
         app.refresh_people();
         app.sync_tray();
@@ -621,8 +610,7 @@ impl App {
 
     /// O que as animacoes olham: dialogo, toast (o "Desfazer" ganha do aviso, como na tela) e
     /// resposta chegando com a Analise na tela.
-    fn scene(&self) -> super::motion::Scene {
-        use super::motion::ShownToast;
+    fn scene(&self) -> Scene {
         let toast = match (&self.pending_removal, &self.notice) {
             (Some(pending), _) => Some(ShownToast {
                 text: pending.toast.clone(),
@@ -635,7 +623,7 @@ impl App {
             (None, None) => None,
         };
         let assistant = &self.snapshot.assistant;
-        super::motion::Scene {
+        Scene {
             dialog: self.any_dialog_open(),
             toast,
             streaming: self.screen == Screen::Analysis
@@ -854,24 +842,18 @@ impl App {
 
     /// Fotos dos perfis vivos, decodificadas so quando o data URI muda.
     fn refresh_user_avatars(&mut self) {
-        let mut avatars = HashMap::new();
-        for user in self.snapshot.dashboard.alive_users() {
-            let Some(uri) = &user.avatar else {
-                continue;
-            };
-            let avatar = match self.user_avatars.remove(&user.id) {
-                Some(old) if &old.uri == uri => old,
-                _ => match avatar_bytes(uri) {
-                    Some(bytes) => Avatar {
-                        uri: uri.clone(),
-                        handle: image::Handle::from_bytes(bytes),
-                    },
-                    None => continue,
-                },
-            };
-            avatars.insert(user.id.clone(), avatar);
-        }
-        self.user_avatars = avatars;
+        let wanted: Vec<(String, String)> = self
+            .snapshot
+            .dashboard
+            .alive_users()
+            .into_iter()
+            .filter_map(|user| Some((user.id.clone(), user.avatar.clone()?)))
+            .collect();
+        self.user_avatars = sync_avatars(
+            std::mem::take(&mut self.user_avatars),
+            &mut self.iced.user_avatars,
+            wanted,
+        );
     }
 
     /// Refaz os tokens a partir da preferencia e do sistema. So mexe no que se desenha (nunca
@@ -882,7 +864,7 @@ impl App {
             return;
         }
         self.tokens = tokens;
-        self.iced_theme = tokens.iced_theme();
+        self.iced.iced_theme = tokens.iced_theme();
         // As cores dos graficos estao gravadas na geometria em cache.
         self.clear_charts();
     }
@@ -894,11 +876,7 @@ impl App {
     }
 
     fn clear_charts(&self) {
-        self.pace_cache.clear();
-        self.history_cache.clear();
-        self.empty_cache.clear();
-        self.reserves_cache.clear();
-        self.reserves_empty_cache.clear();
+        self.iced.clear_charts();
     }
 
     /// Pessoas e fotos a partir do snapshot atual. A foto so e decodificada de novo quando o
@@ -906,24 +884,16 @@ impl App {
     pub(super) fn refresh_people(&mut self) {
         let infos: Vec<DeviceInfo> = self.snapshot.devices.iter().map(DeviceInfo::from).collect();
         self.people = people(&self.snapshot.dashboard, &infos);
-        let mut avatars = HashMap::new();
-        for person in &self.people {
-            let Some(uri) = &person.avatar_uri else {
-                continue;
-            };
-            let avatar = match self.avatars.remove(&person.device_id) {
-                Some(old) if &old.uri == uri => old,
-                _ => match avatar_bytes(uri) {
-                    Some(bytes) => Avatar {
-                        uri: uri.clone(),
-                        handle: image::Handle::from_bytes(bytes),
-                    },
-                    None => continue,
-                },
-            };
-            avatars.insert(person.device_id.clone(), avatar);
-        }
-        self.avatars = avatars;
+        let wanted: Vec<(String, String)> = self
+            .people
+            .iter()
+            .filter_map(|p| Some((p.device_id.clone(), p.avatar_uri.clone()?)))
+            .collect();
+        self.avatars = sync_avatars(
+            std::mem::take(&mut self.avatars),
+            &mut self.iced.avatars,
+            wanted,
+        );
     }
 
     /// Pessoas que a tela mostra: sem a da remocao pendente (ela some na hora, como no design).
@@ -1039,7 +1009,7 @@ pub fn boot(
             tasks.push(Task::run(events, Message::Desktop));
         }
         // Fora do Windows o registro nao responde: o tema do sistema vem do iced.
-        tasks.push(iced::system::theme().map(Message::SystemTheme));
+        tasks.push(iced::system::theme().map(system_theme));
         // Nucleo que ja falhou antes do boot (porta ocupada responde em milissegundos): o
         // primeiro `Snapshot` nao seria uma transicao para `Failed`, e um boot so com o icone
         // esconderia o erro.
@@ -1091,7 +1061,7 @@ fn snapshot_stream(rx: watch::Receiver<Snapshot>) -> impl futures::Stream<Item =
 pub fn update(app: &mut App, message: Message) -> Task<Message> {
     let effects = match message {
         // So da iced: o arrastar da borda e do sistema de janelas dela, nao e um `Effect`.
-        Message::Resize(direction) => return effects::resize(app, direction),
+        Message::Resize(edge) => return effects::resize(app, edge),
         message => step(app, message),
     };
     // Convertido na hora (e em ordem): `OpenWindow` guarda o id da janela no estado.
@@ -1127,7 +1097,7 @@ fn handle(app: &mut App, message: Message) -> Vec<Effect<Message>> {
             let new_token = s.pairing.as_ref().map(|p| &p.token);
             let old_token = app.snapshot.pairing.as_ref().map(|p| &p.token);
             if new_token != old_token {
-                app.qr = s
+                app.iced.qr = s
                     .pairing
                     .as_ref()
                     .and_then(|p| qr_code::Data::new(&p.qr_url).ok());
@@ -1333,6 +1303,7 @@ fn handle(app: &mut App, message: Message) -> Vec<Effect<Message>> {
         Message::WindowClosed(id) => {
             if app.window == Some(id) {
                 app.window = None;
+                app.iced.forget(id);
                 app.maximized = false;
                 app.window_size = INITIAL_SIZE;
                 // A geometria em cache pertence ao compositor, que morreu com a janela.
@@ -1520,19 +1491,14 @@ fn handle(app: &mut App, message: Message) -> Vec<Effect<Message>> {
             app.apply_theme();
             vec![Effect::SavePrefs(app.prefs())]
         }
-        Message::SystemTheme(mode) => {
+        Message::SystemTheme(dark) => {
             // Onde o registro responde (Windows), so ele manda: o aviso do winit la chega
             // atrasado ou com o valor anterior (ver `desktop::appearance`), e aceita-lo fazia
             // o tema piscar entre o velho e o novo, sobretudo com alto contraste.
             if app.desktop.system_dark().is_some() {
                 return vec![];
             }
-            // `None` = o sistema nao tem preferencia: fica o ultimo valor conhecido.
-            match mode {
-                iced::theme::Mode::Dark => app.set_system_dark(true),
-                iced::theme::Mode::Light => app.set_system_dark(false),
-                iced::theme::Mode::None => {}
-            }
+            app.set_system_dark(dark);
             vec![]
         }
         Message::SetAutostart(enabled) => {
@@ -2177,7 +2143,7 @@ fn blinks() -> futures::channel::mpsc::Receiver<Instant> {
         let mut k: u32 = 0;
         loop {
             k = k.saturating_add(1);
-            let deadline = start + super::motion::BLINK * k;
+            let deadline = start + motion::BLINK * k;
             std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
             // Cheio = a UI ainda nao consumiu o anterior; pular um nao importa. Desconectado =
             // a assinatura saiu (a resposta terminou): a thread acaba.
@@ -2194,11 +2160,12 @@ fn blinks() -> futures::channel::mpsc::Receiver<Instant> {
 pub fn subscription(app: &App) -> Subscription<Message> {
     let mut subs = vec![
         window::close_requests().map(|_| Message::CloseRequested),
-        window::close_events().map(Message::WindowClosed),
-        window::resize_events().map(|(_, size)| Message::Resized(size)),
+        window::close_events().map(|id| Message::WindowClosed(model_id(id))),
+        window::resize_events()
+            .map(|(_, size)| Message::Resized(Size::new(size.width, size.height))),
         Subscription::run(ticks).map(|()| Message::Tick),
         super::keys::subscription(),
-        iced::system::theme_changes().map(Message::SystemTheme),
+        iced::system::theme_changes().map(system_theme),
     ];
     // Quadros so enquanto algo anda: ligado o tempo todo, a janela redesenharia a 60 por
     // segundo parada.
@@ -2217,6 +2184,47 @@ pub fn subscription(app: &App) -> Subscription<Message> {
 /// acordaria o laco de eventos a toda piscada durante uma resposta inteira.
 fn blink_running(app: &App) -> bool {
     app.motion.blinking() && app.window.is_some()
+}
+
+/// O aviso de tema do iced como mensagem. `Mode::None` = o sistema nao tem preferencia: fica o
+/// ultimo valor conhecido, entao nao vira mensagem de tema.
+fn system_theme(mode: iced::theme::Mode) -> Message {
+    match mode {
+        iced::theme::Mode::Dark => Message::SystemTheme(true),
+        iced::theme::Mode::Light => Message::SystemTheme(false),
+        iced::theme::Mode::None => Message::Noop,
+    }
+}
+
+/// Fotos de um conjunto (aparelhos ou perfis) a partir dos pares `(chave, data URI)`: reaproveita
+/// foto e textura quando o URI nao mudou, e so decodifica o que e novo ou trocou. Chave que saiu
+/// do conjunto perde a textura junto.
+fn sync_avatars(
+    mut old: HashMap<String, Avatar>,
+    handles: &mut HashMap<String, image::Handle>,
+    wanted: Vec<(String, String)>,
+) -> HashMap<String, Avatar> {
+    let mut avatars = HashMap::new();
+    let mut kept = HashMap::new();
+    for (key, uri) in wanted {
+        match old.remove(&key) {
+            Some(prev) if prev.uri == uri && handles.contains_key(&key) => {
+                if let Some(handle) = handles.remove(&key) {
+                    kept.insert(key.clone(), handle);
+                }
+                avatars.insert(key, prev);
+            }
+            _ => {
+                let Some(bytes) = avatar_bytes(&uri) else {
+                    continue;
+                };
+                kept.insert(key.clone(), image::Handle::from_bytes(bytes.clone()));
+                avatars.insert(key, Avatar { uri, bytes });
+            }
+        }
+    }
+    *handles = kept;
+    avatars
 }
 
 pub fn view(app: &App, window: window::Id) -> Element<'_, Message> {
@@ -2281,7 +2289,7 @@ pub(super) mod tests {
         let fake = Rc::new(Fake::with_tray());
         let (mut app, rx, _tx) =
             app_with_desktop(Snapshot::default(), dir.to_path_buf(), fake.clone());
-        app.window = Some(window::Id::unique());
+        app.window = Some(app.iced.register(window::Id::unique()));
         (app, fake, rx)
     }
 
@@ -2355,15 +2363,12 @@ pub(super) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with_fixtures(dir.path());
         // Com janela: sem ela as animacoes terminam na hora.
-        app.window = Some(window::Id::unique());
+        app.window = Some(app.iced.register(window::Id::unique()));
         assert!(!app.motion.animating(), "parada, sem quadros");
         let _ = update(&mut app, Message::ShowEnvelope);
         assert!(app.any_dialog_open());
         assert!(app.motion.animating());
-        let _ = update(
-            &mut app,
-            Message::Frame(Instant::now() + super::super::motion::SCRIM_IN),
-        );
+        let _ = update(&mut app, Message::Frame(Instant::now() + motion::SCRIM_IN));
         assert!(!app.motion.animating());
         assert_eq!(app.motion.scrim(), 1.0);
     }
@@ -2563,13 +2568,13 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::Tick);
         assert!(std::ptr::eq(app.tokens, &super::super::theme::DARK));
         // Com o registro respondendo, o aviso do iced e ignorado: ele chega velho no Windows.
-        let _ = update(&mut app, Message::SystemTheme(iced::theme::Mode::Light));
+        let _ = update(&mut app, Message::SystemTheme(false));
         assert!(std::ptr::eq(app.tokens, &super::super::theme::DARK));
         // Sem registro (Linux), o aviso do iced troca; `None` nao mexe.
         fake.system_dark.set(None);
-        let _ = update(&mut app, Message::SystemTheme(iced::theme::Mode::Light));
+        let _ = update(&mut app, Message::SystemTheme(false));
         assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
-        let _ = update(&mut app, Message::SystemTheme(iced::theme::Mode::None));
+        let _ = update(&mut app, system_theme(iced::theme::Mode::None));
         let _ = update(&mut app, Message::Tick);
         assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
         assert_eq!(UiPrefs::load(dir.path()).theme, ThemeMode::System);
@@ -2582,7 +2587,7 @@ pub(super) mod tests {
         fake.system_dark.set(Some(false));
         assert_eq!(app.theme, ThemeMode::Dark);
         let _ = update(&mut app, Message::Tick);
-        let _ = update(&mut app, Message::SystemTheme(iced::theme::Mode::Light));
+        let _ = update(&mut app, Message::SystemTheme(false));
         assert!(std::ptr::eq(app.tokens, &super::super::theme::DARK));
         // Voltar a "Sistema" usa o que o sistema disse por ultimo.
         let _ = update(&mut app, Message::SetTheme(ThemeMode::System));
@@ -3825,7 +3830,10 @@ pub(super) mod tests {
         );
         // A janela so some quando o iced confirma (`close_events`).
         assert_eq!(app.window, Some(id));
-        let _ = update(&mut app, Message::WindowClosed(window::Id::unique()));
+        let _ = update(
+            &mut app,
+            Message::WindowClosed(model_id(window::Id::unique())),
+        );
         assert_eq!(app.window, Some(id), "outra janela nao e a nossa");
         app.maximized = true;
         app.window_size = Size::new(800.0, 600.0);
@@ -3847,7 +3855,7 @@ pub(super) mod tests {
             dir.path().to_path_buf(),
             fake,
         );
-        app.window = Some(window::Id::unique());
+        app.window = Some(app.iced.register(window::Id::unique()));
         let _ = update(&mut app, Message::AskRemove("D1".into()));
         let _ = update(&mut app, Message::ConfirmRemove);
         assert!(app.pending_removal.is_some());
@@ -5999,7 +6007,7 @@ pub(super) mod tests {
             dir.path().to_path_buf(),
             fake,
         );
-        app.window = Some(window::Id::unique());
+        app.window = Some(app.iced.register(window::Id::unique()));
         let _ = update(&mut app, Message::AskRemove("D1".into()));
         let _ = update(&mut app, Message::ShowEnvelope);
         app.preview_after = Some(Some("C1".into()));
@@ -6019,7 +6027,7 @@ pub(super) mod tests {
         let (mut app, _fake, _rx) = with_tray(dir.path());
         assert!(!blink_running(&app), "sem resposta chegando nao ha piscada");
         app.motion.sync(
-            super::super::motion::Scene {
+            Scene {
                 streaming: true,
                 ..Default::default()
             },

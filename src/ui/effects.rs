@@ -9,19 +9,21 @@ use std::time::Duration;
 use iced::{Task, window};
 
 use super::app::{App, Message};
+use super::iced_side::model_id;
 use super::shell::CONTENT_SCROLL;
 use crate::config::UiPrefs;
 use crate::ui_model::effect::Effect;
+use crate::ui_model::window::ResizeEdge;
 
 pub(super) fn task(effect: Effect<Message>, app: &mut App) -> Task<Message> {
     match effect {
         Effect::OpenWindow => {
             let (id, task) = window::open(super::window_settings());
             // O id vai ao estado na hora: os botoes da barra de titulo nao esperam o `WindowOpened`.
-            app.window = Some(id);
-            task.map(Message::WindowOpened)
+            app.window = Some(app.iced.register(id));
+            task.map(|id| Message::WindowOpened(model_id(id)))
         }
-        Effect::FocusWindow => match app.window {
+        Effect::FocusWindow => match iced_window(app) {
             // Clique na bandeja e segunda execucao dao ao processo o direito de foco; se o
             // Windows recusar, o botao da barra de tarefas pisca.
             Some(id) => Task::batch([window::minimize(id, false), window::gain_focus(id)]),
@@ -78,8 +80,23 @@ pub(super) fn task(effect: Effect<Message>, app: &mut App) -> Task<Message> {
 
 /// Arrastar a borda para redimensionar e coisa so do iced (o GPUI usa o teste de posicao do
 /// sistema), por isso nao e um `Effect`; some com a iced.
-pub(super) fn resize(app: &mut App, direction: window::Direction) -> Task<Message> {
+pub(super) fn resize(app: &mut App, edge: ResizeEdge) -> Task<Message> {
+    let direction = match edge {
+        ResizeEdge::North => window::Direction::North,
+        ResizeEdge::South => window::Direction::South,
+        ResizeEdge::East => window::Direction::East,
+        ResizeEdge::West => window::Direction::West,
+        ResizeEdge::NorthEast => window::Direction::NorthEast,
+        ResizeEdge::NorthWest => window::Direction::NorthWest,
+        ResizeEdge::SouthEast => window::Direction::SouthEast,
+        ResizeEdge::SouthWest => window::Direction::SouthWest,
+    };
     with_window(app, |id| window::drag_resize(id, direction))
+}
+
+/// O id do iced da janela atual, pelo mapa do adaptador.
+fn iced_window(app: &App) -> Option<window::Id> {
+    app.window.and_then(|id| app.iced.iced_id(id))
 }
 
 /// Grava o `ui.json` fora da thread da UI (disco lento nao trava a janela). Falha so vira
@@ -128,7 +145,7 @@ fn delay(duration: Duration) -> futures::channel::oneshot::Receiver<()> {
 
 /// Acao sobre a janela; sem id ainda, nada (com um aviso so, para nao inundar o log).
 fn with_window(app: &mut App, action: impl FnOnce(window::Id) -> Task<Message>) -> Task<Message> {
-    match app.window {
+    match iced_window(app) {
         Some(id) => action(id),
         None => {
             if !app.warned_no_window {

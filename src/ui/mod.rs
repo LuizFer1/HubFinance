@@ -8,9 +8,9 @@ mod connection_view;
 mod dashboard_view;
 mod effects;
 mod fonts;
+mod iced_side;
 mod icons;
 mod keys;
-mod motion;
 mod remove_view;
 mod reserves_view;
 mod rows;
@@ -64,14 +64,14 @@ pub fn run(
     .font(fonts::PHOSPHOR_BYTES)
     .default_font(fonts::INTER)
     .antialiasing(true)
-    .theme(|app: &app::App, _window: window::Id| app.iced_theme.clone())
+    .theme(|app: &app::App, _window: window::Id| app.iced.iced_theme.clone())
     .run()
 }
 
 /// Usado por `window::open` toda vez que a janela e (re)aberta.
 pub(super) fn window_settings() -> window::Settings {
     window::Settings {
-        size: app::INITIAL_SIZE,
+        size: Size::new(app::INITIAL_SIZE.w, app::INITIAL_SIZE.h),
         min_size: Some(Size::new(1024.0, 720.0)),
         // Barra de titulo propria (shell.rs), como o design desenha.
         decorations: false,

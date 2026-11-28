@@ -41,7 +41,7 @@ pub(super) fn author_cell_of<'a>(
                 t,
                 &author.name,
                 Some(&author.color),
-                app.user_avatars.get(&author.id).map(|a| &a.handle),
+                app.iced.user_avatars.get(&author.id),
                 22.0,
             ),
             author.name.clone(),

@@ -39,7 +39,7 @@ fn subject<'a>(app: &'a App, device_id: &str) -> Option<Subject<'a>> {
             name: person.display_name.clone(),
             device_name: person.device_name.clone(),
             color: person.color.as_deref(),
-            photo: app.avatars.get(device_id).map(|a| &a.handle),
+            photo: app.iced.avatars.get(device_id),
             device,
         });
     }
@@ -126,7 +126,7 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
             buttons
         ]
         .width(Length::Fill),
-        app.window_size.width,
+        app.window_size.w,
         460.0,
         None,
         Message::CancelRemove,

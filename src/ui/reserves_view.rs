@@ -784,7 +784,7 @@ fn evolution_card(app: &App) -> Element<'_, Message> {
             month_totals: &v.month_totals,
             current: v.months.len().saturating_sub(1),
             tokens: t,
-            cache: &app.reserves_cache,
+            cache: &app.iced.reserves_cache,
         })
         .width(Length::Fill)
         .height(EVOLUTION_HEIGHT)
@@ -925,7 +925,7 @@ fn empty_card(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
     let sketch = canvas(EmptyReservesProgram {
         tokens: t,
-        cache: &app.reserves_empty_cache,
+        cache: &app.iced.reserves_empty_cache,
     })
     .width(EMPTY_RESERVES_WIDTH)
     .height(EMPTY_RESERVES_HEIGHT);
@@ -1025,9 +1025,9 @@ mod tests {
         assert!(!app.reserves.is_empty);
         let _ = view(&app);
         // Janela estreita: KPIs em 2 + 1, cards empilhados, legenda numa coluna.
-        app.window_size = iced::Size::new(1024.0, 720.0);
+        app.window_size = crate::ui_model::window::Size::new(1024.0, 720.0);
         let _ = view(&app);
-        app.window_size = iced::Size::new(600.0, 720.0);
+        app.window_size = crate::ui_model::window::Size::new(600.0, 720.0);
         let _ = view(&app);
     }
 
@@ -1046,7 +1046,7 @@ mod tests {
             });
         }
         let _ = view(&app);
-        app.window_size = iced::Size::new(600.0, 720.0);
+        app.window_size = crate::ui_model::window::Size::new(600.0, 720.0);
         let _ = view(&app);
     }
 

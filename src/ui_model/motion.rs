@@ -1,18 +1,16 @@
 //! As tres animacoes da janela (spec 11): o scrim do dialogo entrando, o toast entrando e
-//! saindo, e o cursor da resposta que chega. O iced nao tem transicao implicita; cada uma e uma
-//! `iced::Animation` que a `view` interpola contra `now`. O scrim e o toast ligam o
-//! `window::frames()` so enquanto andam (`Motion::animating`); o cursor nao usa quadros: a
-//! resposta pode levar minutos, e quadros na taxa da tela a toda hora seria redesenhar 60 vezes
-//! por segundo para trocar um caractere duas. Ele tem um relogio proprio, um `Frame` a cada
-//! `BLINK` (`Motion::blinking`, `app::blinks`). Fora disso a janela nao redesenha a toa.
+//! saindo, e o cursor da resposta que chega. Puro: cada animacao e uma interpolacao sobre
+//! `(inicio, agora)`, sem relogio nem toolkit, e quem desenha le `Motion` com o `now` que o
+//! `update` ou o quadro deixou. O scrim e o toast ligam os quadros so enquanto andam
+//! (`Motion::animating`); o cursor nao usa quadros: a resposta pode levar minutos, e quadros na
+//! taxa da tela a toda hora seria redesenhar 60 vezes por segundo para trocar um caractere duas.
+//! Ele tem um relogio proprio, um `Frame` a cada `BLINK` (`Motion::blinking`). Fora disso a
+//! janela nao redesenha a toa.
 //!
 //! "Reduzir movimento" (Ajustes) desliga as tres: o estado final aparece na hora e o cursor
 //! fica parado, aceso.
 
 use std::time::{Duration, Instant};
-
-use iced::Animation;
-use iced::animation::Easing;
 
 /// Entrada do scrim: so a opacidade, de 0 aos 55 % do `theme::scrim`.
 pub const SCRIM_IN: Duration = Duration::from_millis(160);
@@ -38,18 +36,104 @@ pub struct Scene {
     pub streaming: bool,
 }
 
+/// Curvas `cubic-bezier` do CSS, as mesmas que o design usa.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Easing {
+    /// `cubic-bezier(0, 0, 0.58, 1)`.
+    EaseOut,
+    /// `cubic-bezier(0.215, 0.61, 0.355, 1)`.
+    EaseOutCubic,
+}
+
+impl Easing {
+    fn points(self) -> (f32, f32, f32, f32) {
+        match self {
+            Easing::EaseOut => (0.0, 0.0, 0.58, 1.0),
+            Easing::EaseOutCubic => (0.215, 0.61, 0.355, 1.0),
+        }
+    }
+
+    /// Progresso eased para `x` (fracao do tempo, 0 a 1). A curva e dada em `x(s)`, `y(s)`:
+    /// acha o `s` cujo `x` e o tempo (bissecao; `x` e monotono com esses pontos) e devolve `y`.
+    pub fn apply(self, x: f32) -> f32 {
+        let (x1, y1, x2, y2) = self.points();
+        let x = x.clamp(0.0, 1.0);
+        let bezier = |a: f32, b: f32, s: f32| {
+            let u = 1.0 - s;
+            3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s
+        };
+        let (mut lo, mut hi) = (0.0_f32, 1.0_f32);
+        for _ in 0..24 {
+            let mid = (lo + hi) / 2.0;
+            if bezier(x1, x2, mid) < x {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        bezier(y1, y2, (lo + hi) / 2.0)
+    }
+}
+
+/// Um valor de 0 a 1 indo de `from` a `to` em `dur` a partir de `start`. Parado = `dur` zero.
+#[derive(Clone, Copy, Debug)]
+struct Tween {
+    from: f32,
+    to: f32,
+    start: Instant,
+    dur: Duration,
+    easing: Easing,
+}
+
+impl Tween {
+    fn settled(value: f32, at: Instant) -> Tween {
+        Tween {
+            from: value,
+            to: value,
+            start: at,
+            dur: Duration::ZERO,
+            easing: Easing::EaseOut,
+        }
+    }
+
+    /// Vai do valor que tem em `now` ate `to`: animacao interrompida continua de onde esta, em
+    /// vez de saltar para a ponta.
+    fn go(&self, to: f32, now: Instant, dur: Duration, easing: Easing) -> Tween {
+        Tween {
+            from: self.value(now),
+            to,
+            start: now,
+            dur,
+            easing,
+        }
+    }
+
+    fn running(&self, now: Instant) -> bool {
+        !self.dur.is_zero() && now < self.start + self.dur
+    }
+
+    fn value(&self, now: Instant) -> f32 {
+        if !self.running(now) {
+            return self.to;
+        }
+        let t = now.saturating_duration_since(self.start).as_secs_f32() / self.dur.as_secs_f32();
+        self.from + (self.to - self.from) * self.easing.apply(t)
+    }
+}
+
 pub struct Motion {
     reduce: bool,
-    /// O instante da ultima interpolacao: o do quadro (`Message::Frame`) ou o do `update` que
+    /// O instante da ultima interpolacao: o do quadro (`Msg::Frame`) ou o do `update` que
     /// comecou uma animacao. A `view` le daqui, nunca do relogio, para dois desenhos do mesmo
     /// estado sairem iguais.
     now: Instant,
     scene: Scene,
-    scrim: Animation<bool>,
-    toast: Animation<bool>,
+    scrim: Tween,
+    toast: Tween,
     /// O ultimo toast mostrado, para a descida.
     last_toast: Option<ShownToast>,
-    cursor: Animation<bool>,
+    /// Quando o cursor comecou a piscar; `None` = parado e aceso.
+    blink_since: Option<Instant>,
 }
 
 impl Motion {
@@ -58,10 +142,10 @@ impl Motion {
             reduce,
             now,
             scene: Scene::default(),
-            scrim: settled(false),
-            toast: settled(false),
+            scrim: Tween::settled(0.0, now),
+            toast: Tween::settled(0.0, now),
             last_toast: None,
-            cursor: settled(true),
+            blink_since: None,
         }
     }
 
@@ -73,19 +157,19 @@ impl Motion {
     pub fn set_reduce(&mut self, reduce: bool) {
         self.reduce = reduce;
         if reduce {
-            self.scrim = settled(self.scene.dialog);
-            self.toast = settled(self.scene.toast.is_some());
-            self.cursor = settled(true);
+            self.scrim = Tween::settled(flag(self.scene.dialog), self.now);
+            self.toast = Tween::settled(flag(self.scene.toast.is_some()), self.now);
+            self.blink_since = None;
         } else if self.scene.streaming {
-            self.cursor = blinking(self.now);
+            self.blink_since = Some(self.now);
         }
     }
 
     /// Encerra o que estiver andando, no estado final: sem janela nao chegam quadros, e o
     /// toast que comecou a descer com ela fechando apareceria por um quadro ao reabrir.
     pub fn settle(&mut self) {
-        self.scrim = settled(self.scene.dialog);
-        self.toast = settled(self.scene.toast.is_some());
+        self.scrim = Tween::settled(flag(self.scene.dialog), self.now);
+        self.toast = Tween::settled(flag(self.scene.toast.is_some()), self.now);
     }
 
     /// Um quadro: so anda o relogio da interpolacao.
@@ -102,27 +186,21 @@ impl Motion {
         if self.scene.dialog != before.dialog {
             self.scrim = if self.scene.dialog && !self.reduce {
                 started = true;
-                settled(false)
-                    .duration(SCRIM_IN)
-                    .easing(Easing::EaseOut)
-                    .go(true, now)
+                Tween::settled(0.0, now).go(1.0, now, SCRIM_IN, Easing::EaseOut)
             } else {
                 // A saida do scrim nao anima (spec 11): o dialogo some com ele.
-                settled(self.scene.dialog)
+                Tween::settled(flag(self.scene.dialog), now)
             };
         }
         match (&before.toast, &self.scene.toast) {
             (None, Some(_)) | (Some(_), None) => {
-                let visible = self.scene.toast.is_some();
+                let visible = flag(self.scene.toast.is_some());
                 if self.reduce {
-                    self.toast = settled(visible);
+                    self.toast = Tween::settled(visible, now);
                 } else {
                     started = true;
                     // Do ponto onde esta: toast que some no meio da subida desce dali.
-                    self.toast = std::mem::replace(&mut self.toast, settled(false))
-                        .duration(TOAST)
-                        .easing(Easing::EaseOutCubic)
-                        .go(visible, now);
+                    self.toast = self.toast.go(visible, now, TOAST, Easing::EaseOutCubic);
                 }
             }
             _ => {}
@@ -131,11 +209,11 @@ impl Motion {
             self.last_toast = Some(toast.clone());
         }
         if self.scene.streaming != before.streaming {
-            self.cursor = if self.scene.streaming && !self.reduce {
+            self.blink_since = if self.scene.streaming && !self.reduce {
                 started = true;
-                blinking(now)
+                Some(now)
             } else {
-                settled(true)
+                None
             };
         }
         if started {
@@ -143,28 +221,28 @@ impl Motion {
         }
     }
 
-    /// Scrim ou toast em curso: e o que liga o `window::frames()`. O cursor fica de fora (ver
+    /// Scrim ou toast em curso: e o que liga os quadros. O cursor fica de fora (ver
     /// `blinking`).
     pub fn animating(&self) -> bool {
-        !self.reduce && (self.scrim.is_animating(self.now) || self.toast.is_animating(self.now))
+        !self.reduce && (self.scrim.running(self.now) || self.toast.running(self.now))
     }
 
     /// Cursor piscando: liga o relogio de piscada, um `Frame` a cada `BLINK`. A piscada troca
-    /// no meio de cada meio ciclo (`step`), entao a amostra a cada `BLINK` cai sempre a
-    /// 265 ms da troca e acerta o estado mesmo com atraso do relogio.
+    /// no meio de cada meio ciclo, entao a amostra a cada `BLINK` cai sempre a 265 ms da troca
+    /// e acerta o estado mesmo com atraso do relogio.
     pub fn blinking(&self) -> bool {
         !self.reduce && self.scene.streaming
     }
 
     /// Fracao da opacidade final do scrim (0 a 1).
     pub fn scrim(&self) -> f32 {
-        self.scrim.interpolate(0.0, 1.0, self.now)
+        self.scrim.value(self.now)
     }
 
     /// Quanto do toast aparece (0 = abaixo da borda, 1 = no lugar), e qual: o atual, ou o que
     /// esta descendo. `None` = nenhum na tela.
     pub fn toast(&self) -> Option<(f32, &ShownToast, bool)> {
-        let progress = self.toast.interpolate(0.0, 1.0, self.now);
+        let progress = self.toast.value(self.now);
         match &self.scene.toast {
             Some(current) => Some((progress, current, true)),
             None if progress > 0.0 => self.last_toast.as_ref().map(|t| (progress, t, false)),
@@ -172,32 +250,22 @@ impl Motion {
         }
     }
 
-    /// Cursor aceso agora?
+    /// Cursor aceso agora? Aceso por meio `BLINK`, depois alterna a cada `BLINK`: o degrau fica
+    /// no meio do meio ciclo, e nao no fim, para a amostra do relogio de piscada nunca cair
+    /// em cima da troca.
     pub fn cursor_on(&self) -> bool {
-        self.cursor.interpolate(0.0_f32, 1.0, self.now) >= 0.5
+        match self.blink_since {
+            None => true,
+            Some(since) => {
+                let elapsed = self.now.saturating_duration_since(since);
+                ((elapsed + BLINK / 2).as_millis() / BLINK.as_millis()).is_multiple_of(2)
+            }
+        }
     }
 }
 
-/// Parada no valor: sem transicao, `interpolate` devolve o extremo.
-fn settled(value: bool) -> Animation<bool> {
-    Animation::new(value)
-}
-
-/// Pisca: aceso e apagado por `BLINK` cada, sem fim. Comeca aceso por meio `BLINK` (o degrau
-/// fica no meio do meio ciclo: o progresso da `lilt` numa repeticao nunca chega a 1, entao um
-/// degrau no fim nunca viraria).
-fn blinking(now: Instant) -> Animation<bool> {
-    Animation::new(true)
-        .duration(BLINK)
-        .easing(Easing::Custom(step))
-        .repeat_forever()
-        .auto_reverse()
-        .go(false, now)
-}
-
-/// Degrau: o cursor nao esmaece, acende e apaga.
-fn step(x: f32) -> f32 {
-    if x < 0.5 { 0.0 } else { 1.0 }
+fn flag(on: bool) -> f32 {
+    if on { 1.0 } else { 0.0 }
 }
 
 #[cfg(test)]

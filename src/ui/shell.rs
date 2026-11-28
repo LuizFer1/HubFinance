@@ -7,7 +7,7 @@ use iced::widget::{
     Space, button, column, container, float, mouse_area, opaque, row, scrollable, stack, text,
     tooltip,
 };
-use iced::{Alignment, Element, Length, Padding, Vector, mouse, window};
+use iced::{Alignment, Element, Length, Padding, Vector, mouse};
 
 use super::app::{App, Message, Screen};
 use super::theme::{self, ButtonKind, ButtonSize, Tokens, space};
@@ -198,7 +198,7 @@ fn titlebar_control<'a>(
 /// Bordas de 6 px (cantos de 12 px) sobre a janela inteira; o centro e um `Space`, que nao
 /// tem interacao e por isso deixa os eventos passarem para a camada de baixo.
 fn resize_frame<'a>() -> Element<'a, Message> {
-    use window::Direction as D;
+    use crate::ui_model::window::ResizeEdge as D;
     let grip = |w: Length, h: Length, direction: D, cursor: mouse::Interaction| {
         mouse_area(Space::new().width(w).height(h))
             .interaction(cursor)
@@ -763,7 +763,7 @@ pub(super) fn owns_scroll(app: &App) -> bool {
 /// com a lateral Grafite). Sem teto: com o maximo de 1180 da 0.0.2 a janela maximizada deixava
 /// uma faixa vazia a direita. As telas usam para decidir colunas: o iced nao tem `auto-fit`.
 pub(super) fn content_width(app: &App) -> f32 {
-    app.window_size.width - SIDEBAR_WIDTH - 64.0
+    app.window_size.w - SIDEBAR_WIDTH - 64.0
 }
 
 /// Abaixo desta largura util os controles do cabecalho descem para baixo do titulo (o
@@ -1324,7 +1324,7 @@ mod tests {
         app.screen = Screen::Transactions;
         app.cat_menu_open = true;
         for width in [1024.0, 1440.0] {
-            app.window_size.width = width;
+            app.window_size.w = width;
             let _ = root(&app);
         }
         // Hub em erro: o card de falha entra no lugar e precisa da rolagem da casca.
@@ -1374,7 +1374,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
         for width in [1024.0, 1440.0] {
-            app.window_size.width = width;
+            app.window_size.w = width;
             for screen in nav_entries(&app).map(|e| e.screen) {
                 app.screen = screen;
                 let _ = root(&app);

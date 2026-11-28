@@ -491,6 +491,19 @@ pub fn mask_str(s: &str) -> String {
     out
 }
 
+/// Aviso acima da previa com "Ocultar valores" ligado: a tela mascara, o envio nao.
+pub const HIDDEN_VALUES_NOTE: &str =
+    "Os valores estão ocultos na tela; o envio leva os valores reais.";
+
+/// Abaixo desta largura util os dois paineis nao cabem (achados precisam de ~320 ao lado dos
+/// 400 do assistente e do respiro): a tela vira o segmentado. A janela minima (1024) da 728.
+pub const TWO_PANELS_MIN: f32 = 760.0;
+
+/// Os dois paineis cabem lado a lado nesta largura util?
+pub fn two_panels(content_width: f32) -> bool {
+    content_width >= TWO_PANELS_MIN
+}
+
 // ---- Markdown da resposta, como blocos proprios ----
 
 /// Trecho de texto com o estilo que a resposta do modelo pode ter. O que a interface nao desenha
@@ -517,28 +530,24 @@ pub enum ReplyBlock {
     CodeBlock(Vec<String>),
     List {
         first: Option<u64>,
-        items: Vec<Vec<ReplyBlock>>,
+        items: Vec<ListItem>,
     },
     Quote(Vec<ReplyBlock>),
     Rule,
     Table(Vec<Vec<Vec<Span>>>),
 }
 
+/// Item de lista. `task` e o estado da tarefa ("- [x]" e `Some(true)`, "- [ ]" e `Some(false)`);
+/// `None` e item comum. Sem ele a interface nao distingue tarefa feita de item solto.
+#[allow(dead_code)] // usado na Tarefa 30
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ListItem {
+    pub task: Option<bool>,
+    pub blocks: Vec<ReplyBlock>,
+}
+
 #[allow(dead_code)] // usado na Tarefa 30
 type Events<'a> = std::iter::Peekable<pulldown_cmark::Parser<'a>>;
-
-/// Aviso acima da previa com "Ocultar valores" ligado: a tela mascara, o envio nao.
-pub const HIDDEN_VALUES_NOTE: &str =
-    "Os valores estão ocultos na tela; o envio leva os valores reais.";
-
-/// Abaixo desta largura util os dois paineis nao cabem (achados precisam de ~320 ao lado dos
-/// 400 do assistente e do respiro): a tela vira o segmentado. A janela minima (1024) da 728.
-pub const TWO_PANELS_MIN: f32 = 760.0;
-
-/// Os dois paineis cabem lado a lado nesta largura util?
-pub fn two_panels(content_width: f32) -> bool {
-    content_width >= TWO_PANELS_MIN
-}
 
 /// Interpreta o Markdown da resposta (as mesmas opcoes da mascara: tabela, riscado, tarefas).
 #[allow(dead_code)] // usado na Tarefa 30
@@ -627,7 +636,20 @@ fn blocks(events: &mut Events<'_>) -> Vec<ReplyBlock> {
                 let mut items = Vec::new();
                 while let Some(e) = events.next() {
                     match e {
-                        Event::Start(Tag::Item) => items.push(blocks(events)),
+                        Event::Start(Tag::Item) => {
+                            // O marcador vem logo apos o `Start(Item)`, antes de qualquer texto.
+                            let task = match events.peek() {
+                                Some(Event::TaskListMarker(done)) => Some(*done),
+                                _ => None,
+                            };
+                            if task.is_some() {
+                                events.next();
+                            }
+                            items.push(ListItem {
+                                task,
+                                blocks: blocks(events),
+                            });
+                        }
                         Event::End(_) => break,
                         _ => {}
                     }
@@ -671,13 +693,23 @@ fn table(events: &mut Events<'_>) -> Vec<Vec<Vec<Span>>> {
     let mut rows: Vec<Vec<Vec<Span>>> = Vec::new();
     let mut row: Vec<Vec<Span>> = Vec::new();
     let mut cell: Option<Vec<Span>> = None;
+    let (mut bold, mut italic) = (false, false);
     for event in events.by_ref() {
         match event {
             Event::Start(Tag::TableRow) => row = Vec::new(),
             Event::Start(Tag::TableCell) => cell = Some(Vec::new()),
-            Event::Text(t) | Event::Code(t) => {
+            Event::Start(Tag::Strong) => bold = true,
+            Event::Start(Tag::Emphasis) => italic = true,
+            Event::End(TagEnd::Strong) => bold = false,
+            Event::End(TagEnd::Emphasis) => italic = false,
+            Event::Text(t) => {
                 if let Some(c) = cell.as_mut() {
-                    push_span(c, &t, false, false, false);
+                    push_span(c, &t, bold, italic, false);
+                }
+            }
+            Event::Code(t) => {
+                if let Some(c) = cell.as_mut() {
+                    push_span(c, &t, bold, italic, true);
                 }
             }
             Event::End(TagEnd::TableCell) => row.push(cell.take().unwrap_or_default()),
@@ -717,7 +749,7 @@ pub fn blocks_text(blocks: &[ReplyBlock]) -> Option<String> {
                 }
                 ReplyBlock::List { items, .. } => {
                     for item in items {
-                        walk(item, out)?;
+                        walk(&item.blocks, out)?;
                     }
                 }
                 ReplyBlock::Quote(inner) => walk(inner, out)?,
@@ -1274,11 +1306,47 @@ pub(crate) mod tests {
             panic!("{blocks:?}")
         };
         assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|i| i.task.is_none()));
         assert_eq!(
             blocks[3],
             ReplyBlock::CodeBlock(vec!["a".into(), "b".into()])
         );
         assert_eq!(blocks[4], ReplyBlock::Rule);
+    }
+
+    #[test]
+    fn lista_de_tarefas_guarda_o_estado_de_cada_item() {
+        let b = parse_reply(
+            "- [x] feito
+- [ ] falta
+- comum
+",
+        );
+        let [ReplyBlock::List { items, .. }] = b.as_slice() else {
+            panic!("{b:?}")
+        };
+        let tasks: Vec<Option<bool>> = items.iter().map(|i| i.task).collect();
+        assert_eq!(tasks, vec![Some(true), Some(false), None]);
+        let text = blocks_text(&b).expect("sem tabela");
+        assert!(text.contains("feito") && text.contains("falta"), "{text:?}");
+    }
+
+    #[test]
+    fn tabela_guarda_a_enfase_das_celulas() {
+        let b = parse_reply(
+            "| x |
+|---|
+| **forte** |
+",
+        );
+        let [ReplyBlock::Table(rows)] = b.as_slice() else {
+            panic!("{b:?}")
+        };
+        let cell = &rows[1][0];
+        assert!(
+            cell.iter().any(|sp| sp.text == "forte" && sp.bold),
+            "{cell:?}"
+        );
     }
 
     #[test]

@@ -13,6 +13,13 @@ pub fn brand_subtitle() -> String {
     format!("Hub de casa · v{}", crate::config::VERSION)
 }
 
+/// Texto do estado "Abrindo", o mesmo nas tres telas de dados.
+pub const OPENING_TEXT: &str = "Abrindo os dados da casa";
+
+/// Linha do Resumo no boot: so o que vale com ou sem dados. "Dados do último sync" ainda nao e
+/// verdade enquanto o banco nao abriu.
+pub const DASHBOARD_LINE: &str = "Somente leitura";
+
 /// O que uma tela de dados mostra enquanto nao tem o que mostrar (spec 8.2 e A5).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Arrival {

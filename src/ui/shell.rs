@@ -20,8 +20,8 @@ use crate::advisor::Severity;
 use crate::dashboard::contract::Book;
 use crate::hub::snapshot::Status;
 use crate::ui_model::shell::{
-    Arrival, RESERVES_QUESTION, arrival, brand_subtitle, nav_shortcut, plural, thousands,
-    transactions_question,
+    Arrival, DASHBOARD_LINE, OPENING_TEXT, RESERVES_QUESTION, arrival, brand_subtitle,
+    nav_shortcut, plural, thousands, transactions_question,
 };
 use crate::ui_model::time;
 
@@ -417,9 +417,6 @@ pub(super) fn screen_arrival(app: &App, screen_has_data: bool) -> Arrival {
         any_active_synced(app),
     )
 }
-
-/// Texto do estado "Abrindo", o mesmo nas tres telas de dados.
-pub(super) const OPENING_TEXT: &str = "Abrindo os dados da casa";
 
 /// Esqueleto do boot, o mesmo em Resumo, Lancamentos e Reservas: o texto e blocos de
 /// `surface_2` no lugar das secoes (uma faixa larga, duas lado a lado na proporcao 2:1 do
@@ -952,10 +949,6 @@ pub(super) fn titles(app: &App) -> (&str, String) {
         Screen::Settings => ("Ajustes", "Preferências deste computador".into()),
     }
 }
-
-/// Linha do Resumo no boot: so o que vale com ou sem dados. "Dados do último sync" ainda nao e
-/// verdade enquanto o banco nao abriu.
-const DASHBOARD_LINE: &str = "Somente leitura";
 
 /// Motivo do hub que nao subiu, se a tela atual deve dar lugar a ele. Ajustes fica de fora:
 /// tema, inicializacao e as pastas de dados e logs nao dependem do nucleo, e as pastas sao

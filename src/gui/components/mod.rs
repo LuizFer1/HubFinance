@@ -9,15 +9,25 @@
 //! (Tarefas 15 em diante) chegarem.
 #![allow(dead_code)] // usado na Tarefa 15
 
+pub mod avatar;
 pub mod badge;
 pub mod button;
+pub mod card;
+pub mod category_tile;
 pub mod chip;
+pub mod empty;
 pub mod focus;
+pub mod money;
+pub mod month_picker;
+pub mod progress;
 pub mod radio;
 pub mod segmented;
 #[cfg(debug_assertions)]
 pub mod showcase;
+pub mod stat;
+pub mod status_chip;
 pub mod switch;
+pub mod tooltip;
 
 use gpui::{Hsla, Rgba};
 

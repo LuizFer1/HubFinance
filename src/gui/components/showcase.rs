@@ -8,13 +8,23 @@
 
 use gpui::{AnyElement, Div, IntoElement, SharedString, div, prelude::*, px};
 
+use super::avatar::Avatar;
 use super::badge::Badge;
 use super::button::{Button, IconButton, State, Variant};
+use super::card::Card;
+use super::category_tile::CategoryTile;
 use super::chip::{Chip, Pill};
+use super::empty::EmptyState;
 use super::focus;
+use super::money::Money;
+use super::month_picker::{MonthPicker, PartialChip};
+use super::progress::Progress;
 use super::radio::Radio;
 use super::segmented::{Preview, Segmented, Surface};
+use super::stat::Stat;
+use super::status_chip::{Kind, StatusChip};
 use super::switch::Switch;
+use super::tooltip::{Line, TooltipView};
 use crate::gui::fonts;
 use crate::gui::icons::Icon;
 use crate::gui::theme::Tokens;
@@ -192,6 +202,7 @@ pub fn render(t: &'static Tokens) -> impl IntoElement {
                 .child(Badge::new(2, t).dot()),
         );
 
+    let data = data_section(t);
     div()
         .id("showcase")
         .size_full()
@@ -202,4 +213,89 @@ pub fn render(t: &'static Tokens) -> impl IntoElement {
         .gap(px(20.0))
         .child(buttons)
         .child(controls)
+        .child(data)
+}
+
+/// Componentes de dado: cards, valores (visivel e oculto), avatares, tiles, chips, seletor de
+/// mes, tooltips e estado vazio.
+fn data_section(t: &'static Tokens) -> impl IntoElement {
+    let row = || div().flex().items_center().gap(px(16.0));
+    let tip = |v: TooltipView| {
+        div().child(
+            // O tooltip e uma view; na vitrine desenhamos o conteudo direto, sem hover.
+            v.render_static(),
+        )
+    };
+    section("Dados", t)
+        .child(
+            row()
+                .child(
+                    Card::new(t)
+                        .child(Stat::new("Receitas", "R$ 14.180,00", t).note("novembro"))
+                        .w(220.0),
+                )
+                .child(
+                    Card::new(t)
+                        .child(Stat::new("Receitas", "R$ 14.180,00", t).hidden(true))
+                        .w(220.0),
+                )
+                .child(
+                    Card::highlight(t)
+                        .child(Money::new("R$ 6,3 mil", 20.0, t).color(t.on_highlight))
+                        .child(Progress::new(3.0, 4.0, t).fill(t.on_highlight))
+                        .w(220.0),
+                ),
+        )
+        .child(
+            row()
+                .child(Money::new("R$ 12.345,67", 30.0, t))
+                .child(Money::new("−R$ 96,40", 15.0, t))
+                .child(Money::new("75,6%", 15.0, t))
+                .child(Money::new("75,6%", 15.0, t).hidden(true)),
+        )
+        .child(
+            row()
+                .child(Avatar::new("Luiz", "sky", t))
+                .child(Avatar::new("Ágata", "rose", t).size(48.0))
+                .child(CategoryTile::new("cart", "orange", t))
+                .child(CategoryTile::new("desconhecida", "violet", t))
+                .child(StatusChip::new(Kind::Ok, "Emergência coberta", t))
+                .child(StatusChip::new(Kind::Warning, "Ainda não coberta", t)),
+        )
+        .child(
+            row()
+                .child(MonthPicker::new("Novembro 2026", false, t))
+                .child(MonthPicker::new("Outubro 2026", true, t))
+                .child(PartialChip::new("Parcial · até 27 nov", t)),
+        )
+        .child(
+            row()
+                .items_start()
+                .child(tip(TooltipView::rows(
+                    "Outubro",
+                    vec![
+                        Line::Pair {
+                            label: "Receitas".into(),
+                            value: "R$ 14.180,00".into(),
+                            bold: false,
+                        },
+                        Line::Pair {
+                            label: "Sobrou".into(),
+                            value: "R$ 2.870,40".into(),
+                            bold: true,
+                        },
+                    ],
+                    t,
+                )))
+                .child(tip(TooltipView::text(
+                    "Média das despesas essenciais dos últimos 6 meses.",
+                    t,
+                ))),
+        )
+        .child(Card::new(t).child(EmptyState::new(
+            Icon::Pulse,
+            "Sem movimentações neste mês",
+            "Nada foi guardado ou retirado em maio de 2025.",
+            t,
+        )))
 }

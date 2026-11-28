@@ -32,7 +32,6 @@ pub fn rgba(r: u8, g: u8, b: u8, a: f32) -> Hsla {
 /// `--card-ring` do tema claro: `0 0 0 1px #E9E9E9, 0 1px 2px rgba(0,0,0,.04)`. O anel e uma
 /// sombra com spread de 1 px (fora da caixa, sem ocupar layout), nao uma borda: com borda o
 /// card ficaria 1 px menor por dentro que no escuro. No escuro nao ha.
-#[allow(dead_code)] // usado na Tarefa 12
 #[derive(Debug, Clone, PartialEq)]
 pub struct CardRing {
     pub shadows: [BoxShadow; 2],

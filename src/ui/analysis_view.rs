@@ -19,9 +19,10 @@ use crate::assistant::prompt::OPENING_REQUEST;
 use crate::assistant::view::{ConversationSummary, MessageRole, MessageView, OpenConversation};
 use crate::dashboard::money::MASK;
 use crate::ui_model::analysis::{
-    Comparison, INTRO, PREVIEW_SEND, PREVIEW_TITLE, assistant_status, comparison, delete_all_label,
-    group_title, mask_str, mask_streaming, plain_text, preview_body, preview_intro,
-    preview_text_with, reply_notes, retention_value, summary_line, tokens_total_label,
+    Comparison, HIDDEN_VALUES_NOTE, INTRO, PREVIEW_SEND, PREVIEW_TITLE, assistant_status,
+    comparison, delete_all_label, group_title, mask_str, mask_streaming, plain_text, preview_body,
+    preview_intro, preview_text_with, reply_notes, retention_value, summary_line,
+    tokens_total_label, two_panels,
 };
 use crate::ui_model::time;
 
@@ -38,18 +39,9 @@ const FINDINGS_MAX: f32 = 720.0;
 /// No painel de 400 ela nunca chega a valer; vale no segmentado da janela minima.
 const REPLY_MAX: f32 = 440.0;
 
-/// Abaixo desta largura util os dois paineis nao cabem (achados precisam de ~320 ao lado dos
-/// 400 do assistente e do respiro): a tela vira o segmentado. A janela minima (1024) da 728.
-const TWO_PANELS_MIN: f32 = 760.0;
-
 /// Rolagem da conversa: id proprio, porque `CONTENT_SCROLL` (o que a troca de tela volta ao
 /// topo) e o dos achados, e so uma rolagem pode ter cada id.
 pub(super) const CHAT_SCROLL: &str = "conversa";
-
-/// Os dois paineis cabem lado a lado nesta largura util?
-pub(super) fn two_panels(content_width: f32) -> bool {
-    content_width >= TWO_PANELS_MIN
-}
 
 pub fn view(app: &App) -> Element<'_, Message> {
     let t = app.tokens;
@@ -437,9 +429,6 @@ pub(super) fn cancel_preview_message(open: &OpenConversation, busy: bool) -> Opt
     );
     (only_opening && !busy).then(|| Message::DeleteConversation(open.id.clone()))
 }
-
-/// Aviso acima da previa com "Ocultar valores" ligado: a tela mascara, o envio nao.
-const HIDDEN_VALUES_NOTE: &str = "Os valores estão ocultos na tela; o envio leva os valores reais.";
 
 fn hidden_values_note(app: &App) -> Option<&'static str> {
     app.hide_values.then_some(HIDDEN_VALUES_NOTE)

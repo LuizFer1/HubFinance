@@ -31,7 +31,7 @@ use crate::hub::snapshot::{DeviceView, Snapshot, Status};
 use crate::hub::{AssistantCommand, Command, HubHandle};
 use crate::store::erase::{Area, AreaSet};
 use crate::ui_model::assistant_setup::SetupStep;
-use crate::ui_model::connect::{self, ConnectFlow, ConnectStep, PhoneOs};
+use crate::ui_model::connect::{self, ConnectFlow, ConnectStep, PhoneOs, is_up};
 
 /// Quanto tempo "Copiado" fica no botao, como no prototipo.
 pub const COPIED_FOR: Duration = Duration::from_millis(1600);
@@ -2259,11 +2259,6 @@ fn blinks() -> futures::channel::mpsc::Receiver<Instant> {
         }
     });
     rx
-}
-
-/// Nucleo no ar (com ou sem rede local): o unico estado em que da para gerar codigo.
-fn is_up(snap: &Snapshot) -> bool {
-    matches!(snap.status, Status::Running | Status::NoNetwork)
 }
 
 pub fn subscription(app: &App) -> Subscription<Message> {

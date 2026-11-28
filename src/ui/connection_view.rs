@@ -18,9 +18,9 @@ use super::widgets::{RowEdge, SegmentedSize, SegmentedVariant};
 use super::{fonts, icons, rows, shell, widgets};
 use crate::dashboard::people::{Person, presence};
 use crate::dashboard::periods::paired_label;
-use crate::hub::snapshot::{ActivityKind, Snapshot, Status};
+use crate::hub::snapshot::{ActivityKind, Status};
 use crate::ui_model::connect::{
-    ConnectFlow, ConnectStep, PAIR_STEPS, PhoneOs, certificate_steps, guide_url, hub_url,
+    ConnectFlow, ConnectStep, PAIR_STEPS, PhoneOs, certificate_steps, guide_url, hub_url, is_up,
     step_caption,
 };
 use crate::ui_model::{measure, time};
@@ -52,10 +52,6 @@ const FLOW_WIDTH: f32 = 600.0;
 /// Altura fixa do dialogo: o rodape nao pula ao trocar de passo. Cabe o passo mais alto (o
 /// certificado do iPhone) e cabe na janela minima (720 de altura).
 const DIALOG_HEIGHT: f32 = 580.0;
-
-fn is_up(snap: &Snapshot) -> bool {
-    matches!(snap.status, Status::Running | Status::NoNetwork)
-}
 
 /// Sem aparelho ativo e com o nucleo no ar: o fluxo ocupa a tela, sem modal. No `Starting` a
 /// lista ainda vem vazia do snapshot inicial, e o fluxo piscaria no boot de quem ja tem celular.
@@ -753,7 +749,7 @@ fn qr_frame<'a>(
 mod tests {
     use super::super::app::tests::app_with;
     use super::*;
-    use crate::hub::snapshot::DeviceView;
+    use crate::hub::snapshot::{DeviceView, Snapshot};
 
     #[test]
     fn endereco_mais_longo_cabe_inteiro_de_1024_a_2560() {

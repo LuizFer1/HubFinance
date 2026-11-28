@@ -170,8 +170,8 @@ fn pending_number_start(text: &str) -> Option<usize> {
 }
 
 /// O texto que o Markdown desenharia, lido dos eventos do `pulldown-cmark` com as mesmas opcoes
-/// do iced: texto e codigo (celulas de tabela inclusive), quebras e fim de bloco viram quebra de
-/// linha, HTML some (o iced nao o desenha). E a reserva da tabela, que o iced nao deixa ler: a
+/// da tela: texto e codigo (celulas de tabela inclusive), quebras e fim de bloco viram quebra de
+/// linha, HTML some (a tela nao o desenha). E a reserva da tabela, que o desenho nao deixa ler: a
 /// mascara roda sobre o texto ja interpretado, onde "1.~~234~~,56" ja e "1.234,56".
 pub fn plain_text(content: &str) -> String {
     use pulldown_cmark::{Event, Options, Parser, TagEnd};
@@ -527,6 +527,19 @@ pub enum ReplyBlock {
 #[allow(dead_code)] // usado na Tarefa 30
 type Events<'a> = std::iter::Peekable<pulldown_cmark::Parser<'a>>;
 
+/// Aviso acima da previa com "Ocultar valores" ligado: a tela mascara, o envio nao.
+pub const HIDDEN_VALUES_NOTE: &str =
+    "Os valores estão ocultos na tela; o envio leva os valores reais.";
+
+/// Abaixo desta largura util os dois paineis nao cabem (achados precisam de ~320 ao lado dos
+/// 400 do assistente e do respiro): a tela vira o segmentado. A janela minima (1024) da 728.
+pub const TWO_PANELS_MIN: f32 = 760.0;
+
+/// Os dois paineis cabem lado a lado nesta largura util?
+pub fn two_panels(content_width: f32) -> bool {
+    content_width >= TWO_PANELS_MIN
+}
+
 /// Interpreta o Markdown da resposta (as mesmas opcoes da mascara: tabela, riscado, tarefas).
 #[allow(dead_code)] // usado na Tarefa 30
 pub fn parse_reply(content: &str) -> Vec<ReplyBlock> {
@@ -632,6 +645,15 @@ fn blocks(events: &mut Events<'_>) -> Vec<ReplyBlock> {
             Event::Rule => {
                 flush(&mut spans, &mut heading, &mut out);
                 out.push(ReplyBlock::Rule);
+            }
+            // Bloco HTML: a tela nao o desenha. Consome ate o fim dele, senao o `End` iria cair no
+            // catch-all abaixo e fechar um conteiner que esta chamada nunca abriu.
+            Event::Start(Tag::HtmlBlock) => {
+                for e in events.by_ref() {
+                    if matches!(e, Event::End(TagEnd::HtmlBlock)) {
+                        break;
+                    }
+                }
             }
             // Fim do conteiner que esta chamada abriu.
             Event::End(_) => break,
@@ -1307,5 +1329,103 @@ pub(crate) mod tests {
             panic!("esperava blocos")
         };
         assert!(matches!(&b[0], ReplyBlock::Table(rows) if rows.len() == 2));
+    }
+
+    /// Bloco HTML no nivel de cima e dentro de item de lista: o `End(HtmlBlock)` nao pode fechar
+    /// um conteiner que a chamada nao abriu (o resto da resposta sumia calado).
+    #[test]
+    fn bloco_html_nao_corta_o_resto_da_resposta() {
+        let b = parse_reply(
+            "Antes do bloco.\n\n<br>\n\nDepois: R$ 1.234,56\n\n- item um\n- item dois\n",
+        );
+        let text = blocks_text(&b).expect("sem tabela");
+        assert!(text.contains("Antes do bloco."), "{text:?}");
+        assert!(text.contains("Depois: R$ 1.234,56"), "{text:?}");
+        assert!(
+            text.contains("item um") && text.contains("item dois"),
+            "{text:?}"
+        );
+        assert!(!text.contains("<br>"), "{text:?}");
+
+        let b = parse_reply("- a\n\n  <div>x</div>\n\n- b\n\nfim\n");
+        let [ReplyBlock::List { items, .. }, ReplyBlock::Paragraph(_)] = b.as_slice() else {
+            panic!("esperava lista e paragrafo: {b:?}");
+        };
+        assert_eq!(items.len(), 2, "{items:?}");
+        let text = blocks_text(&b).expect("sem tabela");
+        assert!(
+            text.contains('a') && text.contains('b') && text.contains("fim"),
+            "{text:?}"
+        );
+
+        let m = masked_reply("Antes.\n\n<br>\n\nDepois: R$ 1.234,56\n\n- um\n", true);
+        assert!(
+            m.copy.contains("Depois") && m.copy.contains("um"),
+            "{}",
+            m.copy
+        );
+        assert_eq!(crate::dashboard::money::leaks(&m.copy), None, "{}", m.copy);
+    }
+
+    /// Respostas com dinheiro em Markdown: o que `masked_reply` entrega para desenhar (blocos ou
+    /// texto puro) e para copiar nunca deixa valor, nem quando a marcacao corta o numero.
+    #[test]
+    fn markdown_mascarado_nao_vaza_valor() {
+        use crate::dashboard::money::leaks;
+        let cases = [
+            "**Mercado:** R$ 1.234,56 em novembro.",
+            "1. Delivery: *R$ 612,00*\n2. Mercado: `R$ 980,10`\n",
+            "# Resumo\n\n- saldo -R$ 3,00\n- meta de 5.500,00\n\n> sobram 1.500 reais",
+            "Valor 1.**234**,56 com enfase no meio.",
+            "Escapado 1\x5c.234,56 no texto.",
+            "Entidade &#49;.234,56 no texto.",
+            "```\ntotal R$ 9.876,54\n```",
+            "[R$ 10,00](https://exemplo.invalid) de link e ![R$ 20,00](img.png)",
+            "| Categoria | Valor |\n|---|---|\n| Mercado | R$ 1.**234**,56 |",
+            "| x | y |\n|---|---|\n| x | 1.~~234~~,56 |",
+            "| x | y |\n|---|---|\n| x | 1.<b>234</b>,56 |",
+            "| x | y |\n|---|---|\n| a | b |\n\nTexto 1.<b>234</b>,56 fora",
+            "| x | y |\n|---|---|\n| x | 1\x5c.234,56 |",
+            "Texto 1.<b>234</b>,56 inline",
+            "Antes.\n\n<br>\n\nDepois R$ 1.234,56\n\n- um 2.500,00\n",
+        ];
+        for case in cases {
+            let r = masked_reply(case, true);
+            let shown = match &r.shown {
+                ReplyView::Blocks(b) => blocks_text(b).expect("sem tabela"),
+                ReplyView::Plain(s) => s.clone(),
+            };
+            assert_eq!(leaks(&shown), None, "{case:?} -> {shown:?}");
+            assert_eq!(mask_str(&shown), shown, "{case:?} -> {shown:?}");
+            assert_eq!(leaks(&r.copy), None, "copia: {case:?} -> {:?}", r.copy);
+            assert_eq!(mask_str(&r.copy), r.copy, "copia: {case:?}");
+            // Quem le junta "1.~~234~~,56" de cabeca: sem as marcas, continua sem valor.
+            let unmarked: String = shown
+                .replace("<b>", "")
+                .replace("</b>", "")
+                .chars()
+                .filter(|c| !matches!(c, '*' | '_' | '`' | '~' | '\x5c'))
+                .collect();
+            assert_eq!(leaks(&unmarked), None, "{case:?} -> {shown:?}");
+            assert_eq!(mask_str(&unmarked), unmarked, "{case:?} -> {shown:?}");
+        }
+        // A reserva da tabela le as celulas: o valor da celula vira mascara, o rotulo fica.
+        let table = masked_reply("| x | y |\n|---|---|\n| Mercado | 1.~~234~~,56 |", true);
+        assert!(table.copy.contains("Mercado"), "{}", table.copy);
+        assert!(table.copy.contains(MASK_DIGITS), "{}", table.copy);
+        assert!(matches!(table.shown, ReplyView::Plain(_)));
+        // Os casos comuns continuam em blocos; os tortos caem no texto puro.
+        assert!(matches!(
+            masked_reply("**Mercado:** R$ 1.234,56", true).shown,
+            ReplyView::Blocks(_)
+        ));
+        assert!(matches!(
+            masked_reply("Valor 1.**234**,56", true).shown,
+            ReplyView::Plain(_)
+        ));
+        // Sem ocultar, a copia e o texto inteiro.
+        let shown = masked_reply("**R$ 1.234,56**", false);
+        assert!(matches!(shown.shown, ReplyView::Blocks(_)));
+        assert_eq!(shown.copy, "**R$ 1.234,56**");
     }
 }

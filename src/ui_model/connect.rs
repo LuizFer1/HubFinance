@@ -2,7 +2,12 @@
 //! textos de cada sistema e as URLs que a pessoa digita ou abre no celular. Moram aqui, e nao na
 //! tela, para a interface nova e os testes usarem as mesmas decisoes.
 
-use crate::hub::snapshot::Snapshot;
+use crate::hub::snapshot::{Snapshot, Status};
+
+/// Nucleo no ar (com ou sem rede local): o unico estado em que da para gerar codigo.
+pub fn is_up(snap: &Snapshot) -> bool {
+    matches!(snap.status, Status::Running | Status::NoNetwork)
+}
 
 /// `https://<ip>:<porta>`: o que se digita no app. Sem rede, nada.
 pub fn hub_url(snap: &Snapshot) -> Option<String> {

@@ -1119,7 +1119,10 @@ fn snapshot_stream(rx: watch::Receiver<Snapshot>) -> impl futures::Stream<Item =
 }
 
 pub fn update(app: &mut App, message: Message) -> Task<Message> {
-    let task = handle(app, message);
+    let task = match message {
+        Message::Resize(direction) => effects::resize(app, direction),
+        message => handle(app, message),
+    };
     // Fluxo aberto que deixou de estar na tela (outra tela, "Desfazer" que trouxe um aparelho de
     // volta, nucleo que caiu): fecha e cancela o codigo, que nao pode valer sem ninguem ver.
     if app.connect.is_some() && !app.connect_showing() {
@@ -1387,7 +1390,9 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             app.window_size = size;
             effects::task(Effect::QueryMaximized, app)
         }
-        Message::Resize(direction) => effects::resize(app, direction),
+        // So da iced: o adaptador `update` executa `effects::resize` antes do handle, para o
+        // handle nao montar Task fora do `Effect` (no GPUI nao existe esta mensagem).
+        Message::Resize(_) => Task::none(),
         Message::SelectScreen(screen) => {
             let top = effects::task(Effect::ScrollToTop, app);
             // Clicar na tela em que ja se esta so volta ao topo: a pessoa nao saiu dela, entao
@@ -2670,6 +2675,14 @@ pub(super) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
         assert!(!app.releases_open_failed);
+    }
+
+    #[test]
+    fn falha_ao_abrir_o_navegador_liga_o_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        let _ = update(&mut app, Message::OpenUrlFailed);
+        assert!(app.releases_open_failed);
     }
 
     #[test]

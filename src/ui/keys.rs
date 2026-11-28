@@ -6,9 +6,9 @@
 //! manda o `\x08` como texto, o `text_input` o descarta por ser caractere de controle e nao
 //! consome a tecla.
 
+use iced::Subscription;
 use iced::keyboard::key::{Code, Named, Physical};
 use iced::keyboard::{self, Key, Modifiers};
-use iced::{Subscription, Task};
 
 use super::app::{App, Message, Screen};
 use super::{analysis_view, connection_view, shell};
@@ -171,15 +171,6 @@ fn digit(key: &Key, physical: Physical) -> Option<u8> {
         return None;
     }
     Some(n)
-}
-
-/// Tab entre os campos: so `text_input` e focavel no iced 0.14 (botao nao tem foco).
-pub fn focus(next: bool) -> Task<Message> {
-    if next {
-        iced::widget::operation::focus_next()
-    } else {
-        iced::widget::operation::focus_previous()
-    }
 }
 
 #[cfg(test)]

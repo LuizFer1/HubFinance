@@ -6,6 +6,7 @@ mod assistant_settings_view;
 mod charts;
 mod connection_view;
 mod dashboard_view;
+mod effects;
 mod fonts;
 mod icons;
 mod keys;

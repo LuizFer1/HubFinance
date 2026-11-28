@@ -14,6 +14,7 @@ use time::{OffsetDateTime, UtcOffset};
 use tokio::sync::watch;
 
 use super::connection_view;
+use super::effects;
 use super::theme::Tokens;
 use crate::assistant::secret::Secret;
 use crate::assistant::settings::ProviderChoice;
@@ -32,6 +33,7 @@ use crate::hub::{AssistantCommand, Command, HubHandle};
 use crate::store::erase::{Area, AreaSet};
 use crate::ui_model::assistant_setup::SetupStep;
 use crate::ui_model::connect::{self, ConnectFlow, ConnectStep, PhoneOs, is_up};
+use crate::ui_model::effect::Effect;
 
 /// Quanto tempo "Copiado" fica no botao, como no prototipo.
 pub const COPIED_FOR: Duration = Duration::from_millis(1600);
@@ -1007,7 +1009,10 @@ impl App {
     }
 
     /// Acao sobre a janela; sem id ainda, nada (com um aviso so, para nao inundar o log).
-    fn with_window(&mut self, action: impl FnOnce(window::Id) -> Task<Message>) -> Task<Message> {
+    pub(super) fn with_window(
+        &mut self,
+        action: impl FnOnce(window::Id) -> Task<Message>,
+    ) -> Task<Message> {
         match self.window {
             Some(id) => action(id),
             None => {
@@ -1063,30 +1068,21 @@ pub fn boot(
 /// Abre a janela e guarda o id na hora: os botoes da barra de titulo nao precisam esperar
 /// o `WindowOpened`.
 fn open_window_task(app: &mut App) -> Task<Message> {
-    let (id, task) = window::open(super::window_settings());
-    app.window = Some(id);
-    task.map(Message::WindowOpened)
+    effects::task(Effect::OpenWindow, app)
 }
 
 /// Abre ou traz a janela. Com janela: desminimiza e pede foco (clique na bandeja e segunda
 /// execucao dao ao processo o direito de foco; se o Windows recusar, o botao pisca).
 fn open_or_focus(app: &mut App) -> Task<Message> {
     match app.window {
-        Some(id) => Task::batch([window::minimize(id, false), window::gain_focus(id)]),
+        Some(_) => effects::task(Effect::FocusWindow, app),
         None => open_window_task(app),
     }
 }
 
-/// `iced::exit()` mais um "despertador". O `exit` so marca o laco do winit para sair; no
-/// Windows o laco confere a marca depois de acordar, e sem janela nada o acorda (nem redesenho,
-/// nem evento de janela): o "Desligar o hub" com a janela fechada so terminava quando o
-/// `ForceExit` de 5 s chegasse — e, se o nucleo travasse, nem ai. Uma mensagem qualquer logo
-/// depois acorda o laco, que ve a marca e sai.
-fn exit() -> Task<Message> {
-    Task::batch([
-        iced::exit(),
-        Task::perform(delay(Duration::from_millis(50)), |_| Message::Noop),
-    ])
+/// Encerra o processo; o porque do "despertador" esta em `effects::task`.
+fn exit(app: &mut App) -> Task<Message> {
+    effects::task(Effect::Exit, app)
 }
 
 /// Desligamento com ordem (o `CloseRequested` da 1.0.0): remocao pendente, `Shutdown`,
@@ -1100,10 +1096,13 @@ fn begin_shutdown(app: &mut App) -> Task<Message> {
     app.commit_pending();
     // Nucleo ja parado (ou morto): nao ha por que esperar o snapshot `Stopped`.
     if app.handle.commands.send(Command::Shutdown).is_err() {
-        return exit();
+        return exit(app);
     }
     // Garantia: se o nucleo travar, o processo sai mesmo assim em 5 s.
-    Task::perform(delay(Duration::from_secs(5)), |_| Message::ForceExit)
+    effects::task(
+        Effect::After(Duration::from_secs(5), Message::ForceExit),
+        app,
+    )
 }
 
 /// `watch` -> Stream. `Task::run` aceita qualquer `Stream + Send`; nao precisa de
@@ -1198,7 +1197,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             }
             app.sync_tray();
             if stopped && app.closing {
-                return exit();
+                return exit(app);
             }
             // Boot por `--autostart` que falhou (porta ocupada, banco): sem janela ninguem
             // veria; o tooltip diz "com erro" e a janela abre sozinha. So na transicao para
@@ -1306,7 +1305,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             app.preview_after = None;
             app.envelope_preview = None;
             app.confirm_remove = None;
-            app.with_window(window::close)
+            effects::task(Effect::CloseWindow, app)
         }
         Message::Desktop(DesktopEvent::Quit) => begin_shutdown(app),
         Message::Desktop(DesktopEvent::OpenWindow) => open_or_focus(app),
@@ -1336,10 +1335,10 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::ForceExit => exit(),
+        Message::ForceExit => exit(app),
         Message::WindowOpened(id) => {
             if app.window == Some(id) {
-                window::is_maximized(id).map(Message::Maximized)
+                effects::task(Effect::QueryMaximized, app)
             } else {
                 Task::none()
             }
@@ -1371,14 +1370,12 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             // O laco de movimento do sistema consome o soltar do botao: sem zerar aqui, o
             // proximo movimento sem botao comecaria outro arrasto.
             app.title_pressed = false;
-            app.with_window(window::drag)
+            effects::task(Effect::StartDrag, app)
         }
-        Message::Minimize => app.with_window(|id| window::minimize(id, true)),
+        Message::Minimize => effects::task(Effect::Minimize, app),
         Message::ToggleMaximize => {
             app.title_pressed = false;
-            app.with_window(|id| {
-                window::toggle_maximize(id).chain(window::is_maximized(id).map(Message::Maximized))
-            })
+            effects::task(Effect::ToggleMaximize, app)
         }
         Message::Maximized(maximized) => {
             app.maximized = maximized;
@@ -1386,14 +1383,11 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::Resized(size) => {
             app.window_size = size;
-            app.with_window(|id| window::is_maximized(id).map(Message::Maximized))
+            effects::task(Effect::QueryMaximized, app)
         }
-        Message::Resize(direction) => app.with_window(|id| window::drag_resize(id, direction)),
+        Message::Resize(direction) => effects::resize(app, direction),
         Message::SelectScreen(screen) => {
-            let top = iced::widget::operation::snap_to(
-                super::shell::CONTENT_SCROLL,
-                iced::widget::operation::RelativeOffset::START,
-            );
+            let top = effects::task(Effect::ScrollToTop, app);
             // Clicar na tela em que ja se esta so volta ao topo: a pessoa nao saiu dela, entao
             // a remocao pendente segue com o "Desfazer" e a chave digitada fica no campo.
             if screen == app.screen {
@@ -1520,9 +1514,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             app.refresh_replies();
             // Os rotulos em R$ dos graficos estao gravados na geometria em cache.
             app.clear_charts();
-            Task::perform(save_prefs(app.prefs(), app.prefs_dir.clone()), |_| {
-                Message::Noop
-            })
+            effects::task(Effect::SavePrefs(app.prefs()), app)
         }
         Message::SetTheme(mode) => {
             if mode == app.theme {
@@ -1537,9 +1529,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                 app.system_dark = dark;
             }
             app.apply_theme();
-            Task::perform(save_prefs(app.prefs(), app.prefs_dir.clone()), |_| {
-                Message::Noop
-            })
+            effects::task(Effect::SavePrefs(app.prefs()), app)
         }
         Message::SystemTheme(mode) => {
             // Onde o registro responde (Windows), so ele manda: o aviso do winit la chega
@@ -1565,9 +1555,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
                     app.autostart = Some(enabled);
                     app.autostart_pref = Some(enabled);
                     app.autostart_failed = false;
-                    Task::perform(save_prefs(app.prefs(), app.prefs_dir.clone()), |_| {
-                        Message::Noop
-                    })
+                    effects::task(Effect::SavePrefs(app.prefs()), app)
                 }
                 Err(err) => {
                     tracing::warn!("iniciar com o Windows: {err}");
@@ -1597,8 +1585,8 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             // O iced nao devolve falha da area de transferencia; o rotulo vira "Copiado" mesmo
             // assim (limite aceito na spec).
             Task::batch([
-                iced::clipboard::write(text),
-                Task::perform(delay(COPIED_FOR), |_| Message::CopyExpired),
+                effects::task(Effect::CopyToClipboard(text), app),
+                effects::task(Effect::After(COPIED_FOR, Message::CopyExpired), app),
             ])
         }
         Message::OpenReleases => {
@@ -1630,8 +1618,8 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             app.copied = Some((CopyTarget::Reply, Instant::now() + COPIED_FOR));
             app.copied_reply = Some(id);
             Task::batch([
-                iced::clipboard::write(copy),
-                Task::perform(delay(COPIED_FOR), |_| Message::CopyExpired),
+                effects::task(Effect::CopyToClipboard(copy), app),
+                effects::task(Effect::After(COPIED_FOR, Message::CopyExpired), app),
             ])
         }
         Message::AnalysisTab(tab) => {
@@ -2103,8 +2091,8 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
             Some(message) => update(app, message),
             None => Task::none(),
         },
-        Message::FocusNext => super::keys::focus(true),
-        Message::FocusPrevious => super::keys::focus(false),
+        Message::FocusNext => effects::task(Effect::FocusNext, app),
+        Message::FocusPrevious => effects::task(Effect::FocusPrevious, app),
         Message::Noop => Task::none(),
         Message::Frame(at) => {
             app.motion.frame(at);
@@ -2113,9 +2101,7 @@ fn handle(app: &mut App, message: Message) -> Task<Message> {
         Message::ToggleReduceMotion => {
             let reduce = !app.motion.reduce();
             app.motion.set_reduce(reduce);
-            Task::perform(save_prefs(app.prefs(), app.prefs_dir.clone()), |_| {
-                Message::Noop
-            })
+            effects::task(Effect::SavePrefs(app.prefs()), app)
         }
     }
 }
@@ -2173,50 +2159,6 @@ fn local_today(offset: UtcOffset) -> String {
         .date()
         .format(format_description!("[year]-[month]-[day]"))
         .unwrap_or_default()
-}
-
-/// Grava o `ui.json` fora da thread da UI (disco lento nao trava a janela). Falha so vira
-/// aviso: a preferencia e conforto, o tema ja trocou na tela.
-///
-/// Cada gravacao leva um numero tirado na thread da UI, na ordem dos cliques, e so escreve se
-/// for mais nova que a ultima escrita naquela pasta: duas threads nao tem ordem garantida, e
-/// sem isso trocar o tema logo depois de "Iniciar com o Windows" (ou o tema duas vezes) podia
-/// terminar com o arquivo da escolha anterior.
-fn save_prefs(prefs: UiPrefs, dir: PathBuf) -> futures::channel::oneshot::Receiver<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::{Mutex, OnceLock};
-
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    static WRITTEN: OnceLock<Mutex<HashMap<PathBuf, u64>>> = OnceLock::new();
-
-    let generation = NEXT.fetch_add(1, Ordering::Relaxed);
-    let (tx, rx) = futures::channel::oneshot::channel();
-    std::thread::spawn(move || {
-        let written = WRITTEN.get_or_init(Default::default);
-        // Envenenado = outra gravacao entrou em panico; a tabela continua coerente.
-        let mut written = written.lock().unwrap_or_else(|e| e.into_inner());
-        let last = written.entry(dir.clone()).or_insert(0);
-        if generation > *last {
-            if let Err(e) = prefs.save(&dir) {
-                tracing::warn!("nao foi possivel gravar ui.json em {}: {e}", dir.display());
-            }
-            *last = generation;
-        }
-        drop(written);
-        let _ = tx.send(());
-    });
-    rx
-}
-
-/// Timer sem runtime: o executor da UI nao e tokio, entao o timer e uma thread comum + oneshot
-/// do `futures`, que e um Future em qualquer executor.
-fn delay(duration: Duration) -> futures::channel::oneshot::Receiver<()> {
-    let (tx, rx) = futures::channel::oneshot::channel();
-    std::thread::spawn(move || {
-        std::thread::sleep(duration);
-        let _ = tx.send(());
-    });
-    rx
 }
 
 /// Um tique por segundo, numa thread so. A thread termina quando o iced solta o receiver.
@@ -2301,6 +2243,7 @@ pub(super) mod tests {
     use crate::desktop::{Fake, Headless};
     use crate::store::erase::DeviceData;
 
+    use super::super::effects::save_prefs;
     use super::super::remove_view;
     use super::*;
 

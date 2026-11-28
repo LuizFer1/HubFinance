@@ -7,6 +7,7 @@
 pub mod analysis;
 pub mod assistant_setup;
 pub mod connect;
+pub mod effect;
 pub mod keys;
 pub mod measure;
 pub mod remove;

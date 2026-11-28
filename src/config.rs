@@ -1,3 +1,5 @@
+use std::ffi::OsStr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -52,10 +54,14 @@ impl Config {
                 .data_local_dir()
                 .to_path_buf(),
         };
+        let port = port_override(
+            std::env::var_os("HUBFINANCE_PORT").as_deref(),
+            cfg!(debug_assertions),
+        );
         Ok(Config {
             data_dir,
-            https_port: HTTPS_PORT,
-            http_port: HTTP_PORT,
+            https_port: port.unwrap_or(HTTPS_PORT),
+            http_port: port.map_or(HTTP_PORT, |p| p + 1),
         })
     }
 
@@ -66,6 +72,42 @@ impl Config {
     pub fn tls_dir(&self) -> PathBuf {
         self.data_dir.join("tls")
     }
+}
+
+/// `HUBFINANCE_PORT=<n>` troca a porta HTTPS para `n` e a HTTP para `n+1`, so em build debug.
+/// O hub instalado ocupa 7777/7778 nesta maquina: sem isso o hub de desenvolvimento ao lado
+/// cairia em `Failed`. Em release e ignorada, para uma variavel esquecida no ambiente nunca
+/// mudar a porta que os celulares pareados conhecem.
+pub fn port_override(value: Option<&OsStr>, debug: bool) -> Option<u16> {
+    if !debug {
+        return None;
+    }
+    let n: u16 = value?.to_str()?.trim().parse().ok()?;
+    // Sem espaco para o `n+1` da porta HTTP.
+    n.checked_add(1)?;
+    Some(n)
+}
+
+/// `HUBFINANCE_BIND=<ip>`: endereco de escuta, so em build debug. O padrao de producao e
+/// `0.0.0.0` (LAN); o smoke usa `127.0.0.1` porque escutar em 0.0.0.0 dispara o alerta do
+/// Firewall do Windows, que ninguem clica numa execucao noturna. Valor invalido cai no padrao.
+pub fn bind_ip(value: Option<&OsStr>, debug: bool) -> IpAddr {
+    let default = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+    if !debug {
+        return default;
+    }
+    value
+        .and_then(OsStr::to_str)
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(default)
+}
+
+/// Endereco de escuta efetivo (le `HUBFINANCE_BIND`).
+pub fn bind_ip_from_env() -> IpAddr {
+    bind_ip(
+        std::env::var_os("HUBFINANCE_BIND").as_deref(),
+        cfg!(debug_assertions),
+    )
 }
 
 /// Tema da janela, em memoria. Escuro e o padrao do design.
@@ -207,6 +249,28 @@ impl UiPrefs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn port_override_so_vale_em_debug_e_com_espaco_para_o_mais_um() {
+        let os = |s: &'static str| Some(OsStr::new(s));
+        assert_eq!(port_override(None, true), None);
+        assert_eq!(port_override(os("47777"), true), Some(47777));
+        assert_eq!(port_override(os("lixo"), true), None);
+        assert_eq!(port_override(os("65535"), true), None);
+        assert_eq!(port_override(os("65534"), true), Some(65534));
+        assert_eq!(port_override(os("47777"), false), None);
+    }
+
+    #[test]
+    fn bind_ip_padrao_e_lan_e_o_override_so_vale_em_debug() {
+        let os = |s: &'static str| Some(OsStr::new(s));
+        let lan = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let lo = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        assert_eq!(bind_ip(None, true), lan);
+        assert_eq!(bind_ip(os("127.0.0.1"), true), lo);
+        assert_eq!(bind_ip(os("lixo"), true), lan);
+        assert_eq!(bind_ip(os("127.0.0.1"), false), lan);
+    }
 
     #[test]
     fn url_das_releases_e_fixa_e_segura_para_o_start() {

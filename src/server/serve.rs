@@ -89,11 +89,11 @@ pub async fn bind_servers(
     })
 }
 
-/// `0.0.0.0`: os celulares chegam por qualquer interface de LAN, e o IP pode mudar sem
+/// `0.0.0.0` por padrao (`HUBFINANCE_BIND` so em debug, ver `config::bind_ip`): os celulares chegam por qualquer interface de LAN, e o IP pode mudar sem
 /// reiniciar o hub.
 fn listen(port: u16) -> Result<std::net::TcpListener, ServeError> {
-    let listener =
-        std::net::TcpListener::bind(("0.0.0.0", port)).map_err(|e| ServeError::Bind(port, e))?;
+    let listener = std::net::TcpListener::bind((crate::config::bind_ip_from_env(), port))
+        .map_err(|e| ServeError::Bind(port, e))?;
     listener
         .set_nonblocking(true)
         .map_err(|e| ServeError::Bind(port, e))?;

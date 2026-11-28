@@ -8,7 +8,7 @@
 
 use gpui::{AnyElement, Div, IntoElement, SharedString, div, prelude::*, px};
 
-use super::avatar::Avatar;
+use super::avatar::{Avatar, photo};
 use super::badge::Badge;
 use super::button::{Button, IconButton, State, Variant};
 use super::card::Card;
@@ -16,7 +16,7 @@ use super::category_tile::CategoryTile;
 use super::chip::{Chip, Pill};
 use super::empty::EmptyState;
 use super::focus;
-use super::money::Money;
+use super::money::{Money, SIZES};
 use super::month_picker::{MonthPicker, PartialChip};
 use super::progress::Progress;
 use super::radio::Radio;
@@ -25,13 +25,19 @@ use super::stat::Stat;
 use super::status_chip::{Kind, StatusChip};
 use super::switch::Switch;
 use super::tooltip::{Line, TooltipView};
+use crate::dashboard::money::{AXIS_MASK, MASK};
 use crate::gui::fonts;
 use crate::gui::icons::Icon;
 use crate::gui::theme::Tokens;
 
 /// `HUBFINANCE_DEMO=componentes`.
 pub fn requested() -> bool {
-    std::env::var_os("HUBFINANCE_DEMO").is_some_and(|v| v == "componentes")
+    std::env::var_os("HUBFINANCE_DEMO").is_some_and(|v| v == "componentes" || v == "dados")
+}
+
+/// `HUBFINANCE_DEMO=dados`: so a secao "Dados", sem rolar (a captura do smoke nao rola).
+fn only_data() -> bool {
+    std::env::var_os("HUBFINANCE_DEMO").is_some_and(|v| v == "dados")
 }
 
 fn section(title: &'static str, t: &'static Tokens) -> Div {
@@ -70,7 +76,7 @@ fn focused(el: impl IntoElement, t: &'static Tokens, gap: gpui::Hsla) -> AnyElem
 
 const COL: f32 = 120.0;
 
-pub fn render(t: &'static Tokens) -> impl IntoElement {
+pub fn render(t: &'static Tokens) -> AnyElement {
     let gap = t.surface;
     let rows: [(&str, Variant); 5] = [
         ("Primário", Variant::Primary),
@@ -203,6 +209,15 @@ pub fn render(t: &'static Tokens) -> impl IntoElement {
         );
 
     let data = data_section(t);
+    if only_data() {
+        return div()
+            .id("showcase")
+            .size_full()
+            .overflow_y_scroll()
+            .p(px(24.0))
+            .child(data)
+            .into_any_element();
+    }
     div()
         .id("showcase")
         .size_full()
@@ -214,6 +229,7 @@ pub fn render(t: &'static Tokens) -> impl IntoElement {
         .child(buttons)
         .child(controls)
         .child(data)
+        .into_any_element()
 }
 
 /// Componentes de dado: cards, valores (visivel e oculto), avatares, tiles, chips, seletor de
@@ -232,40 +248,50 @@ fn data_section(t: &'static Tokens) -> impl IntoElement {
                 .child(
                     Card::new(t)
                         .child(Stat::new("Receitas", "R$ 14.180,00", t).note("novembro"))
-                        .w(220.0),
+                        .w(px(220.0)),
                 )
                 .child(
                     Card::new(t)
-                        .child(Stat::new("Receitas", "R$ 14.180,00", t).hidden(true))
-                        .w(220.0),
+                        .child(Stat::new("Receitas", MASK, t))
+                        .w(px(220.0)),
                 )
                 .child(
                     Card::highlight(t)
+                        .gap(px(10.0))
                         .child(Money::new("R$ 6,3 mil", 20.0, t).color(t.on_highlight))
                         .child(Progress::new(3.0, 4.0, t).fill(t.on_highlight))
-                        .w(220.0),
+                        .w(px(220.0)),
                 ),
         )
         .child(
             row()
-                .child(Money::new("R$ 12.345,67", 30.0, t))
-                .child(Money::new("−R$ 96,40", 15.0, t))
+                .items_baseline()
+                .children(SIZES.map(|z| Money::new("R$ 12.345,67", z, t)))
+                .child(Money::new("−R$ 96,40", 15.0, t)),
+        )
+        .child(
+            row()
+                .items_baseline()
+                .children(SIZES.map(|z| Money::new(MASK, z, t).id(("oculto", z as u64))))
                 .child(Money::new("75,6%", 15.0, t))
-                .child(Money::new("75,6%", 15.0, t).hidden(true)),
+                .child(Money::new(AXIS_MASK, 15.0, t).id("oculto-num")),
         )
         .child(
             row()
                 .child(Avatar::new("Luiz", "sky", t))
                 .child(Avatar::new("Ágata", "rose", t).size(48.0))
-                .child(CategoryTile::new("cart", "orange", t))
+                .child(Avatar::new("Foto", "sky", t).photo(photo(include_bytes!(
+                    "../../../assets/brand/hubfinance-512.png"
+                ))))
+                .child(CategoryTile::new("shopping-cart", "orange", t))
                 .child(CategoryTile::new("desconhecida", "violet", t))
                 .child(StatusChip::new(Kind::Ok, "Emergência coberta", t))
                 .child(StatusChip::new(Kind::Warning, "Ainda não coberta", t)),
         )
         .child(
             row()
-                .child(MonthPicker::new("Novembro 2026", false, t))
-                .child(MonthPicker::new("Outubro 2026", true, t))
+                .child(MonthPicker::new("mp1", "Novembro 2026", false, t))
+                .child(MonthPicker::new("mp2", "Outubro 2026", true, t))
                 .child(PartialChip::new("Parcial · até 27 nov", t)),
         )
         .child(
@@ -292,10 +318,36 @@ fn data_section(t: &'static Tokens) -> impl IntoElement {
                     t,
                 ))),
         )
-        .child(Card::new(t).child(EmptyState::new(
-            Icon::Pulse,
-            "Sem movimentações neste mês",
-            "Nada foi guardado ou retirado em maio de 2025.",
-            t,
-        )))
+        .child(
+            row()
+                .items_start()
+                .child(
+                    Card::new(t)
+                        .child(EmptyState::new(
+                            Icon::Pulse,
+                            "Sem movimentações neste mês",
+                            "Nada foi guardado ou retirado em maio\u{a0}de\u{a0}2025.",
+                            t,
+                        ))
+                        .w(px(300.0)),
+                )
+                .child(
+                    Card::new(t)
+                        .child(
+                            EmptyState::new(
+                                Icon::Calendar,
+                                "Nenhum lançamento neste mês",
+                                "Nada foi registrado em maio\u{a0}de\u{a0}2025.",
+                                t,
+                            )
+                            .action(Button::new(
+                                "vazio-acao",
+                                "Ir para o mês atual",
+                                Variant::Outline,
+                                t,
+                            )),
+                        )
+                        .w(px(300.0)),
+                ),
+        )
 }

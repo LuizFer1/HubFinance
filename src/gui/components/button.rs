@@ -281,6 +281,9 @@ pub struct IconButton {
     ring_gap: Option<Hsla>,
     focus: Option<FocusHandle>,
     on_click: Option<Handler>,
+    hover_bg: Option<Hsla>,
+    disabled_opacity: f32,
+    glyph_size: f32,
 }
 
 impl IconButton {
@@ -293,7 +296,27 @@ impl IconButton {
             ring_gap: None,
             focus: None,
             on_click: None,
+            hover_bg: None,
+            disabled_opacity: 0.4,
+            glyph_size: 18.0,
         }
+    }
+
+    /// Fundo do hover quando o botao fica sobre `surface_2` (seletor de mes: o hover do design
+    /// e `divider`; o padrao `surface_2` sumiria sobre o fundo do proprio seletor).
+    pub fn hover_bg(mut self, color: Hsla) -> IconButton {
+        self.hover_bg = Some(color);
+        self
+    }
+
+    pub fn glyph_size(mut self, size: f32) -> IconButton {
+        self.glyph_size = size;
+        self
+    }
+
+    pub fn disabled_opacity(mut self, opacity: f32) -> IconButton {
+        self.disabled_opacity = opacity;
+        self
     }
 
     pub fn disabled(mut self, disabled: bool) -> IconButton {
@@ -320,7 +343,7 @@ impl IconButton {
 impl RenderOnce for IconButton {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let t = self.tokens;
-        let hover = icon_button_bg(State::Hover, t);
+        let hover = self.hover_bg.or(icon_button_bg(State::Hover, t));
         let pressed = icon_button_bg(State::Pressed, t);
         let ring = focus::style(t, self.ring_gap.unwrap_or(t.bg));
         let enabled = !self.disabled;
@@ -347,11 +370,11 @@ impl RenderOnce for IconButton {
                     })
                     .focus_visible(ring)
             })
-            .when(!enabled, |d| d.opacity(0.4))
+            .when(!enabled, |d| d.opacity(self.disabled_opacity))
             .when_some(handler.filter(|_| enabled), |d, f| {
                 d.on_click(move |_: &ClickEvent, window, cx| f(window, cx))
             })
-            .child(icon(self.glyph, px(18.0), t.text))
+            .child(icon(self.glyph, px(self.glyph_size), t.text))
     }
 }
 

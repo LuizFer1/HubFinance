@@ -11,7 +11,6 @@ pub struct Stat {
     value: SharedString,
     note: Option<SharedString>,
     size: f32,
-    hidden: bool,
     tokens: &'static Tokens,
 }
 
@@ -26,7 +25,6 @@ impl Stat {
             value: value.into(),
             note: None,
             size: 30.0,
-            hidden: false,
             tokens,
         }
     }
@@ -38,11 +36,6 @@ impl Stat {
 
     pub fn size(mut self, size: f32) -> Stat {
         self.size = size;
-        self
-    }
-
-    pub fn hidden(mut self, hidden: bool) -> Stat {
-        self.hidden = hidden;
         self
     }
 }
@@ -60,7 +53,7 @@ impl RenderOnce for Stat {
                     .text_color(t.muted)
                     .child(self.label),
             )
-            .child(Money::new(self.value, self.size, t).hidden(self.hidden))
+            .child(Money::new(self.value, self.size, t))
             .children(
                 self.note
                     .map(|n| div().text_size(px(12.0)).text_color(t.muted).child(n)),

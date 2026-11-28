@@ -47,7 +47,7 @@ impl RenderOnce for StatusChip {
         let t = self.tokens;
         let (fg, bg) = colors(self.kind, t);
         let mark = match self.kind {
-            Kind::Ok => icon(Icon::Check, px(12.0), fg).into_any_element(),
+            Kind::Ok => icon(Icon::CheckW3, px(12.0), fg).into_any_element(),
             Kind::Warning => div()
                 .font_weight(fonts::weight(800))
                 .child("!")

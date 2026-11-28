@@ -1,26 +1,33 @@
 //! Valor em dinheiro do design: "R$" a 0,6em/500/opacidade 0,6 e o numero ao lado.
 //!
-//! O texto chega pronto do view-model (ja mascarado quando "Ocultar valores" esta ligado, ou
-//! com os digitos). O componente so desenha; a unica decisao daqui e **separar o "R$"** para
-//! dar a ele o tamanho menor. A mascara tem largura fixa: se o numero oculto mantivesse o
-//! comprimento do real, a largura vazaria a ordem de grandeza do valor.
+//! **O componente so desenha.** Quem decide a mascara e o view-model (`dashboard::money`: `MASK`
+//! "R$ •••••", `AXIS_MASK` "•••"): o texto que chega ja e a mascara e nunca contem o valor. A
+//! unica decisao daqui e **separar o "R$"** para dar a ele o tamanho menor, e reconhecer a
+//! mascara (so pontos) para o leitor de tela ouvir "valor oculto" em vez de "ponto ponto...".
+//! Ter uma segunda mascara aqui duplicaria a do view-model e as duas poderiam divergir.
 
 use gpui::{
-    App, Hsla, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div, px,
+    App, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce, Role,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, px, relative,
 };
 
 use crate::gui::fonts;
 use crate::gui::theme::Tokens;
 
-/// Mascara de dinheiro (largura fixa) e de numero que revela valor (porcentagem, variacao).
-pub const MASK_MONEY: &str = "••••";
-pub const MASK_NUMBER: &str = "•••";
-/// Rotulo de acessibilidade do valor oculto (o GPUI 0.3 ainda nao expoe arvore de
-/// acessibilidade; fica para quando expuser e para o tooltip do olho).
+/// Rotulo de acessibilidade do valor oculto (spec 6.9).
 pub const HIDDEN_LABEL: &str = "valor oculto";
 
 /// Tamanhos do design (px): total do dashboard, cards, linhas, secundario e tabela.
 pub const SIZES: [f32; 5] = [48.0, 30.0, 20.0, 15.0, 14.0];
+
+/// `line-height: 1.05` dos valores no design: sem ele cada valor usa a altura de linha padrao e
+/// os cards ficam mais altos que o artboard.
+pub const LINE_HEIGHT: f32 = 1.05;
+
+/// O corpo e so pontos de mascara (e tem algum): o valor esta oculto.
+pub fn is_masked(body: &str) -> bool {
+    !body.is_empty() && body.chars().all(|c| c == '•')
+}
 
 /// Texto do valor separado em sinal, "R$" e corpo.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,29 +61,11 @@ pub fn split(text: &str) -> Parts {
     }
 }
 
-/// O que a tela mostra: oculto vira mascara de largura fixa, sem digito nenhum.
-pub fn display(text: &str, hidden: bool) -> Parts {
-    let parts = split(text);
-    if !hidden {
-        return parts;
-    }
-    Parts {
-        sign: String::new(),
-        body: if parts.currency {
-            MASK_MONEY
-        } else {
-            MASK_NUMBER
-        }
-        .to_string(),
-        currency: parts.currency,
-    }
-}
-
 #[derive(IntoElement)]
 pub struct Money {
     text: SharedString,
     size: f32,
-    hidden: bool,
+    id: Option<ElementId>,
     weight: u16,
     color: Option<Hsla>,
     tokens: &'static Tokens,
@@ -87,15 +76,17 @@ impl Money {
         Money {
             text: text.into(),
             size,
-            hidden: false,
+            id: None,
             weight: 600,
             color: None,
             tokens,
         }
     }
 
-    pub fn hidden(mut self, hidden: bool) -> Money {
-        self.hidden = hidden;
+    /// Id estavel do elemento (so o valor oculto o usa, para expor o rotulo). Sem ele, um id
+    /// derivado do tamanho.
+    pub fn id(mut self, id: impl Into<ElementId>) -> Money {
+        self.id = Some(id.into());
         self
     }
 
@@ -112,13 +103,15 @@ impl Money {
 
 impl RenderOnce for Money {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let parts = display(&self.text, self.hidden);
+        let parts = split(&self.text);
+        let masked = is_masked(&parts.body);
         let color = self.color.unwrap_or(self.tokens.text);
         let size = self.size;
         let mut row = div()
             .flex()
             .flex_none()
             .items_baseline()
+            .line_height(relative(LINE_HEIGHT))
             .text_size(px(size))
             .font_weight(fonts::weight(self.weight))
             .text_color(color);
@@ -135,8 +128,16 @@ impl RenderOnce for Money {
                     .child("R$"),
             );
         }
-        let body = div().child(SharedString::from(parts.body));
-        row.child(body)
+        row = row.child(div().child(SharedString::from(parts.body)));
+        if masked {
+            let id = self.id.unwrap_or(ElementId::Integer(self.size as u64));
+            row.id(id)
+                .role(Role::Label)
+                .aria_label(HIDDEN_LABEL)
+                .into_any_element()
+        } else {
+            row.into_any_element()
+        }
     }
 }
 
@@ -164,27 +165,19 @@ mod tests {
     }
 
     #[test]
-    fn oculto_tem_largura_fixa_e_nao_revela_digitos() {
-        let curto = display("R$ 9,00", true);
-        let longo = display("R$ 1.234.567,89", true);
-        assert_eq!(curto, longo);
-        assert_eq!(curto.body, MASK_MONEY);
-        assert!(curto.currency);
-        assert!(!curto.body.chars().any(|c| c.is_ascii_digit()));
+    fn mascara_do_view_model_e_reconhecida_e_nao_tem_digito() {
+        use crate::dashboard::money::{AXIS_MASK, MASK};
+        let p = split(MASK);
+        assert!(p.currency && is_masked(&p.body), "{p:?}");
+        assert!(!p.body.chars().any(|c| c.is_ascii_digit()));
+        let n = split(AXIS_MASK);
+        assert!(!n.currency && is_masked(&n.body), "{n:?}");
     }
 
     #[test]
-    fn numero_que_revela_valor_vira_tres_pontos_sem_moeda() {
-        let p = display("75,6%", true);
-        assert_eq!(
-            (p.currency, p.body.as_str(), p.sign.as_str()),
-            (false, MASK_NUMBER, "")
-        );
-        assert_eq!(display("−R$ 5,00", true).sign, "");
-    }
-
-    #[test]
-    fn visivel_nao_muda_o_texto() {
-        assert_eq!(display("R$ 1,00", false), split("R$ 1,00"));
+    fn valor_visivel_nao_e_mascara() {
+        assert!(!is_masked(&split("R$ 1,00").body));
+        assert!(!is_masked(&split("75,6%").body));
+        assert!(!is_masked(""));
     }
 }

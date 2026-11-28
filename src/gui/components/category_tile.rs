@@ -1,18 +1,23 @@
-//! Tile de categoria: glifo Phosphor sobre a cor do token a 18 % (README do handoff).
+//! Tile de categoria (artboard Main, "Recentes"): circulo de 36 px, cor do token a 14 % sobre
+//! transparente (o fundo do card aparece) e glifo Phosphor de 16 px.
 
 use gpui::{
     App, Hsla, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div, px,
 };
 
 use super::avatar::profile_color;
-use super::mix;
 use crate::gui::fonts;
 use crate::gui::theme::Tokens;
 use crate::ui_model::icons::glyph;
 
-/// Fundo do tile: o token misturado a 18 % sobre a superficie.
-pub fn tile_bg(color: Hsla, t: &Tokens) -> Hsla {
-    mix(t.surface, color, 0.18)
+/// Opacidade do fundo (`color-mix(in srgb, cor 14%, transparent)` do design).
+pub const BG_OPACITY: f32 = 0.14;
+pub const SIZE: f32 = 36.0;
+pub const GLYPH: f32 = 16.0;
+
+/// Fundo do tile: o token a 14 %, sobre transparente.
+pub fn tile_bg(color: Hsla) -> Hsla {
+    color.opacity(BG_OPACITY)
 }
 
 #[derive(IntoElement)]
@@ -32,7 +37,7 @@ impl CategoryTile {
         CategoryTile {
             icon_key: icon_key.into(),
             color_token: color_token.into(),
-            size: 40.0,
+            size: SIZE,
             tokens,
         }
     }
@@ -53,10 +58,10 @@ impl RenderOnce for CategoryTile {
             .items_center()
             .justify_center()
             .size(px(self.size))
-            .rounded(px(self.size * 0.3))
-            .bg(tile_bg(color, t))
+            .rounded_full()
+            .bg(tile_bg(color))
             .text_color(color)
-            .text_size(px(self.size * 0.5))
+            .text_size(px(self.size * GLYPH / SIZE))
             .font_family(fonts::ICON_FAMILY)
             // Chave desconhecida cai no glifo neutro de `glyph`, nunca em quadrado vazio.
             .child(glyph(&self.icon_key))
@@ -69,10 +74,11 @@ mod tests {
     use crate::gui::theme::DARK;
 
     #[test]
-    fn fundo_e_a_mistura_de_18_por_cento() {
+    fn fundo_e_a_cor_a_14_por_cento_sobre_transparente() {
         let t = &*DARK;
         let c = profile_color("rose", t);
-        assert_eq!(tile_bg(c, t), mix(t.surface, c, 0.18));
-        assert_ne!(tile_bg(c, t), t.surface);
+        let bg = tile_bg(c);
+        assert_eq!(bg.a, BG_OPACITY);
+        assert_eq!((bg.h, bg.s, bg.l), (c.h, c.s, c.l));
     }
 }

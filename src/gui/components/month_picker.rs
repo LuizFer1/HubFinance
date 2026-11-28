@@ -2,10 +2,11 @@
 //! há mês futuro com dados) e o chip "Parcial · até 27 nov" avisa que o mês ainda corre.
 
 use gpui::{
-    App, ClickEvent, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div,
-    prelude::*, px,
+    App, ElementId, FocusHandle, IntoElement, ParentElement, RenderOnce, SharedString, Styled,
+    Window, div, px,
 };
 
+use super::button::IconButton;
 use crate::gui::fonts;
 use crate::gui::icons::{Icon, icon};
 use crate::gui::theme::Tokens;
@@ -14,6 +15,9 @@ type Handler = Box<dyn Fn(&mut Window, &mut App) + 'static>;
 
 /// Opacidade da seta desabilitada (design: 0,35).
 pub const DISABLED_OPACITY: f32 = 0.35;
+/// Largura minima do rotulo (design: `min-width: 118px`): sem ela o seletor muda de largura de
+/// "Maio 2026" para "Setembro 2026" e empurra o que estiver ao lado.
+pub const LABEL_MIN_WIDTH: f32 = 118.0;
 
 /// O mês seguinte só existe se o mostrado for anterior ao corrente (`YYYY-MM` compara por
 /// string porque tem largura fixa).
@@ -23,20 +27,33 @@ pub fn can_go_next(shown: &str, current: &str) -> bool {
 
 #[derive(IntoElement)]
 pub struct MonthPicker {
+    id: SharedString,
     label: SharedString,
     can_next: bool,
     on_prev: Option<Handler>,
     on_next: Option<Handler>,
+    focus_prev: Option<FocusHandle>,
+    focus_next: Option<FocusHandle>,
     tokens: &'static Tokens,
 }
 
 impl MonthPicker {
-    pub fn new(label: impl Into<SharedString>, can_next: bool, tokens: &'static Tokens) -> Self {
+    /// `id` e o prefixo dos ids das setas (`<id>-prev`, `<id>-next`): dois seletores na mesma
+    /// tela (ou na vitrine) nao podem repetir id.
+    pub fn new(
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        can_next: bool,
+        tokens: &'static Tokens,
+    ) -> Self {
         MonthPicker {
+            id: id.into(),
             label: label.into(),
             can_next,
             on_prev: None,
             on_next: None,
+            focus_prev: None,
+            focus_next: None,
             tokens,
         }
     }
@@ -50,29 +67,39 @@ impl MonthPicker {
         self.on_next = Some(Box::new(f));
         self
     }
+
+    /// Handles de foco das setas, guardados por quem desenha a tela (o Tab as percorre).
+    pub fn focus(mut self, prev: &FocusHandle, next: &FocusHandle) -> Self {
+        self.focus_prev = Some(prev.clone());
+        self.focus_next = Some(next.clone());
+        self
+    }
 }
 
 impl RenderOnce for MonthPicker {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let t = self.tokens;
-        let arrow = |id: &'static str, glyph: Icon, enabled: bool, on: Option<Handler>| {
-            let el = div()
-                .id(id)
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(36.0))
-                .rounded_full();
-            if enabled {
-                let hover = t.surface;
-                el.cursor_pointer()
-                    .hover(move |s| s.bg(hover))
-                    .when_some(on, |d, f| d.on_click(move |_: &ClickEvent, w, cx| f(w, cx)))
-                    .child(icon(glyph, px(16.0), t.text))
-            } else {
-                el.opacity(DISABLED_OPACITY)
-                    .child(icon(glyph, px(16.0), t.text))
+        // As setas sao o `IconButton` do design (foco, anel, cursor), com o hover `divider` e o
+        // anel afastado na cor do fundo do proprio seletor (`surface_2`).
+        let arrow = |suffix: &str,
+                     glyph: Icon,
+                     enabled: bool,
+                     on: Option<Handler>,
+                     focus: Option<FocusHandle>| {
+            let id = ElementId::Name(SharedString::from(format!("{}-{suffix}", self.id)));
+            let mut b = IconButton::new(id, glyph, t)
+                .ring_gap(t.surface_2)
+                .hover_bg(t.divider)
+                .glyph_size(16.0)
+                .disabled_opacity(DISABLED_OPACITY)
+                .disabled(!enabled);
+            if let Some(f) = focus {
+                b = b.focus(&f);
             }
+            if let Some(f) = on {
+                b = b.on_click(move |w, cx| f(w, cx));
+            }
+            b
         };
         div()
             .flex()
@@ -85,13 +112,25 @@ impl RenderOnce for MonthPicker {
             .bg(t.surface_2)
             .text_color(t.text)
             .font_weight(fonts::weight(600))
-            .child(arrow("month-prev", Icon::ChevronLeft, true, self.on_prev))
-            .child(self.label)
             .child(arrow(
-                "month-next",
+                "prev",
+                Icon::ChevronLeft,
+                true,
+                self.on_prev,
+                self.focus_prev,
+            ))
+            .child(
+                div()
+                    .min_w(px(LABEL_MIN_WIDTH))
+                    .text_center()
+                    .child(self.label),
+            )
+            .child(arrow(
+                "next",
                 Icon::ChevronRight,
                 self.can_next,
                 self.on_next,
+                self.focus_next,
             ))
     }
 }

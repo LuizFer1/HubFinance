@@ -86,10 +86,25 @@ fn focused(el: impl IntoElement, t: &'static Tokens, gap: gpui::Hsla) -> AnyElem
         .into_any_element()
 }
 
+/// Liga o handle de Tab ao controle, quando a vitrine tem `Fields`.
+fn with_focus<T>(
+    el: T,
+    handle: Option<&gpui::FocusHandle>,
+    f: impl FnOnce(T, &gpui::FocusHandle) -> T,
+) -> T {
+    match handle {
+        Some(h) => f(el, h),
+        None => el,
+    }
+}
+
 const COL: f32 = 120.0;
+/// 25 botoes (5 linhas x 5 colunas), 3 icones, 4 interruptores, 3 radios e 2 pilulas.
+const STOPS: usize = 37;
 
 pub fn render(t: &'static Tokens, fields: Option<&Fields>) -> AnyElement {
     let gap = t.surface;
+    let stop = |i: usize| fields.and_then(|f| f.stops.get(i));
     let rows: [(&str, Variant); 5] = [
         ("Primário", Variant::Primary),
         ("Contorno", Variant::Outline),
@@ -113,6 +128,10 @@ pub fn render(t: &'static Tokens, fields: Option<&Fields>) -> AnyElement {
             let b = Button::new(SharedString::from(format!("b{n}{col}")), "Continuar", v, t)
                 .ring_gap(gap)
                 .disabled(disabled);
+            let b = match stop(n * 5 + col) {
+                Some(h) => b.focus(h),
+                None => b,
+            };
             match state {
                 Some(s) => b.forced_state(s),
                 None => b,
@@ -142,13 +161,25 @@ pub fn render(t: &'static Tokens, fields: Option<&Fields>) -> AnyElement {
             .flex()
             .items_center()
             .gap(px(12.0))
-            .child(IconButton::new("ib1", Icon::ChevronLeft, t).ring_gap(gap))
+            .child(with_focus(
+                IconButton::new("ib1", Icon::ChevronLeft, t).ring_gap(gap),
+                stop(25),
+                IconButton::focus,
+            ))
             .child(focused(
-                IconButton::new("ib3", Icon::ChevronLeft, t).ring_gap(gap),
+                with_focus(
+                    IconButton::new("ib3", Icon::ChevronLeft, t).ring_gap(gap),
+                    stop(26),
+                    IconButton::focus,
+                ),
                 t,
                 gap,
             ))
-            .child(IconButton::new("ib2", Icon::ChevronRight, t).disabled(true))
+            .child(with_focus(
+                IconButton::new("ib2", Icon::ChevronRight, t).disabled(true),
+                stop(27),
+                IconButton::focus,
+            ))
             .child(Button::new("bi", "Com ícone", Variant::Outline, t).icon(Icon::Copy)),
     );
 
@@ -195,14 +226,50 @@ pub fn render(t: &'static Tokens, fields: Option<&Fields>) -> AnyElement {
                 .flex()
                 .items_center()
                 .gap(px(14.0))
-                .child(Switch::new("sw1", true, t).ring_gap(gap))
-                .child(Switch::new("sw2", false, t))
-                .child(Switch::new("sw3", true, t).disabled(true))
-                .child(focused(Switch::new("sw4", true, t).ring_gap(gap), t, gap))
+                .child(with_focus(
+                    Switch::new("sw1", true, t).ring_gap(gap),
+                    stop(28),
+                    Switch::focus,
+                ))
+                .child(with_focus(
+                    Switch::new("sw2", false, t),
+                    stop(29),
+                    Switch::focus,
+                ))
+                .child(with_focus(
+                    Switch::new("sw3", true, t).disabled(true),
+                    stop(30),
+                    Switch::focus,
+                ))
+                .child(focused(
+                    with_focus(
+                        Switch::new("sw4", true, t).ring_gap(gap),
+                        stop(31),
+                        Switch::focus,
+                    ),
+                    t,
+                    gap,
+                ))
                 .child(div().w(px(24.0)))
-                .child(Radio::new("r1", false, t))
-                .child(Radio::new("r2", true, t))
-                .child(focused(Radio::new("r3", false, t).ring_gap(gap), t, gap)),
+                .child(with_focus(
+                    Radio::new("r1", false, t),
+                    stop(32),
+                    Radio::focus,
+                ))
+                .child(with_focus(
+                    Radio::new("r2", true, t),
+                    stop(33),
+                    Radio::focus,
+                ))
+                .child(focused(
+                    with_focus(
+                        Radio::new("r3", false, t).ring_gap(gap),
+                        stop(34),
+                        Radio::focus,
+                    ),
+                    t,
+                    gap,
+                )),
         )
         .child(
             div()
@@ -210,9 +277,17 @@ pub fn render(t: &'static Tokens, fields: Option<&Fields>) -> AnyElement {
                 .items_center()
                 .gap(px(10.0))
                 .child(Chip::new("Últimos 12 meses", t))
-                .child(Pill::new("pill", "12 meses", t).ring_gap(gap))
+                .child(with_focus(
+                    Pill::new("pill", "12 meses", t).ring_gap(gap),
+                    stop(35),
+                    Pill::focus,
+                ))
                 .child(focused(
-                    Pill::new("pill2", "12 meses", t).ring_gap(gap),
+                    with_focus(
+                        Pill::new("pill2", "12 meses", t).ring_gap(gap),
+                        stop(36),
+                        Pill::focus,
+                    ),
                     t,
                     gap,
                 ))
@@ -262,6 +337,8 @@ pub struct Fields {
     area: gpui::Entity<gpui_component::input::TextareaState>,
     // Handles com `tab_stop(true)`, criados uma vez: sem eles so os campos entram no Tab.
     button: gpui::FocusHandle,
+    // Controles das Tarefas 11 e 12 (botoes, interruptores, radios, pilulas), na ordem de leitura.
+    stops: Vec<gpui::FocusHandle>,
     modal: gpui::FocusHandle,
     modal_close: gpui::FocusHandle,
     toast: super::toast::ToastFocus,
@@ -275,6 +352,9 @@ impl Fields {
             secret: new_input(window, cx, "Chave da API", true, |_, _| {}),
             area: new_area(window, cx, "Pergunte sobre os achados…", |_, _| {}, |_| {}),
             button: cx.focus_handle().tab_stop(true),
+            stops: (0..STOPS)
+                .map(|_| cx.focus_handle().tab_stop(true))
+                .collect(),
             modal: cx.focus_handle(),
             modal_close: cx.focus_handle().tab_stop(true),
             toast: super::toast::ToastFocus::new(cx),
@@ -290,7 +370,12 @@ fn interaction_section(t: &'static Tokens, f: &Fields) -> impl IntoElement {
     use super::toast::Toast;
     section("Campos, diálogo e aviso", t)
         .child(TextField::new(&f.input, t).mono(true).ring_gap(t.surface))
-        .child(TextField::new(&f.secret, t).mono(true).ring_gap(t.surface))
+        .child(
+            TextField::new(&f.secret, t)
+                .mono(true)
+                .text_size(14.0)
+                .ring_gap(t.surface),
+        )
         .child(
             div()
                 .flex()

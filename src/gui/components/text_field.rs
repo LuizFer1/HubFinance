@@ -102,6 +102,7 @@ pub struct TextField {
     state: Entity<InputState>,
     tokens: &'static Tokens,
     mono: bool,
+    text_size: Option<f32>,
     ring_gap: Option<Hsla>,
     aria_label: Option<SharedString>,
     disabled: bool,
@@ -113,6 +114,7 @@ impl TextField {
             state: state.clone(),
             tokens,
             mono: false,
+            text_size: None,
             ring_gap: None,
             aria_label: None,
             disabled: false,
@@ -121,6 +123,13 @@ impl TextField {
 
     pub fn mono(mut self, mono: bool) -> TextField {
         self.mono = mono;
+        self
+    }
+
+    /// Tamanho da fonte em px. Separado da familia: no artboard Assistente o campo do modelo e
+    /// mono a 13 px e o da chave e mono a 14 px.
+    pub fn text_size(mut self, size: f32) -> TextField {
+        self.text_size = Some(size);
         self
     }
 
@@ -167,7 +176,11 @@ impl RenderOnce for TextField {
             .bg(t.surface_2)
             .border_1()
             .border_color(border_color(focused, t))
-            .text_size(px(if self.mono { 13.0 } else { 14.0 }))
+            .text_size(px(self.text_size.unwrap_or(if self.mono {
+                13.0
+            } else {
+                14.0
+            })))
             .text_color(t.text)
             .when(self.mono, |d| d.font_family(MONO))
             .when(!self.mono, |d| d.font_family(fonts::FAMILY))

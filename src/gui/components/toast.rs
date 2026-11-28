@@ -34,6 +34,12 @@ pub fn bar_fraction(left: f32) -> f32 {
     left.clamp(0.0, 1.0)
 }
 
+/// O que desce nao recebe clique nem foco: a opacidade 0 nao bloqueia o hit-test, e um "Desfazer"
+/// clicado durante a saida desfaria uma remocao ja confirmada.
+pub fn interactive(entering: Option<bool>) -> bool {
+    entering != Some(false)
+}
+
 /// Avisa `f(true)` quando o foco entra no toast e `f(false)` quando sai. As `Subscription`
 /// precisam ficar vivas com o toast: soltas, o foco deixaria de pausar o prazo sem erro nenhum.
 pub fn watch_focus(
@@ -191,10 +197,15 @@ impl RenderOnce for Toast {
             });
 
         let secs = self.seconds_left;
-        let focus = self.focus;
+        let live = interactive(self.entering);
+        let focus = self.focus.filter(|_| live);
         let ring = focus::style(t, t.toast_bg);
         let action = self.action.map(|(label, f)| {
-            let mut d = div().id("toast-action");
+            let name = match secs {
+                Some(s) => SharedString::from(format!("{label} ({s})")),
+                None => label.clone(),
+            };
+            let mut d = div().id("toast-action").role(Role::Button).aria_label(name);
             if let Some(f) = &focus {
                 d = d.track_focus(&f.action);
             }
@@ -210,7 +221,9 @@ impl RenderOnce for Toast {
                 .whitespace_nowrap()
                 .hover(|s| s.bg(t.toast_fg.opacity(0.10)))
                 .focus_visible(ring)
-                .on_click(move |_: &ClickEvent, window, cx| f(window, cx))
+                .when(live, |d| {
+                    d.on_click(move |_: &ClickEvent, window, cx| f(window, cx))
+                })
                 .child(label)
                 .when_some(secs, |d, s| {
                     d.child(
@@ -233,7 +246,7 @@ impl RenderOnce for Toast {
         if let Some(f) = &focus {
             close = close.focus(&f.close);
         }
-        if let Some(f) = self.on_close {
+        if let Some(f) = self.on_close.filter(|_| live) {
             close = close.on_click(move |window, cx| f(window, cx));
         }
 
@@ -310,6 +323,13 @@ impl RenderOnce for Toast {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toast_descendo_nao_e_interativo() {
+        assert!(interactive(None));
+        assert!(interactive(Some(true)));
+        assert!(!interactive(Some(false)));
+    }
 
     #[test]
     fn barra_fica_entre_zero_e_um() {

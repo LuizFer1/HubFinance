@@ -5,8 +5,8 @@
 //!
 //! O teto "redondo" do eixo vem de `dashboard/` (`aggregate::axis_top`,
 //! `reserves::reserve_axis_top`), que e quem sabe o que e um teto; aqui so se aplica a escala.
-//! Algumas contas nascem de `ui/charts.rs` (iced), congelada ate a Tarefa 39a: foram copiadas,
-//! nao movidas.
+//! Nada aqui foi copiado de `ui/charts.rs` (iced, congelada ate a Tarefa 39a): aquele tem layout
+//! proprio, com margens de eixo; esta geometria foi escrita do zero para o design novo.
 #![allow(dead_code)] // usado na Tarefa 18
 
 use std::ops::Range;
@@ -31,8 +31,17 @@ pub const BAR_TOP_RADIUS: f32 = 6.0;
 pub const BAR_BOTTOM_RADIUS: f32 = 2.0;
 /// Fatia menor que isto some a olho nu; a rosca a eleva a este minimo.
 pub const MIN_SLICE_DEG: f32 = 4.0;
-/// Espaco entre as duas barras de um mes.
-pub const BAR_GAP: f32 = 2.0;
+/// Espaco entre as duas barras de um mes (Main: gap 4 dentro do par).
+pub const BAR_GAP: f32 = 4.0;
+/// Largura maxima de cada barra do Historico (Main: 18 px).
+pub const BAR_MAX_W: f32 = 18.0;
+/// Raios das mini-barras do Negocio (Main: `4 4 1 1`).
+pub const MINI_RADII: [f32; 4] = [4.0, 4.0, 1.0, 1.0];
+/// Espessura do anel de destaque da barra sob o mouse: 2 px `surface` por dentro e 2 px
+/// `accent_400` por fora (artboard Componentes, "Tooltips e menus").
+pub const HOVER_RING: f32 = 2.0;
+/// Fresta entre fatias da rosca: ~0,35 % da volta (Main), em graus.
+pub const DONUT_GAP_DEG: f32 = 1.26;
 
 /// Altura de uma barra proporcional ao teto, sem passar dele nem ficar negativa. Teto `<= 0`
 /// vira 0: dividir por zero desenharia uma barra infinita.
@@ -48,15 +57,6 @@ pub fn slot_width(plot: Rect, n: usize) -> f32 {
     if n == 0 { 0.0 } else { plot.w / n as f32 }
 }
 
-/// Coluna sob `x`; fora da area util (ou sem colunas) -> `None`. A faixa inteira da coluna
-/// conta, nao so a barra: o hover do design e na coluna.
-pub fn column_at(x: f32, plot: Rect, n: usize) -> Option<usize> {
-    if n == 0 || plot.w <= 0.0 || x < plot.x || x >= plot.x + plot.w {
-        return None;
-    }
-    Some((((x - plot.x) / slot_width(plot, n)).floor() as usize).min(n - 1))
-}
-
 /// Uma barra com os raios dos quatro cantos (`tl, tr, br, bl`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bar {
@@ -64,20 +64,51 @@ pub struct Bar {
     pub radii: [f32; 4],
 }
 
-/// Raios `6 6 2 2` limitados a metade da largura e a altura: uma barra de 3 px de altura com
-/// raio 6 desenharia um quad invertido.
+/// Limita os raios a metade do MENOR lado do quad. `paint_quad` nao limita: raios maiores que
+/// isso deformam o quad (o doc de `Window::paint_quad` manda usar
+/// `Corners::clamp_radii_for_quad_size`, que e esta mesma conta). Com `h/2` por canto, topo +
+/// base nunca passam de `h`.
+pub fn clamp_radii(radii: [f32; 4], w: f32, h: f32) -> [f32; 4] {
+    let cap = (w.min(h) / 2.0).max(0.0);
+    radii.map(|r| r.min(cap))
+}
+
+/// Raios `6 6 2 2` das barras do Historico, limitados ao tamanho da barra.
 pub fn bar_radii(w: f32, h: f32) -> [f32; 4] {
-    let cap = (w / 2.0).min(h).max(0.0);
-    let top = BAR_TOP_RADIUS.min(cap);
-    let bottom = BAR_BOTTOM_RADIUS.min(cap).min(h / 2.0);
-    [top, top, bottom, bottom]
+    clamp_radii(
+        [
+            BAR_TOP_RADIUS,
+            BAR_TOP_RADIUS,
+            BAR_BOTTOM_RADIUS,
+            BAR_BOTTOM_RADIUS,
+        ],
+        w,
+        h,
+    )
+}
+
+impl Bar {
+    /// A barra engrossada em `by` px de cada lado (anel de hover); os raios crescem junto para o
+    /// anel acompanhar o contorno.
+    pub fn grown(&self, by: f32) -> Bar {
+        let rect = Rect {
+            x: self.rect.x - by,
+            y: self.rect.y - by,
+            w: self.rect.w + 2.0 * by,
+            h: self.rect.h + 2.0 * by,
+        };
+        Bar {
+            rect,
+            radii: self.radii.map(|r| r + by),
+        }
+    }
 }
 
 /// Receita e despesa de cada mes. `None` = mes que ainda nao existia (coluna vazia, nao zero).
-/// Largura da barra: 70 % da coluna dividida entre as duas, entre 2 e 14 px.
+/// Largura da barra: 70 % da coluna dividida entre as duas, entre 2 e `BAR_MAX_W` px.
 pub fn grouped_bars(months: &[Option<(i64, i64)>], top: i64, plot: Rect) -> Vec<Option<[Bar; 2]>> {
     let slot = slot_width(plot, months.len());
-    let bar_w = ((slot * 0.7 - BAR_GAP) / 2.0).clamp(2.0, 14.0);
+    let bar_w = ((slot * 0.7 - BAR_GAP) / 2.0).clamp(2.0, BAR_MAX_W);
     let base = plot.y + plot.h;
     months
         .iter()
@@ -102,28 +133,43 @@ pub fn grouped_bars(months: &[Option<(i64, i64)>], top: i64, plot: Rect) -> Vec<
         .collect()
 }
 
-/// Onde fica o tooltip (canto superior esquerdo): acima da barra quando cabe; senao ao lado da
-/// coluna, no topo da area util, para nao cobrir o mes que se le.
-pub fn tooltip_origin(
-    tip: (f32, f32),
-    col_x: f32,
-    col_w: f32,
-    bar_top: f32,
-    plot_top: f32,
-    width: f32,
-) -> Pt {
-    let above = bar_top - 6.0 - tip.1;
-    if above >= 0.0 {
-        let x = (col_x + col_w / 2.0 - tip.0 / 2.0).clamp(0.0, (width - tip.0).max(0.0));
-        return Pt { x, y: above };
-    }
-    let right = col_x + col_w + 4.0;
-    let x = if right + tip.0 <= width {
-        right
-    } else {
-        (col_x - 4.0 - tip.0).max(0.0)
-    };
-    Pt { x, y: plot_top }
+/// Uma barra por mes (mini-barras do Negocio): largura = a coluna menos `BAR_GAP`, entre 2 e
+/// `max_w`. `None` = mes que ainda nao existia.
+pub fn single_bars(
+    months: &[Option<i64>],
+    top: i64,
+    plot: Rect,
+    max_w: f32,
+    radii: [f32; 4],
+) -> Vec<Option<Bar>> {
+    let slot = slot_width(plot, months.len());
+    let w = (slot - BAR_GAP).clamp(2.0, max_w.max(2.0));
+    let base = plot.y + plot.h;
+    months
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let h = scale_height((*m)?, top, plot.h);
+            Some(Bar {
+                rect: Rect {
+                    x: plot.x + i as f32 * slot + (slot - w) / 2.0,
+                    y: base - h,
+                    w,
+                    h,
+                },
+                radii: clamp_radii(radii, w, h),
+            })
+        })
+        .collect()
+}
+
+/// Media dos meses que existem (arredondada para baixo); sem nenhum -> `None`.
+pub fn average(months: &[Option<i64>]) -> Option<i64> {
+    let (sum, n) = months
+        .iter()
+        .flatten()
+        .fold((0i64, 0i64), |(s, n), v| (s.saturating_add(*v), n + 1));
+    (n > 0).then(|| sum / n)
 }
 
 /// Fatia da rosca em graus, 0 = 12 horas, sentido horario.
@@ -142,7 +188,10 @@ impl Slice {
 /// Fatias proporcionais a `values` somando exatamente 360. Valor `<= 0` fica com fatia vazia
 /// (sem pintar); fatia pequena sobe ao minimo visivel e o excesso sai das maiores, para a
 /// soma continuar 360. Tudo zero -> todas vazias (a tela mostra o estado vazio).
-pub fn donut_slices(values: &[i64]) -> Vec<Slice> {
+///
+/// `gap` (graus) abre uma fresta entre fatias vizinhas: cada uma perde `gap/2` em cada ponta.
+/// Uma fatia so (a volta inteira) nao tem vizinha e fica sem fresta.
+pub fn donut_slices(values: &[i64], gap: f32) -> Vec<Slice> {
     let total: i64 = values.iter().map(|v| (*v).max(0)).sum();
     if total <= 0 {
         return vec![
@@ -174,6 +223,7 @@ pub fn donut_slices(values: &[i64]) -> Vec<Slice> {
     }
     let last = sweeps.iter().rposition(|s| *s > 0.0);
     let mut at = 0.0;
+    let visible = sweeps.iter().filter(|s| **s > 0.0).count();
     sweeps
         .iter()
         .enumerate()
@@ -182,7 +232,17 @@ pub fn donut_slices(values: &[i64]) -> Vec<Slice> {
             at += s;
             // A ultima fatia visivel fecha em 360 exato: a soma em f32 deixaria uma fresta.
             let end = if Some(i) == last { 360.0 } else { at };
-            Slice { start, end }
+            if visible > 1 && *s > 0.0 {
+                // Nunca come mais que um quarto da fatia de cada lado: fatia no minimo visivel
+                // (4 graus) continua aparecendo.
+                let cut = (gap / 2.0).min(s / 4.0).max(0.0);
+                Slice {
+                    start: start + cut,
+                    end: end - cut,
+                }
+            } else {
+                Slice { start, end }
+            }
         })
         .collect()
 }
@@ -270,6 +330,13 @@ mod tests {
         h: 150.0,
     };
 
+    fn bar_at(x: f32, y: f32, w: f32, h: f32) -> Bar {
+        Bar {
+            rect: Rect { x, y, w, h },
+            radii: bar_radii(w, h),
+        }
+    }
+
     #[test]
     fn altura_proporcional_e_travada_no_teto() {
         assert_eq!(scale_height(100, 200, 150.0), 75.0);
@@ -279,20 +346,16 @@ mod tests {
     }
 
     #[test]
-    fn coluna_sob_o_cursor() {
-        assert_eq!(column_at(39.0, PLOT, 12), None);
-        assert_eq!(column_at(40.0, PLOT, 12), Some(0));
-        assert_eq!(column_at(639.9, PLOT, 12), Some(11));
-        assert_eq!(column_at(640.0, PLOT, 12), None);
-        assert_eq!(column_at(100.0, PLOT, 0), None);
-    }
-
-    #[test]
     fn raios_seis_seis_dois_dois_e_limitados() {
         assert_eq!(bar_radii(10.0, 100.0), [5.0, 5.0, 2.0, 2.0]);
         assert_eq!(bar_radii(14.0, 100.0), [6.0, 6.0, 2.0, 2.0]);
-        let tiny = bar_radii(14.0, 3.0);
-        assert!(tiny.iter().all(|r| *r <= 3.0));
+        // Barra baixa: topo + base nunca passam da altura (paint_quad nao limita sozinho).
+        for h in [0.5, 1.0, 3.0, 5.0, 7.0, 12.0] {
+            let [tl, tr, br, bl] = bar_radii(14.0, h);
+            assert!(tl + bl <= h + 1e-4 && tr + br <= h + 1e-4, "h={h}");
+            assert!(tl <= 7.0 && tl <= h / 2.0 + 1e-4);
+        }
+        assert_eq!(bar_radii(14.0, 3.0), [1.5, 1.5, 1.5, 1.5]);
         assert_eq!(bar_radii(14.0, 0.0), [0.0; 4]);
     }
 
@@ -311,26 +374,18 @@ mod tests {
     }
 
     #[test]
-    fn largura_da_barra_entre_2_e_14() {
+    fn largura_da_barra_entre_2_e_18_com_gap_4() {
         let narrow = grouped_bars(&[Some((1, 1)); 200], 1, PLOT);
         assert_eq!(narrow[0].unwrap()[0].rect.w, 2.0);
         let wide = grouped_bars(&[Some((1, 1))], 1, PLOT);
-        assert_eq!(wide[0].unwrap()[0].rect.w, 14.0);
-    }
-
-    #[test]
-    fn tooltip_acima_ou_ao_lado() {
-        let above = tooltip_origin((100.0, 50.0), 200.0, 40.0, 120.0, 6.0, 600.0);
-        assert_eq!(above, Pt { x: 170.0, y: 64.0 });
-        let side = tooltip_origin((100.0, 50.0), 200.0, 40.0, 30.0, 6.0, 600.0);
-        assert_eq!(side, Pt { x: 244.0, y: 6.0 });
-        let edge = tooltip_origin((100.0, 50.0), 540.0, 40.0, 30.0, 6.0, 600.0);
-        assert_eq!(edge, Pt { x: 436.0, y: 6.0 });
+        let [a, b] = wide[0].unwrap();
+        assert_eq!(a.rect.w, 18.0);
+        assert_eq!(b.rect.x - (a.rect.x + a.rect.w), 4.0);
     }
 
     #[test]
     fn fatias_somam_360() {
-        let s = donut_slices(&[500, 300, 150, 40, 9, 1]);
+        let s = donut_slices(&[500, 300, 150, 40, 9, 1], 0.0);
         assert_eq!(s[0].start, 0.0);
         assert_eq!(s.last().unwrap().end, 360.0);
         for w in s.windows(2) {
@@ -340,18 +395,79 @@ mod tests {
 
     #[test]
     fn fatia_minuscula_ganha_minimo_visivel() {
-        let s = donut_slices(&[100_000, 1]);
+        let s = donut_slices(&[100_000, 1], 0.0);
         assert!(s[1].sweep() >= MIN_SLICE_DEG - 1e-3);
         assert!((s[0].sweep() + s[1].sweep() - 360.0).abs() < 1e-3);
     }
 
     #[test]
+    fn fresta_entre_fatias_vizinhas() {
+        let s = donut_slices(&[500, 300, 200], DONUT_GAP_DEG);
+        for w in s.windows(2) {
+            assert!((w[1].start - w[0].end - DONUT_GAP_DEG).abs() < 1e-3);
+        }
+        // A fresta tambem separa a ultima fatia da primeira, na volta.
+        assert!((s[0].start + (360.0 - s[2].end) - DONUT_GAP_DEG).abs() < 1e-3);
+        // Fatia unica = volta inteira, sem fresta; fatia minima segue visivel.
+        let one = donut_slices(&[10, 0], DONUT_GAP_DEG);
+        assert_eq!((one[0].start, one[0].end), (0.0, 360.0));
+        let tiny = donut_slices(&[100_000, 1], DONUT_GAP_DEG);
+        assert!(tiny[1].sweep() > 1.0);
+    }
+
+    #[test]
+    fn barra_unica_com_largura_maxima_e_raios_do_negocio() {
+        let months = [Some(100), None, Some(50)];
+        let bars = single_bars(&months, 100, PLOT, 28.0, MINI_RADII);
+        let a = bars[0].unwrap();
+        assert_eq!(a.rect.w, 28.0);
+        assert_eq!(a.rect.h, PLOT.h);
+        assert!(bars[1].is_none());
+        assert_eq!(bars[2].unwrap().rect.h, PLOT.h / 2.0);
+        assert_eq!(a.radii, MINI_RADII);
+        // Barra baixa limita o raio.
+        let low = single_bars(&[Some(1)], 1000, PLOT, 28.0, MINI_RADII)[0].unwrap();
+        assert!(low.radii[0] <= low.rect.h / 2.0 + 1e-4);
+        // Coluna estreita: nunca abaixo de 2 px.
+        let narrow = single_bars(&[Some(1); 400], 1, PLOT, 28.0, MINI_RADII);
+        assert_eq!(narrow[0].unwrap().rect.w, 2.0);
+    }
+
+    #[test]
+    fn media_ignora_mes_inexistente() {
+        assert_eq!(average(&[Some(10), None, Some(21)]), Some(15));
+        assert_eq!(average(&[None, None]), None);
+    }
+
+    #[test]
+    fn anel_de_hover_cresce_barra_e_raios() {
+        let bar = bar_at(10.0, 20.0, 18.0, 40.0);
+        let ring = bar.grown(HOVER_RING);
+        assert_eq!(
+            ring.rect,
+            Rect {
+                x: 8.0,
+                y: 18.0,
+                w: 22.0,
+                h: 44.0
+            }
+        );
+        assert_eq!(ring.radii, [8.0, 8.0, 4.0, 4.0]);
+        let outer = bar.grown(2.0 * HOVER_RING);
+        assert_eq!(outer.rect.w, 26.0);
+    }
+
+    #[test]
     fn rosca_vazia_e_valor_zero() {
-        assert!(donut_slices(&[0, 0]).iter().all(|s| s.sweep() == 0.0));
-        let s = donut_slices(&[10, 0, 10]);
+        assert!(
+            donut_slices(&[0, 0], DONUT_GAP_DEG)
+                .iter()
+                .all(|s| s.sweep() == 0.0)
+        );
+        let s = donut_slices(&[10, 0, 10], 0.0);
         assert_eq!(s[1].sweep(), 0.0);
         assert_eq!(s[2].end, 360.0);
-        assert!(donut_slices(&[]).is_empty());
+        assert!(donut_slices(&[], DONUT_GAP_DEG).is_empty());
     }
 
     #[test]

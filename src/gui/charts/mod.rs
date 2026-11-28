@@ -21,7 +21,11 @@ pub(crate) fn at(origin: Point<Pixels>, p: Pt) -> Point<Pixels> {
 }
 
 /// Caminho que nao constroi (coordenada degenerada) some em vez de derrubar a janela.
-pub(crate) fn paint(window: &mut Window, builder: gpui::PathBuilder, color: gpui::Hsla) {
+pub(crate) fn paint(
+    window: &mut Window,
+    builder: gpui::PathBuilder,
+    color: impl Into<gpui::Background>,
+) {
     if let Ok(path) = builder.build() {
         window.paint_path(path, color);
     }

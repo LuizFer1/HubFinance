@@ -557,7 +557,7 @@ fn data_section(t: &'static Tokens) -> impl IntoElement {
 
 /// Um exemplo de cada grafico da Tarefa 16 (Historico, rosca, anel, area empilhada).
 fn charts_row(t: &'static Tokens) -> impl IntoElement {
-    use crate::gui::charts::bars::{BarMonth, BarTip, GroupedBars};
+    use crate::gui::charts::bars::{BarMonth, BarTip, GroupedBars, MiniBars};
     use crate::gui::charts::donut::Donut;
     use crate::gui::charts::ring::Ring;
     use crate::gui::charts::stacked::StackedArea;
@@ -571,12 +571,13 @@ fn charts_row(t: &'static Tokens) -> impl IntoElement {
         Some((1_418_000, 1_131_000)),
     ]
     .into_iter()
-    .map(|values| BarMonth {
+    .enumerate()
+    .map(|(i, values)| BarMonth {
         values,
-        tip: values.map(|_| BarTip {
-            title: "Mês".into(),
-            lines: vec![Line::Text("Receitas e despesas".into())],
-        }),
+        // Exemplo do design (artboard Main/Componentes): Outubro com os tres valores.
+        tip: values
+            .map(|_| BarTip::month("Outubro", "R$ 14.180,00", "R$ 11.309,60", "R$ 2.870,40")),
+        partial: i == 5,
     })
     .collect();
     div()
@@ -586,14 +587,31 @@ fn charts_row(t: &'static Tokens) -> impl IntoElement {
         .child(
             div()
                 .w(px(260.0))
-                .child(GroupedBars::new(months, 1_600_000, 140.0, t)),
+                .child(GroupedBars::new("hist-demo", months, 1_600_000, 140.0, t)),
         )
         .child(Donut::new(
             vec![500, 300, 150, 40, 9],
             t.chart[..5].to_vec(),
-            128.0,
+            150.0,
             t.divider,
         ))
+        .child(
+            div()
+                .w(px(160.0))
+                .p(px(8.0))
+                .rounded(px(12.0))
+                .bg(t.highlight)
+                .child(
+                    MiniBars::new(
+                        vec![Some(40), Some(70), None, Some(55), Some(90), Some(60)],
+                        100,
+                        64.0,
+                        t,
+                    )
+                    .partial(Some(5))
+                    .average(true),
+                ),
+        )
         .child(Ring::new(0.756, 96.0, t.accent, t.divider))
         .child(
             div().w(px(260.0)).child(
@@ -602,6 +620,7 @@ fn charts_row(t: &'static Tokens) -> impl IntoElement {
                     vec![t.chart[0], t.chart[2]],
                     600,
                     120.0,
+                    t.surface,
                 )
                 .partial(true),
             ),

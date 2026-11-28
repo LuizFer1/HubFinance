@@ -21,7 +21,7 @@ impl Donut {
             values,
             colors,
             size,
-            thickness: 22.0,
+            thickness: 25.0,
             empty,
         }
     }
@@ -76,7 +76,7 @@ impl RenderOnce for Donut {
                     y: size / 2.0,
                 };
                 let r = (size - thick) / 2.0;
-                let slices = geometry::donut_slices(&values);
+                let slices = geometry::donut_slices(&values, geometry::DONUT_GAP_DEG);
                 if slices.iter().all(|s| s.sweep() == 0.0) {
                     let mut b = PathBuilder::stroke(px(thick));
                     arc(

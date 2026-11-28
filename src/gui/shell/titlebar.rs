@@ -7,7 +7,7 @@
 //! como `Msg::CloseRequested` (bandeja x desligar).
 
 use gpui::{
-    AnyElement, Hsla, IntoElement, ParentElement as _, Styled as _, WindowControlArea, div,
+    AnyElement, Hsla, IntoElement, ParentElement as _, Role, Styled as _, WindowControlArea, div,
     prelude::*, px, svg,
 };
 
@@ -62,16 +62,25 @@ pub fn maximize_glyph(maximized: bool) -> &'static str {
     }
 }
 
+/// Nome acessivel do botao do meio: segue o estado, como o glifo.
+pub fn maximize_label(maximized: bool) -> &'static str {
+    if maximized { "Restaurar" } else { "Maximizar" }
+}
+
 fn control(
     id: &'static str,
     area: WindowControlArea,
     glyph: &'static str,
+    label: &'static str,
     t: &'static Tokens,
     hover_bg: Hsla,
     hover_fg: Hsla,
 ) -> impl IntoElement {
     div()
         .id(id)
+        // Sem a barra nativa o Narrador so ve um div: o nome vem daqui.
+        .role(Role::Button)
+        .aria_label(label)
         .window_control_area(area)
         .w(px(BUTTON_WIDTH))
         .h(px(HEIGHT))
@@ -118,6 +127,7 @@ pub fn render(t: &'static Tokens, maximized: bool) -> AnyElement {
             "tb-min",
             WindowControlArea::Min,
             "window/minimize.svg",
+            "Minimizar",
             t,
             t.surface_2,
             t.text,
@@ -126,6 +136,7 @@ pub fn render(t: &'static Tokens, maximized: bool) -> AnyElement {
             "tb-max",
             WindowControlArea::Max,
             maximize_glyph(maximized),
+            maximize_label(maximized),
             t,
             t.surface_2,
             t.text,
@@ -134,6 +145,7 @@ pub fn render(t: &'static Tokens, maximized: bool) -> AnyElement {
             "tb-close",
             WindowControlArea::Close,
             "window/close.svg",
+            "Fechar",
             t,
             t.close_hover,
             gpui::white(),
@@ -147,10 +159,71 @@ mod tests {
     use crate::gui::assets::HubAssets;
     use gpui::AssetSource as _;
 
+    /// Pares (fill, d) de cada `<path>` do SVG, sem parser de XML (os arquivos sao da marca).
+    fn paths(svg: &str) -> Vec<(String, String)> {
+        svg.split("<path ")
+            .skip(1)
+            .map(|p| {
+                let attr = |name: &str| {
+                    let k = format!("{name}=\"");
+                    let i = p.find(&k).expect(name) + k.len();
+                    p[i..i + p[i..].find('"').expect("aspas")].to_string()
+                };
+                (attr("fill"), attr("d"))
+            })
+            .collect()
+    }
+
+    fn embutido(path: &str) -> String {
+        let b = HubAssets.load(path).expect("load").expect("arquivo");
+        String::from_utf8(b.to_vec()).expect("utf8")
+    }
+
+    fn norm(d: &str) -> String {
+        d.split_whitespace().collect::<Vec<_>>().join("")
+    }
+
+    /// As camadas derivadas (telhado, ponto) e `logo_colors` tem de reproduzir os originais da
+    /// marca; se a marca mudar, o derivado nao pode divergir em silencio.
     #[test]
-    fn logo_segue_a_cor_do_fundo() {
-        assert_eq!(logo_colors(true), (0xF2F2F2, 0xE2C15A));
-        assert_eq!(logo_colors(false), (0x131313, 0x876C00));
+    fn logo_derivada_bate_com_os_originais_da_marca() {
+        let roof = paths(include_str!(
+            "../../../assets/brand/hubfinance-pequeno-telhado.svg"
+        ));
+        let dot = paths(include_str!(
+            "../../../assets/brand/hubfinance-pequeno-ponto.svg"
+        ));
+        assert_eq!((roof.len(), dot.len()), (1, 1));
+        for (dark, original) in [
+            (
+                true,
+                include_str!("../../../assets/brand/hubfinance-pequeno-fundo-escuro.svg"),
+            ),
+            (
+                false,
+                include_str!("../../../assets/brand/hubfinance-pequeno-fundo-claro.svg"),
+            ),
+        ] {
+            let orig = paths(original);
+            let (roof_color, dot_color) = logo_colors(dark);
+            let hex = |c: u32| format!("#{c:06X}");
+            assert_eq!(orig[0].0, hex(roof_color));
+            assert!(orig[1..].iter().all(|(f, _)| *f == hex(dot_color)));
+            assert_eq!(norm(&orig[0].1), norm(&roof[0].1));
+            let dots: String = orig[1..].iter().map(|(_, d)| norm(d)).collect();
+            assert_eq!(dots, norm(&dot[0].1));
+        }
+        // Os arquivos embutidos sao os mesmos que o teste leu do disco.
+        assert_eq!(
+            embutido(LOGO_ROOF),
+            include_str!("../../../assets/brand/hubfinance-pequeno-telhado.svg")
+        );
+    }
+
+    #[test]
+    fn controles_tem_nome_acessivel() {
+        assert_eq!(maximize_label(false), "Maximizar");
+        assert_eq!(maximize_label(true), "Restaurar");
     }
 
     #[test]

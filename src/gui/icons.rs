@@ -7,8 +7,8 @@
 //! para o check fino de lista use `CheckW26`. Categorias do app continuam no Phosphor
 //! (`ui_model::icons`).
 
-// Usado pelas telas a partir da Tarefa 15; ate la so parte das variantes tem uso.
-#![allow(dead_code)] // usado na Tarefa 17
+// Usado pelas telas a partir da Tarefa 18; ate la so parte das variantes tem uso.
+#![allow(dead_code)] // usado na Tarefa 18
 
 use gpui::{Hsla, Pixels, Styled as _, Svg, svg};
 
@@ -134,7 +134,7 @@ pub enum Icon {
     Sparkle,
     /// Traco 1.8 px; 3 uso(s) no design, p.ex. Ajustes, Analise, Estados.
     SparkleW18,
-    /// Anel de 16 px so com o arco de cima (traco 2 px); o "Iniciando"/"Desligando" do card.
+    /// Anel de 16 px so com o arco de cima (traco 2 px); o "Iniciando" (gira, `accent`) e o "Desligando" (parado, `muted`) do card.
     StatusArc,
     /// Losango de 11 px com raio 2 (preenchido); o "Sem rede local" do card.
     StatusDiamond,

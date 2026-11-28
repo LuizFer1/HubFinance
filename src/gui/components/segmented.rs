@@ -5,8 +5,8 @@
 //! ou `surface` com `card_ring` quando o controle fica solto na tela (spec §4.3).
 
 use gpui::{
-    App, ClickEvent, ElementId, FocusHandle, Hsla, IntoElement, RenderOnce, SharedString, Window,
-    div, prelude::*, px,
+    App, ClickEvent, ElementId, FocusHandle, Hsla, IntoElement, RenderOnce, Role, SharedString,
+    Window, div, prelude::*, px,
 };
 
 use super::focus;
@@ -63,6 +63,7 @@ pub enum Preview {
 #[derive(IntoElement)]
 pub struct Segmented {
     id: ElementId,
+    label: SharedString,
     items: Vec<SharedString>,
     selected: usize,
     surface: Surface,
@@ -84,6 +85,7 @@ impl Segmented {
     ) -> Segmented {
         Segmented {
             id: id.into(),
+            label: SharedString::default(),
             items,
             selected,
             surface: Surface::Inset,
@@ -95,6 +97,12 @@ impl Segmented {
             preview: None,
             on_select: None,
         }
+    }
+
+    /// Nome acessivel do grupo (`role=group aria-label` do design, p.ex. "Tema").
+    pub fn label(mut self, l: impl Into<SharedString>) -> Segmented {
+        self.label = l.into();
+        self
     }
 
     pub fn surface(mut self, surface: Surface) -> Segmented {
@@ -152,6 +160,8 @@ impl RenderOnce for Segmented {
         };
         let mut row = div()
             .id(self.id.clone())
+            .role(Role::Group)
+            .aria_label(self.label.clone())
             .flex()
             .gap(px(4.0))
             .p(px(4.0))
@@ -172,6 +182,9 @@ impl RenderOnce for Segmented {
             row = row.child(
                 div()
                     .id(ElementId::NamedInteger("seg".into(), i as u64))
+                    .role(Role::Button)
+                    .aria_label(label.clone())
+                    .aria_toggled(active.into())
                     .flex()
                     .flex_1()
                     .items_center()

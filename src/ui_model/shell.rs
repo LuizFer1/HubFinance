@@ -336,8 +336,8 @@ pub enum StatusIcon {
     Warning,
     /// Anel com o arco de cima em `accent`: iniciando.
     Spinner,
-    /// Anel com o arco de cima em `muted`: desligando. Outra cor sobre a mesma forma do
-    /// `Spinner` seria "so cor"; a forma muda do "Desligado" (anel inteiro, Tarefa 32).
+    /// Anel com o arco de cima em `muted`, parado: desligando (como no artboard Estados). O
+    /// anel inteiro fica livre para o "Desligado" (`Off`, Tarefa 32).
     Stopping,
     Danger,
 }

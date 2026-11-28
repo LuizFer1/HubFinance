@@ -97,15 +97,9 @@ fn mark(kind: StatusIcon, t: &Tokens, reduce: bool) -> AnyElement {
         StatusIcon::Warning => icon(Icon::StatusDiamond, px(16.0), t.warning).into_any_element(),
         // Anel `divider` com o arco de cima colorido, girando (parado com "Reduzir movimento").
         StatusIcon::Spinner => arc_ring(t, t.accent, reduce),
-        // Anel inteiro, parado: "Desligando" nao gira nem tem arco, so assim difere do
-        // "Iniciando" tambem em forma e nao so em cor.
-        StatusIcon::Stopping => div()
-            .size(px(16.0))
-            .flex_none()
-            .rounded_full()
-            .border_2()
-            .border_color(t.muted)
-            .into_any_element(),
+        // Mesmo traco do "Iniciando", parado e em `muted` (artboard Estados · "Status do hub").
+        // O anel inteiro fica livre para o "Desligado" (`Off`, Tarefa 32).
+        StatusIcon::Stopping => arc_ring(t, t.muted, true),
     }
 }
 

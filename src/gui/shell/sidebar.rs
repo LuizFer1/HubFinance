@@ -111,6 +111,7 @@ fn nav_link(
         .group(group.clone())
         .role(Role::Button)
         .aria_label(SharedString::from(name))
+        .aria_selected(active)
         .track_focus(handle)
         .focus_visible(focus::style(t, t.bg))
         .cursor_pointer()
@@ -231,6 +232,7 @@ fn theme_switch(
         usize::from(!dark),
         t,
     )
+    .label("Tema")
     .surface(Surface::Raised)
     .item_height(40.0)
     .icons(vec![Icon::Moon, Icon::Sun])

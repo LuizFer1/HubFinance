@@ -6,8 +6,8 @@
 //! sem janela, sobre funcoes puras.
 //!
 //! O modulo inteiro e anotado com `dead_code`: so a vitrine de debug os usa ate as telas
-//! (Tarefas 15 em diante) chegarem.
-#![allow(dead_code)] // usado na Tarefa 17
+//! (Tarefa 18 em diante) chegarem.
+#![allow(dead_code)] // usado na Tarefa 18
 
 pub mod avatar;
 pub mod badge;

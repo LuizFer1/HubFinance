@@ -294,6 +294,8 @@ pub struct DeskLater {
     /// "20 dez".
     pub date: String,
     pub amount: String,
+    /// Frase pronta, como no design: "Depois: Fatura Mercado Pago · 8 dez".
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -881,8 +883,11 @@ fn where_card(ds: &Dataset, month: &str, m: Money) -> DeskWhere {
     // float; empate fica com o maior valor, depois o nome.
     let prev_month = shift_month(month, -1);
     let prev = expense_by_category(ds, &prev_month);
+    // Só as fatias que o card mostra: uma categoria escondida em "Outros" não pode ser citada
+    // numa frase de um card que não a lista.
     let rise = slices
         .iter()
+        .take(WHERE_SLICES)
         .filter_map(|s| {
             let before = prev.iter().find(|p| p.key == s.key)?.amount_minor;
             (before > 0 && s.amount_minor > before).then_some((s, before))
@@ -939,7 +944,9 @@ struct Due {
     invoice: bool,
 }
 
-/// Saídas (recorrências de despesa e faturas) em (`today`, `today + days`], por data. Receita
+/// Saídas (recorrências de despesa e faturas) até `today + days`, por data. A recorrência entra
+/// só a partir de amanhã; a fatura entra a partir de hoje (`upcoming_invoices` inclui o
+/// vencimento de hoje, e é só por isso que o braço "hoje" de `in_days` é alcançável). Receita
 /// recorrente fica de fora: "O que vem" responde "quanto sai da conta".
 fn dues(ds: &Dataset, today: &str, days: i64) -> Vec<Due> {
     let mut out: Vec<Due> = upcoming(ds, today, days)
@@ -999,13 +1006,14 @@ fn upcoming_card(ds: &Dataset, today: &str, m: Money) -> DeskUpcoming {
         .find(|d| d.date > limit)
         .map(|d| DeskLater {
             amount: format!("{}{}", approx(&d), m.brl(d.amount_minor)),
+            label: format!("Depois: {} · {}", d.title, partial_label(&d.date)),
             date: partial_label(&d.date),
             title: d.title,
         });
     DeskUpcoming {
         title: "O que vem".to_string(),
         window: format!("Próximos {DESK_UPCOMING_DAYS} dias"),
-        total: (!list.is_empty()).then(|| m.big_whole(total)),
+        total: (!list.is_empty()).then(|| m.big(total)),
         caption: format!("previstos em {}", plural(list.len(), "conta", "contas")),
         empty: list
             .is_empty()
@@ -1546,14 +1554,61 @@ mod tests {
         assert_eq!(oct.where_it_went.rise, None);
     }
 
+    /// Uma categoria pequena que some em "Outros" e sobe muito não pode ser citada na frase.
+    #[test]
+    fn alta_so_cita_categoria_que_o_card_mostra() {
+        let mut rows = Vec::new();
+        for i in 0..7 {
+            rows.push((
+                dataset::CATEGORIES,
+                format!("C{i}"),
+                json!({ "name": format!("Cat{i}"), "color": "orange", "icon": "utensils" }),
+            ));
+        }
+        // Cat0..Cat4 grandes (Cat0 sobe 10%); Cat6 ("Pets") vai de 2,00 a 40,00 e fica em Outros.
+        let mut txs = vec![
+            ("C0", 110_000, "2026-11-05"),
+            ("C0", 100_000, "2026-10-05"),
+            ("C6", 4_000, "2026-11-06"),
+            ("C6", 200, "2026-10-06"),
+            ("C5", 3_000, "2026-11-07"),
+        ];
+        for i in 1..5 {
+            txs.push((
+                ["C0", "C1", "C2", "C3", "C4"][i],
+                90_000 - i as i64 * 1_000,
+                "2026-11-08",
+            ));
+        }
+        for (n, (cat, amount, on)) in txs.into_iter().enumerate() {
+            rows.push((
+                TRANSACTIONS,
+                format!("T{n}"),
+                json!({ "kind": "expense", "description": "x", "amountMinor": amount,
+                        "occurredOn": on, "categoryId": cat, "userId": "UL" }),
+            ));
+        }
+        let v = build_desk(&dataset_from(rows), None, GRAFITE_TODAY, "2026-11", false);
+        assert!(v.where_it_went.slices.last().is_some_and(|s| s.other));
+        let r = v.where_it_went.rise.expect("Cat0 subiu");
+        assert_eq!(r.category, "Cat0");
+        assert!(!r.sentence.contains("Cat6"));
+    }
+
     /// Hoje é 19/11: a janela de 15 dias vai até 4/dez, e só entram saídas (R$ 50,52 + 9,99 +
-    /// 19,99 + 168,62 = R$ 249,12, mostrado em reais inteiros). A fatura do Mercado Pago vence
+    /// 19,99 + 168,62 = R$ 249,12, com centavos). A fatura do Mercado Pago vence
     /// 8/dez, fora da janela, e vira o "Depois:".
     #[test]
     fn o_que_vem_da_fixture() {
         let u = nov().upcoming.expect("mes corrente");
         assert_eq!(u.window, "Próximos 15 dias");
-        assert_eq!(u.total.as_ref().map(|t| t.whole.as_str()), Some("249"));
+        // Com centavos, como no design ("R$ 249,12 previstos em 4 contas").
+        assert_eq!(
+            u.total
+                .as_ref()
+                .map(|t| (t.whole.as_str(), t.cents.as_str())),
+            Some(("249", ",12"))
+        );
         assert_eq!(u.caption, "previstos em 4 contas");
         let got: Vec<(&str, &str, &str, &str, &str)> = u
             .items
@@ -1583,9 +1638,15 @@ mod tests {
             (
                 later.title.as_str(),
                 later.date.as_str(),
-                later.amount.as_str()
+                later.amount.as_str(),
+                later.label.as_str()
             ),
-            ("Fatura Mercado Pago", "8 dez", "~R$ 515,15")
+            (
+                "Fatura Mercado Pago",
+                "8 dez",
+                "~R$ 515,15",
+                "Depois: Fatura Mercado Pago · 8 dez"
+            )
         );
         assert_eq!(u.empty, None);
     }

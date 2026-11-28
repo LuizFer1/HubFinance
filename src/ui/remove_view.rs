@@ -54,7 +54,7 @@ fn subject<'a>(app: &'a App, device_id: &str) -> Option<Subject<'a>> {
 
 /// Fundo preto a 55 % que cancela ao clicar e a caixa por cima.
 pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let state = app.confirm_remove.as_ref()?;
     let who = subject(app, &state.device_id)?;
     let orphan = who.device.revoked;
@@ -135,7 +135,7 @@ pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
 }
 
 fn choose_body<'a>(app: &'a App, who: &Subject<'a>, selected: AreaSet) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let data = &who.device.data;
     let intro = if who.device.revoked {
         format!(
@@ -247,7 +247,7 @@ fn area_row<'a>(
 /// Aviso ambar no topo do conteudo: aparelhos removidos que ainda tem dados. Derivado do
 /// estado, sem card permanente; "Depois" so esconde nesta sessao.
 pub(super) fn orphan_banner(app: &App) -> Option<Element<'_, Message>> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     if app.orphans_postponed || app.confirm_remove.is_some() {
         return None;
     }

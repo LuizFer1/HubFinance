@@ -132,7 +132,7 @@ fn kpi_note<'a>(t: &'static Tokens, note: &str) -> Text<'a> {
 }
 
 fn total_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let v = &app.reserves;
     let note = row![
         icons::icon(icons::ARROW_DOWN, type_scale::META, t.text_muted),
@@ -187,7 +187,7 @@ fn coverage_figure(emergency: Option<&EmergencyView>) -> CoverageFigure<'_> {
 }
 
 fn coverage_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let v = &app.reserves;
     let empty_segments = vec![0.0; usize::from(DEFAULT_MULTIPLE)];
     let (remaining, segments) = match &v.emergency {
@@ -254,7 +254,7 @@ fn flow_color(minor: i64, color: Color, muted: Color) -> Color {
 const YEAR_LINE_HEIGHT: f32 = 25.0;
 
 fn year_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let v = &app.reserves;
     let muted = t.text_muted;
     let line = |glyph: &'static str,
@@ -330,7 +330,7 @@ fn titled<'a>(heading: Element<'a, Message>, card: Element<'a, Message>) -> Elem
 /// cabem com 440 cada; senao empilhados. Cada um com o titulo de secao em cima, fora do card:
 /// "Reserva de emergência" e "Caixinhas" com quantas tem meta ao lado.
 fn cards_row(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let v = &app.reserves;
     let width = shell::content_width(app);
     let emergency_heading = widgets::section_heading(t, EMERGENCY_TITLE, "", None, 0.0);
@@ -383,7 +383,7 @@ fn lifebuoy_box<'a>(t: &'static Tokens) -> Element<'a, Message> {
 }
 
 fn emergency_card(app: &App, inner_width: f32) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let Some(e) = &app.reserves.emergency else {
         // O titulo da secao, fora do card, ja diz o que falta; aqui so a boia e o motivo.
         return widgets::card(
@@ -508,7 +508,7 @@ fn essential_section<'a>(
     cost: Option<&'a EssentialCost>,
     inner_width: f32,
 ) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let muted = t.text_muted;
     let title = text("Custo essencial médio")
         .size(13)
@@ -625,7 +625,7 @@ fn essential_section<'a>(
 }
 
 fn pots_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let v = &app.reserves;
     // O titulo saiu para fora do card: as linhas comecam no topo, com divisor so entre elas. O
     // respiro de 6 em cima e embaixo soma aos 14 de cada linha os 20 de todo card.
@@ -661,7 +661,7 @@ fn pace_style(t: &'static Tokens, pace: &Pace) -> (&'static str, Color) {
 }
 
 fn pot_row<'a>(app: &'a App, p: &'a PotRow) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let color = reserve_color(t, &p.color);
     let tile = widgets::tile(t, reserve_glyph(&p.icon), color, color, 36.0);
     let muted = t.text_muted;
@@ -738,7 +738,7 @@ const EVOLUTION_LEGEND_INLINE: f32 = 760.0;
 const EVOLUTION_HEIGHT: f32 = 230.0;
 
 fn evolution_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let v = &app.reserves;
     let muted = t.text_muted;
     let title = text("Evolução do dinheiro separado")
@@ -801,7 +801,7 @@ const MOVEMENT_VALUE_WIDTH: f32 = 116.0;
 const MOVEMENT_ROW_HEIGHT: f32 = 56.0;
 
 fn movements_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let v = &app.reserves;
     // Padding lateral 12 (e nao 20): o hover da linha passa 8 px do conteudo, como o
     // `margin: 0 -8px` do prototipo.
@@ -840,7 +840,7 @@ fn movement_tile<'a>(t: &'static Tokens, kind: MovementKind) -> Element<'a, Mess
 }
 
 fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let [desc_w, reserve_w, author_w] = MOVEMENT_COLUMNS;
     let mut meta = row![
         text(short_date(&m.occurred_on))
@@ -922,7 +922,7 @@ fn movement_row<'a>(app: &'a App, m: &'a MovementRow) -> Element<'a, Message> {
 
 /// O card com esboco do Resumo (`widgets::empty_sketch_card`), com o medidor tracejado.
 fn empty_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let sketch = canvas(EmptyReservesProgram {
         tokens: t,
         cache: &app.iced.reserves_empty_cache,

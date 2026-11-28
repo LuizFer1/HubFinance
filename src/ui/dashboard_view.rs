@@ -217,7 +217,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 }
 
 fn section(app: &App, s: Section, width: f32) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     match s {
         Section::Empty => empty_section(app),
         Section::Business => business(app, width),
@@ -238,7 +238,7 @@ fn split<'a>(
     right: &[Section],
     width: f32,
 ) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let widths: Vec<f32> = flex_lines(width, GAP, &[(520.0, 2.0), (300.0, 1.0)])
         .into_iter()
         .flatten()
@@ -364,7 +364,7 @@ fn link_button<'a>(t: &'static Tokens, label: &str, message: Message) -> Element
 // ---- negocio ----
 
 fn business(app: &App, width: f32) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let Some(b) = &app.dashboard.business else {
         return Space::new().into();
     };
@@ -462,7 +462,7 @@ fn business_capital<'a>(t: &'static Tokens, b: &BusinessBlock) -> Element<'a, Me
 // ---- como estou ----
 
 fn how_am_i(app: &App, width: f32) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let h = &app.dashboard.how_am_i;
     let body = tiles(
         width - 12.0,
@@ -523,7 +523,7 @@ fn outlook_line<'a>(t: &'static Tokens, line: &Line) -> Element<'a, Message> {
 }
 
 fn balance_column(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let h = &app.dashboard.how_am_i;
     let b = &h.balance;
     let whole_color = if h.balance_negative {
@@ -696,7 +696,7 @@ fn legend_line<'a>(
 }
 
 fn pace_panel(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let p = &app.dashboard.how_am_i.pace;
     let mut legend = row![legend_line(t, t.accent, 2.0, false, &p.legend_month)].spacing(16);
     if let Some(l) = &p.legend_forecast {
@@ -750,7 +750,7 @@ fn pace_panel(app: &App) -> Element<'_, Message> {
 // ---- reserva e historico ----
 
 fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let r = &app.dashboard.reserve;
     let left: Element<'_, Message> = match &r.emergency {
         EmergencyBlock::Present(e) => {
@@ -896,7 +896,7 @@ fn reserve_body(app: &App, inner: f32) -> Element<'_, Message> {
 }
 
 fn history_body(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let h = &app.dashboard.history;
     let legend_item = |color: Color, label: &str| {
         row![
@@ -986,7 +986,7 @@ fn history_body(app: &App) -> Element<'_, Message> {
 // ---- para onde foi ----
 
 fn where_it_went(app: &App, width: f32) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let w = &app.dashboard.where_it_went;
     let plan = &w.plan;
     let mut plan_col = column![
@@ -1214,7 +1214,7 @@ fn category_row<'a>(t: &'static Tokens, r: CategoryRow<'a, '_>) -> Element<'a, M
 // ---- o que vem ----
 
 fn whats_next(app: &App, width: f32) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let Some(w) = &app.dashboard.whats_next else {
         return Space::new().into();
     };
@@ -1253,7 +1253,7 @@ fn whats_next(app: &App, width: f32) -> Element<'_, Message> {
 }
 
 fn free_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let Some(w) = &app.dashboard.whats_next else {
         return Space::new().into();
     };
@@ -1354,7 +1354,7 @@ fn upcoming_row<'a>(t: &'static Tokens, u: &UpcomingLine) -> Element<'a, Message
 }
 
 fn upcoming_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let Some(w) = &app.dashboard.whats_next else {
         return Space::new().into();
     };
@@ -1429,7 +1429,7 @@ fn upcoming_card(app: &App) -> Element<'_, Message> {
 // ---- ultimos lancamentos e quem lancou ----
 
 fn recent(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let r = &app.dashboard.recent;
     let mut list = column![];
     for (k, l) in r.lines.iter().enumerate() {
@@ -1498,7 +1498,7 @@ fn recent(app: &App) -> Element<'_, Message> {
 }
 
 fn people(app: &App) -> Option<Element<'_, Message>> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let p = app.dashboard.people.as_ref()?;
     let mut col = column![txt(p.title.clone(), 13.0, t.text_muted)].spacing(14);
     for person in &p.rows {
@@ -1589,7 +1589,7 @@ fn lan_note<'a>(t: &'static Tokens) -> text::Text<'a> {
 /// "Comece por aqui" (spec 8.2): nucleo no ar, hub vazio e nenhum aparelho pareado. Substitui o
 /// vazio com "Conectar um celular" da issue 02, que nao dizia o que vem depois de parear.
 fn first_use_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let mut col = column![lead(t, "Comece por aqui")].spacing(20);
     if let Some(note) = no_network_note(app) {
         col = col.push(note);
@@ -1604,7 +1604,7 @@ fn first_use_card(app: &App) -> Element<'_, Message> {
 
 /// Ha aparelho pareado mas nada chegou: quem o hub espera e o passo que falta (o 3, o sync).
 fn waiting_card(app: &App, line: String) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let mut col = column![
         row![swatch(t.warning, 7.0, 3.5), lead(t, line)]
             .spacing(10)
@@ -1626,11 +1626,11 @@ const NO_NETWORK_NOTE: &str =
 
 fn no_network_note(app: &App) -> Option<Element<'_, Message>> {
     (app.snapshot.status == Status::NoNetwork)
-        .then(|| txt(NO_NETWORK_NOTE, 13.0, app.tokens.warning).into())
+        .then(|| txt(NO_NETWORK_NOTE, 13.0, app.iced.tokens.warning).into())
 }
 
 fn empty_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let snap = &app.snapshot;
     let waiting = match snap.addresses.first() {
         Some(ip) => format!("Aguardando o primeiro sync em {ip}:{}", snap.https_port),
@@ -1720,7 +1720,7 @@ fn footer(app: &App) -> Option<Element<'_, Message>> {
                     v.ignored_total,
                 ),
                 12.0,
-                app.tokens.text_muted,
+                app.iced.tokens.text_muted,
             )
             .width(Length::Fill),
         )

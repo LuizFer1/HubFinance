@@ -22,7 +22,7 @@ const COLUMN_MAX: f32 = 720.0;
 const SECTION_LABEL: f32 = 120.0;
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let mut sections: Vec<Element<'_, Message>> = vec![
         section(t, "Aparência", vec![theme_row(app), reduce_motion_row(app)]),
         section(t, "Privacidade", vec![hide_values_row(app)]),
@@ -66,7 +66,7 @@ fn section<'a>(
 }
 
 fn theme_row(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let option = |label, mode| (label, app.theme == mode, Message::SetTheme(mode));
     widgets::settings_row(
         t,
@@ -88,7 +88,7 @@ fn theme_row(app: &App) -> Element<'_, Message> {
 
 /// Desliga as tres animacoes (scrim, toast, cursor da resposta): o estado final aparece na hora.
 fn reduce_motion_row(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     widgets::settings_row(
         t,
         "Reduzir movimento",
@@ -108,7 +108,7 @@ fn reduce_motion_row(app: &App) -> Element<'_, Message> {
 
 /// O mesmo estado do olho do cabecalho: ligar aqui e la e a mesma preferencia.
 fn hide_values_row(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     widgets::settings_row(
         t,
         "Ocultar valores",
@@ -120,7 +120,7 @@ fn hide_values_row(app: &App) -> Element<'_, Message> {
 /// So onde o sistema tem a opcao (Windows com bandeja). Sem bandeja fechar a janela desliga o
 /// hub, e a frase sobre o relogio seria mentira: a secao inteira some.
 fn startup_rows(app: &App) -> Option<Vec<Element<'_, Message>>> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let enabled = app.autostart?;
     let detail: Option<Element<'_, Message>> = app.autostart_failed.then(|| {
         text("Não foi possível alterar. Veja o log.")
@@ -152,7 +152,7 @@ fn startup_rows(app: &App) -> Option<Vec<Element<'_, Message>>> {
 
 /// "Configurar" abre o dialogo em passos do assistente aqui mesmo, por cima de Ajustes.
 fn assistant_row(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let summary = assistant_summary(&app.snapshot.assistant.settings);
     widgets::settings_row(
         t,
@@ -165,7 +165,7 @@ fn assistant_row(app: &App) -> Element<'_, Message> {
 
 /// Versao com "Versoes no GitHub", as duas pastas com "Copiar" e a frase sobre a internet.
 fn about_rows(app: &App) -> Vec<Element<'_, Message>> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let lines = about_lines(&app.snapshot);
     let path = |p: String| -> Option<Element<'_, Message>> {
         Some(
@@ -212,7 +212,7 @@ fn about_rows(app: &App) -> Vec<Element<'_, Message>> {
 
 fn copy_button(app: &App, target: CopyTarget) -> Element<'_, Message> {
     widgets::copy_button(
-        app.tokens,
+        app.iced.tokens,
         app.is_copied(target),
         Some(Message::Copy(target)),
     )
@@ -221,7 +221,7 @@ fn copy_button(app: &App, target: CopyTarget) -> Element<'_, Message> {
 /// "Versoes no GitHub" abre o navegador do sistema; se nao abrir, a URL com "Copiar", sem
 /// dialogo (spec de atualizacao, "Tratamento de erros").
 fn releases_link(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     if app.releases_open_failed {
         return row![
             text(config::RELEASES_URL)

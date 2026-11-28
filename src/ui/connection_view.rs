@@ -85,7 +85,7 @@ pub(super) fn dialog_open(app: &App) -> bool {
 pub fn view(app: &App) -> Element<'_, Message> {
     if shows_in_screen_flow(app) {
         let flow = app.connect.unwrap_or_default();
-        let card = widgets::card(app.tokens, flow_body(app, flow, false))
+        let card = widgets::card(app.iced.tokens, flow_body(app, flow, false))
             .padding(CARD_PAD)
             .max_width(FLOW_WIDTH);
         return column![card, activity_card(app)]
@@ -144,7 +144,7 @@ fn field_value_size(value: &str, field_width: f32) -> f32 {
 pub(super) fn header_action(app: &App) -> Option<Element<'_, Message>> {
     (is_up(&app.snapshot) && !in_screen_case(app)).then(|| {
         widgets::action_button(
-            app.tokens,
+            app.iced.tokens,
             ButtonKind::Primary,
             ButtonSize::Large,
             "Conectar um celular",
@@ -157,7 +157,7 @@ pub(super) fn header_action(app: &App) -> Option<Element<'_, Message>> {
 // ---- card do endereco ----
 
 fn address_card(app: &App, inner: f32) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let snap = &app.snapshot;
     let url = hub_url(snap);
     let size = url
@@ -220,7 +220,7 @@ fn field<'a>(
     size: f32,
 ) -> Element<'a, Message> {
     widgets::field_copy(
-        app.tokens,
+        app.iced.tokens,
         (glyph, glyph_color),
         value,
         size,
@@ -233,7 +233,7 @@ fn field<'a>(
 // ---- aparelhos conectados ----
 
 fn users_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let count = app.visible_people().count();
     let title = container(widgets::card_title(
         t,
@@ -284,7 +284,7 @@ fn users_card(app: &App) -> Element<'_, Message> {
 }
 
 fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let photo = app.iced.avatars.get(&person.device_id);
     let avatar = widgets::avatar(
         t,
@@ -368,7 +368,7 @@ fn person_row<'a>(app: &'a App, person: &'a Person, now: SystemTime) -> Element<
 /// O "status detalhado" que o design nao desenhou, reduzido ao essencial. Sem o "epoch": e
 /// jargao, e quem precisa dele acha em Ajustes > Sobre (a pasta dos dados e os logs).
 fn activity_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let snap = &app.snapshot;
     let mut col = column![
         widgets::card_title(t, "Atividade", Some("últimas 20".into())),
@@ -414,7 +414,7 @@ pub(super) fn connect_dialog(app: &App) -> Option<Element<'_, Message>> {
     }
     let flow = app.connect?;
     Some(widgets::dialog(
-        app.tokens,
+        app.iced.tokens,
         flow_body(app, flow, true),
         app.window_size.w,
         FLOW_WIDTH,
@@ -432,7 +432,7 @@ fn dialog_height(window_height: f32) -> f32 {
 /// Titulo, progresso, o passo e o rodape. No dialogo o rodape fica embaixo (altura fixa) e o
 /// titulo ganha o "x"; na tela nao ha o que fechar.
 fn flow_body(app: &App, flow: ConnectFlow, modal: bool) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let mut head = row![
         text("Conectar um celular")
             .size(type_scale::LEAD)
@@ -519,7 +519,7 @@ fn body_text<'a>(t: &'static Tokens, content: impl text::IntoFragment<'a>) -> te
 /// Passo 1. O hub nao sabe o nome da rede (nao le o SSID), entao nao o mostra: diz o endereco
 /// do computador na rede, que ele sabe, e avisa quando nao ha rede local.
 fn wifi_step(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let snap = &app.snapshot;
     let mut col = column![
         row![
@@ -549,7 +549,7 @@ fn wifi_step(app: &App) -> Element<'_, Message> {
 /// Passo 2: segmentado Android | iPhone e os passos do sistema; o endereco do guia vai com
 /// "Copiar" dentro do passo que manda abri-lo.
 fn certificate_step(app: &App, os: PhoneOs) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let option =
         |label: &'static str, value: PhoneOs| (label, os == value, Message::ConnectOs(value));
     let switch = widgets::segmented(
@@ -601,7 +601,7 @@ fn certificate_step(app: &App, os: PhoneOs) -> Element<'_, Message> {
 
 /// Passo 3: QR e codigo a esquerda, os passos e o endereco a direita.
 fn pair_step(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     // Validado; fora da escala de proposito.
     let mut info = column![].spacing(10).width(Length::Fill);
     for (i, line) in PAIR_STEPS.iter().enumerate() {
@@ -635,7 +635,7 @@ fn pair_step(app: &App) -> Element<'_, Message> {
 /// claro. Na paleta Nocturne o `neutral_100` era igual nos dois temas; na Grafite a rampa do
 /// claro e invertida (`neutral_100` claro e quase preto), entao o quadro fixa o do escuro.
 fn pairing_block(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let snap = &app.snapshot;
     let now = SystemTime::now();
     let frame = |content, padding| qr_frame(t, content, padding);

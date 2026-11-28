@@ -34,7 +34,7 @@ pub(super) fn author_cell_of<'a>(
     app: &'a App,
     author: Option<&'a RowAuthor>,
 ) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let (avatar, name): (Element<'a, Message>, String) = match author {
         Some(author) => (
             widgets::avatar(
@@ -95,7 +95,7 @@ pub(super) fn hover_row<'a>(
     height: Option<f32>,
 ) -> Element<'a, Message> {
     widgets::list_row(
-        app.tokens,
+        app.iced.tokens,
         content,
         RowHover {
             hovered: app.hover_row.as_deref() == Some(id),

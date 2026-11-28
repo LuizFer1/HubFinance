@@ -94,7 +94,7 @@ fn option_color(t: &'static Tokens, token: &str) -> Color {
 
 /// Linha com quebra (`wrap`), gap 8: categoria | autores | tipo | limpar.
 fn filter_bar(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let mut bar = row![category_button(app), widgets::vdivider(t)]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -117,7 +117,7 @@ fn filter_bar(app: &App) -> Element<'_, Message> {
 }
 
 fn category_button(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let v = &app.transactions;
     let (label, dot) = match &v.selected_category {
         Some(selected) => (selected.name.clone(), option_color(t, &selected.color)),
@@ -148,7 +148,7 @@ fn menu_height(options: usize) -> f32 {
 }
 
 fn category_menu(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let v = &app.transactions;
     let selected = app.filters.category.as_deref();
     let mut items = column![].spacing(0);
@@ -215,7 +215,7 @@ fn menu_item<'a>(
 
 /// "Todos" + um chip por perfil vivo (+ "Sem autor" quando o mes tem lancamento sem autor).
 fn author_chips(app: &App) -> Vec<Element<'_, Message>> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let v = &app.transactions;
     let authors = &app.filters.authors;
     let chip = |content: Element<'static, Message>, padding_left: f32, active: bool, msg| {
@@ -274,7 +274,7 @@ fn type_segment(app: &App) -> Element<'_, Message> {
         (label, app.filters.kind == kind, Message::SetType(kind))
     };
     widgets::segmented(
-        app.tokens,
+        app.iced.tokens,
         SegmentedVariant::Bordered,
         SegmentedSize::Compact,
         false,
@@ -293,7 +293,7 @@ fn type_segment(app: &App) -> Element<'_, Message> {
 /// `text_muted` (8.3). Os valores vem prontos do modelo, ja mascarados com "Ocultar valores".
 /// Quebra em duas linhas quando nao cabe (728 de largura util).
 fn summary_line(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let list = &app.transactions.list;
     let count = widgets::value_line(
         vec![
@@ -391,7 +391,7 @@ fn columns<'a>(
 }
 
 fn table(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let v = &app.transactions;
     let head = |label: &'static str| -> Element<'_, Message> {
         text(label)
@@ -472,7 +472,7 @@ fn table(app: &App) -> Element<'_, Message> {
 }
 
 fn table_row<'a>(app: &'a App, r: &'a ListRow, visible: Visible) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let mut description = row![
         category_tile(t, r),
         text(r.description.clone())
@@ -566,7 +566,7 @@ fn empty_copy(v: &TransactionsView, filters: &Filters) -> (String, String, bool)
 }
 
 fn empty(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let v = &app.transactions;
     let (title, body, show_clear) = empty_copy(v, &app.filters);
     // So no vazio do hub (nada sincronizado) vem "Conectar um celular"; o vazio por filtro tem

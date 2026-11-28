@@ -67,7 +67,7 @@ pub(super) fn can_finish(app: &App, setup: &AssistantSetup) -> bool {
 
 pub(super) fn dialog(app: &App) -> Option<Element<'_, Message>> {
     let setup = app.assistant_setup.as_ref()?;
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let header = row![
         text("Configurar assistente")
             .size(18)
@@ -209,7 +209,7 @@ fn radio_row<'a>(
 }
 
 fn where_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     column(CHOICES.iter().map(|(choice, label, detail)| {
         radio_row(
             t,
@@ -224,7 +224,7 @@ fn where_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
 }
 
 fn local_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let view = &app.snapshot.assistant;
     let port = setup.draft.port();
     let test_label = if view.listing {
@@ -304,7 +304,7 @@ fn local_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Messag
 }
 
 fn cloud_step<'a>(app: &'a App, setup: &'a AssistantSetup) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let view = &app.snapshot.assistant;
     let mut section = column![
         text(CLOUD_EXPLAIN)

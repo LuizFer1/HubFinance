@@ -36,7 +36,7 @@ pub struct Scene {
     pub streaming: bool,
 }
 
-/// As duas curvas que o `iced::Animation` (lilt 0.8) trazia: formulas fechadas, as mesmas de
+/// As duas curvas que o motor anterior (lilt 0.8) trazia: formulas fechadas, as mesmas de
 /// antes da troca do motor, para a refatoracao nao mudar o ritmo de scrim e toast.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Easing {

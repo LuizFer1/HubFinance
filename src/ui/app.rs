@@ -191,12 +191,11 @@ pub struct App {
     /// mouse anda, para o duplo clique (maximizar) nao ser engolido pelo laco de movimento do
     /// Windows.
     pub(super) title_pressed: bool,
-    /// A preferencia (Escuro, Claro ou Sistema); o que se desenha e `tokens`.
+    /// A preferencia (Escuro, Claro ou Sistema); o que se desenha e `iced.tokens`.
     pub(super) theme: ThemeMode,
     /// O sistema esta no escuro? So pesa com `ThemeMode::System`. Nasce do registro (ou escuro,
     /// o padrao do design, quando o sistema nao diz) e segue as trocas avisadas.
     pub(super) system_dark: bool,
-    pub(super) tokens: &'static Tokens,
     pub(super) screen: Screen,
     /// Onde fica o `ui.json` (o diretorio de dados do hub).
     pub(super) prefs_dir: PathBuf,
@@ -492,7 +491,6 @@ impl App {
             title_pressed: false,
             theme: prefs.theme,
             system_dark,
-            tokens,
             screen: Screen::default(),
             prefs_dir,
             window_size: INITIAL_SIZE,
@@ -853,10 +851,10 @@ impl App {
     /// grava o `ui.json`): a troca do sistema nao e escolha da pessoa.
     fn apply_theme(&mut self) {
         let tokens = Tokens::for_mode(self.theme, self.system_dark);
-        if std::ptr::eq(tokens, self.tokens) {
+        if std::ptr::eq(tokens, self.iced.tokens) {
             return;
         }
-        self.tokens = tokens;
+        self.iced.tokens = tokens;
         self.iced.iced_theme = tokens.iced_theme();
         // As cores dos graficos estao gravadas na geometria em cache.
         self.clear_charts();
@@ -2295,7 +2293,7 @@ pub(super) mod tests {
         );
         assert_eq!(app.screen, Screen::Dashboard);
         assert_eq!(app.theme, ThemeMode::Light);
-        assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
+        assert!(std::ptr::eq(app.iced.tokens, &super::super::theme::LIGHT));
     }
 
     #[test]
@@ -2324,11 +2322,11 @@ pub(super) mod tests {
         let light = &super::super::theme::LIGHT;
         let dark = &super::super::theme::DARK;
         // O sistema manda sobre o que foi gravado.
-        assert!(std::ptr::eq(boot(Some(false), true).tokens, light));
-        assert!(std::ptr::eq(boot(Some(true), false).tokens, dark));
+        assert!(std::ptr::eq(boot(Some(false), true).iced.tokens, light));
+        assert!(std::ptr::eq(boot(Some(true), false).iced.tokens, dark));
         // Sem resposta, vale o modo resolvido da ultima gravacao.
-        assert!(std::ptr::eq(boot(None, true).tokens, dark));
-        assert!(std::ptr::eq(boot(None, false).tokens, light));
+        assert!(std::ptr::eq(boot(None, true).iced.tokens, dark));
+        assert!(std::ptr::eq(boot(None, false).iced.tokens, light));
     }
 
     /// Espera a thread de `save_prefs` gravar o que o teste quer ver.
@@ -2521,7 +2519,7 @@ pub(super) mod tests {
         let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
         let _ = update(&mut app, Message::SetTheme(ThemeMode::Light));
         assert_eq!(app.theme, ThemeMode::Light);
-        assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
+        assert!(std::ptr::eq(app.iced.tokens, &super::super::theme::LIGHT));
         // A gravacao corre numa thread; espera com prazo.
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while UiPrefs::load(dir.path()).theme != ThemeMode::Light {
@@ -2538,7 +2536,7 @@ pub(super) mod tests {
         let _ = update(&mut app, Message::SetTheme(ThemeMode::System));
         assert_eq!(app.theme, ThemeMode::System);
         // Escolher "Sistema" le o sistema na hora: claro, sem esperar o tique.
-        assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
+        assert!(std::ptr::eq(app.iced.tokens, &super::super::theme::LIGHT));
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while UiPrefs::load(dir.path()).theme != ThemeMode::System {
             assert!(std::time::Instant::now() < deadline, "ui.json nao gravado");
@@ -2548,17 +2546,17 @@ pub(super) mod tests {
         // O sistema vai para o escuro: o tique percebe (caminho do Windows).
         fake.system_dark.set(Some(true));
         let _ = update(&mut app, Message::Tick);
-        assert!(std::ptr::eq(app.tokens, &super::super::theme::DARK));
+        assert!(std::ptr::eq(app.iced.tokens, &super::super::theme::DARK));
         // Com o registro respondendo, o aviso do iced e ignorado: ele chega velho no Windows.
         let _ = update(&mut app, Message::SystemTheme(false));
-        assert!(std::ptr::eq(app.tokens, &super::super::theme::DARK));
+        assert!(std::ptr::eq(app.iced.tokens, &super::super::theme::DARK));
         // Sem registro (Linux), o aviso do iced troca; `None` nao mexe.
         fake.system_dark.set(None);
         let _ = update(&mut app, Message::SystemTheme(false));
-        assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
+        assert!(std::ptr::eq(app.iced.tokens, &super::super::theme::LIGHT));
         let _ = update(&mut app, system_theme(iced::theme::Mode::None));
         let _ = update(&mut app, Message::Tick);
-        assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
+        assert!(std::ptr::eq(app.iced.tokens, &super::super::theme::LIGHT));
         assert_eq!(UiPrefs::load(dir.path()).theme, ThemeMode::System);
     }
 
@@ -2570,10 +2568,10 @@ pub(super) mod tests {
         assert_eq!(app.theme, ThemeMode::Dark);
         let _ = update(&mut app, Message::Tick);
         let _ = update(&mut app, Message::SystemTheme(false));
-        assert!(std::ptr::eq(app.tokens, &super::super::theme::DARK));
+        assert!(std::ptr::eq(app.iced.tokens, &super::super::theme::DARK));
         // Voltar a "Sistema" usa o que o sistema disse por ultimo.
         let _ = update(&mut app, Message::SetTheme(ThemeMode::System));
-        assert!(std::ptr::eq(app.tokens, &super::super::theme::LIGHT));
+        assert!(std::ptr::eq(app.iced.tokens, &super::super::theme::LIGHT));
     }
 
     #[test]

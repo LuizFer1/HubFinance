@@ -44,7 +44,7 @@ const REPLY_MAX: f32 = 440.0;
 pub(super) const CHAT_SCROLL: &str = "conversa";
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let mut page = column![
         text(summary_line(&app.analysis.findings))
             .size(13)
@@ -95,7 +95,7 @@ fn tab_switch(app: &App) -> Element<'_, Message> {
         |label: &'static str, tab: AnalysisTab| (label, current == tab, Message::AnalysisTab(tab));
     row![
         widgets::segmented(
-            app.tokens,
+            app.iced.tokens,
             SegmentedVariant::Pill,
             SegmentedSize::Regular,
             false,
@@ -156,7 +156,7 @@ fn severity_glyph(s: Severity) -> &'static str {
 const SEVERITIES: [Severity; 3] = [Severity::Alert, Severity::Attention, Severity::GoodSign];
 
 fn findings_panel(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let findings = &app.analysis.findings;
     let content: Element<'_, Message> = if findings.is_empty() {
         container(widgets::empty_state(
@@ -209,7 +209,7 @@ fn findings_panel(app: &App) -> Element<'_, Message> {
 /// Um achado: tile de 28 na tinta de 10 % do tom, titulo 16 Medium, detalhe 14 `text_soft` e a
 /// acao 14 em `fg` (nao dourada: nao e clicavel).
 fn finding_row<'a>(app: &'a App, f: &'a Finding) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let tile = container(icons::icon(
         severity_glyph(f.severity),
         16.0,
@@ -251,7 +251,7 @@ fn finding_row<'a>(app: &'a App, f: &'a Finding) -> Element<'a, Message> {
 /// o tamanho fica, o numero some).
 fn comparison_view<'a>(app: &App, severity: Severity, c: &Comparison) -> Element<'a, Message> {
     use crate::dashboard::money::format_brl;
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let scale = c.real.max(c.reference) as f32;
     let line = |label: &'static str, value: i64, color: Color| -> Element<'a, Message> {
         let shown = if app.hide_values {
@@ -302,7 +302,7 @@ const COMPARISON_VALUE: f32 = 96.0;
 // ---- assistente ----
 
 fn assistant_panel(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let open = open_conversation(app);
     let mut header = row![
         column![
@@ -361,7 +361,7 @@ fn assistant_panel(app: &App) -> Element<'_, Message> {
 
 /// Sem conversa aberta: conversar, ver o envelope e as conversas anteriores.
 fn idle_body(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let mut col = column![
         text("Converse sobre os achados desta conta. O assistente recebe só resumos e totais.")
             .size(13)
@@ -437,7 +437,7 @@ fn hidden_values_note(app: &App) -> Option<&'static str> {
 /// A conversa: mensagens na rolagem propria (ancorada embaixo, acompanha o texto que chega) e o
 /// campo de pergunta fixo no pe do painel.
 fn conversation_body<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let view = &app.snapshot.assistant;
     // Nuvem sem a previa aprovada: nada saiu, e o "Tentar de novo" sob a pergunta de abertura
     // reenviaria sem a pessoa ver o que vai. A previa toma o lugar dele e do campo de pergunta.
@@ -501,7 +501,7 @@ fn conversation_body<'a>(app: &'a App, open: &'a OpenConversation) -> Element<'a
 
 /// Campo de pergunta com "Enviar", fixo no pe do painel.
 fn chat_input(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let view = &app.snapshot.assistant;
     // Sem `on_input` o campo fica desabilitado enquanto ha resposta chegando.
     let mut input = text_input("Pergunte sobre estes números", &app.chat_input)
@@ -528,7 +528,7 @@ fn chat_input(app: &App) -> Element<'_, Message> {
 }
 
 fn message_view<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     match m.role {
         MessageRole::User => {
             let bubble = container(text(mask(app, &m.content)).size(14).color(t.text))
@@ -585,7 +585,7 @@ fn message_view<'a>(app: &'a App, m: &'a MessageView, is_last: bool) -> Element<
 /// O cache so vale para o mesmo texto e o mesmo estado do olho: um cache montado com os valores
 /// a mostra nunca e desenhado com "Ocultar valores" ligado.
 fn reply_body<'a>(app: &'a App, m: &'a MessageView) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     // Sem cache valido (snapshot que ainda nao passou por `refresh_replies`): o mesmo caminho
     // do cache, em texto puro. O fonte so mascarado deixaria passar o que o Markdown remonta.
     let fallback = || -> Element<'a, Message> {
@@ -626,7 +626,7 @@ fn reply_body<'a>(app: &'a App, m: &'a MessageView) -> Element<'a, Message> {
 /// Resposta chegando: texto puro (mascarado). O Markdown so entra quando ela termina: um numero
 /// cortado entre dois pedacos nao seria reconhecido pela mascara num parse incremental.
 fn streaming_view<'a>(app: &'a App, partial: &'a str) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let shown = if partial.is_empty() {
         Cow::Borrowed("…")
     } else if app.hide_values {
@@ -893,7 +893,7 @@ pub(super) fn shown_consent(app: &App) -> Option<&OpenConversation> {
 /// mascarado. Esc e o scrim so fecham; so o "Cancelar" pode apagar a abertura recem-criada.
 pub(super) fn consent_dialog(app: &App) -> Option<Element<'_, Message>> {
     let open = shown_consent(app)?;
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let cloud = &app.snapshot.assistant.settings.cloud;
     // O `padding(4)` mantem o cursor da rolagem longe do canto arredondado (o texto fica a 12
     // px da borda: 4 + 8).
@@ -990,7 +990,7 @@ fn retry_button(t: &'static Tokens) -> Element<'static, Message> {
 /// Conversas anteriores da conta que a tela mostra, com data e hora (todas se chamam "Análise
 /// de <mês>"), abrir e apagar com "Desfazer".
 fn conversation_list(app: &App) -> Option<Element<'_, Message>> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let items = conversations_of_book(app);
     if items.is_empty() {
         return None;
@@ -1050,7 +1050,7 @@ pub(super) fn preview_text(app: &App) -> Option<Cow<'_, str>> {
 /// padrão do modal de remoção: fundo escurecido que fecha ao clicar e a caixa por cima, que
 /// engole o clique.
 pub(super) fn envelope_dialog(app: &App) -> Option<Element<'_, Message>> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let preview = preview_text(app)?;
     let header = text("O que o assistente vê")
         .size(18)

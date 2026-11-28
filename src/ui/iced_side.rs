@@ -26,6 +26,8 @@ pub struct IcedSide {
     /// `Theme::custom` gera a paleta estendida a cada chamada; guardado para nao refazer isso
     /// a cada quadro.
     pub(super) iced_theme: iced::Theme,
+    /// Paleta que se desenha: `Tokens` guarda `iced::Color`, entao mora do lado do toolkit.
+    pub(super) tokens: &'static Tokens,
     /// `device_id` -> textura da foto (o `App` guarda os bytes; o `Handle` reaproveita a
     /// textura enquanto o mesmo valor viver, entao so se refaz quando a foto muda).
     pub(super) avatars: HashMap<String, image::Handle>,
@@ -40,7 +42,7 @@ pub struct IcedSide {
 }
 
 impl IcedSide {
-    pub fn new(tokens: &Tokens) -> IcedSide {
+    pub fn new(tokens: &'static Tokens) -> IcedSide {
         IcedSide {
             qr: None,
             pace_cache: canvas::Cache::new(),
@@ -49,6 +51,7 @@ impl IcedSide {
             reserves_cache: canvas::Cache::new(),
             reserves_empty_cache: canvas::Cache::new(),
             iced_theme: tokens.iced_theme(),
+            tokens,
             avatars: HashMap::new(),
             user_avatars: HashMap::new(),
             replies: HashMap::new(),

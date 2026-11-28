@@ -59,7 +59,13 @@ pub fn root(app: &App) -> Element<'_, Message> {
     // O "Desfazer" ganha do aviso (tem acao e prazo que manda algo ao nucleo); a escolha e
     // feita em `App::scene`, e o `motion` guarda o que desce depois de sair do estado.
     if let Some((progress, shown, live)) = app.motion.toast() {
-        layers = layers.push(toast(app.tokens, &shown.text, shown.undo, live, progress));
+        layers = layers.push(toast(
+            app.iced.tokens,
+            &shown.text,
+            shown.undo,
+            live,
+            progress,
+        ));
     }
     layers.into()
 }
@@ -120,7 +126,7 @@ fn toast<'a>(
 }
 
 fn frame(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     // Lateral e conteudo no mesmo fundo, sem divisoria: no design a navegacao fica sobre o
     // fundo da pagina. Um container so para os dois leva o gradiente.
     let body = container(row![sidebar(app), content(app)].height(Length::Fill))
@@ -137,7 +143,7 @@ fn frame(app: &App) -> Element<'_, Message> {
 // ---- barra de titulo ----
 
 fn titlebar(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let mark = container(icons::icon(icons::HOUSE_LINE, 11.0, t.accent_400))
         .center(18)
         .style(theme::fill(t.accent_900, theme::radius::INSET));
@@ -243,7 +249,7 @@ fn resize_frame<'a>() -> Element<'a, Message> {
 // ---- barra lateral ----
 
 fn sidebar(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let mark = container(icons::icon(icons::HOUSE_LINE, 20.0, t.accent_400))
         .center(36)
         .style(theme::fill(t.accent_900, theme::radius::CONTROL));
@@ -424,7 +430,7 @@ pub(super) fn screen_arrival(app: &App, screen_has_data: bool) -> Arrival {
 /// (~425: texto, 100 + 160 + 100 e tres espacos de 16) cabe nos ~470 que sobram em 1024x720 com
 /// o cabecalho quebrado em duas linhas, porque em Lancamentos a casca nao rola (`owns_scroll`).
 pub(super) fn opening(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let block = |height: f32| {
         container(Space::new())
             .width(Length::Fill)
@@ -456,7 +462,7 @@ pub(super) fn connect_phone_button(app: &App) -> Option<Element<'_, Message>> {
     let up = matches!(app.snapshot.status, Status::Running | Status::NoNetwork);
     (up && active_devices(app) == 0).then(|| {
         widgets::action_button(
-            app.tokens,
+            app.iced.tokens,
             ButtonKind::Primary,
             ButtonSize::Regular,
             "Conectar um celular",
@@ -471,7 +477,7 @@ pub(super) fn connect_phone_button(app: &App) -> Option<Element<'_, Message>> {
 /// do botao. A barra tem lugar reservado nos dois estados, para o icone nao pular ao trocar.
 /// O tooltip mostra o atalho (`n` e a posicao na navegacao).
 fn nav_item(app: &App, entry: NavEntry, n: usize) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let active = app.screen == entry.screen;
     let icon = if active {
         icons::icon(entry.glyph, 18.0, t.accent_400)
@@ -551,7 +557,7 @@ pub(super) struct StatusLines {
 }
 
 pub(super) fn status_lines(app: &App) -> StatusLines {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let snap = &app.snapshot;
     match &snap.status {
         Status::Running if has_data(app) => StatusLines {
@@ -641,7 +647,7 @@ fn halo_dot<'a>(color: iced::Color) -> Element<'a, Message> {
 /// Card de status: `surface`, raio 8, 14 de respiro; titulo 13 e as linhas em `text_muted`.
 /// Clicavel: leva a Aparelhos, onde estao o endereco e quem esta conectado.
 fn status_card(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let lines = status_lines(app);
     let mut col = column![
         row![
@@ -679,7 +685,7 @@ pub(super) fn status_card_press() -> Message {
 // ---- conteudo ----
 
 fn content(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let body: Element<'_, Message> = if let Some(msg) = failure(app) {
         failed_card(app, msg)
     } else {
@@ -800,7 +806,7 @@ pub(super) fn header_controls(screen: Screen) -> HeaderControls {
 /// (`header_line`); a direita, conforme a tela, o seletor de conta, o de mes e o olho de
 /// ocultar valores. Abaixo de `HEADER_WRAP_WIDTH` os controles descem para baixo do titulo.
 fn header(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let (title, line) = header_line(app);
     // Validado; fora da escala de proposito.
     let mut controls = row![].spacing(10).align_y(Alignment::Center);
@@ -880,7 +886,7 @@ pub(super) fn partial_chip(app: &App) -> Option<&str> {
 /// Olho de 44 px com tooltip "Ocultar valores" / "Mostrar valores" (o `aria-label` do design).
 /// Com valores ocultos o glifo vira `eye-slash`, para o estado ficar visivel sem o tooltip.
 fn hide_values_button(app: &App) -> Element<'_, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     let glyph = if app.hide_values {
         icons::EYE_SLASH
     } else {
@@ -904,7 +910,7 @@ pub(super) fn book_switch(app: &App) -> Option<Element<'_, Message>> {
     }
     let option = |book: Book| (book.label(), app.book == book, Message::SelectBook(book));
     Some(widgets::segmented(
-        app.tokens,
+        app.iced.tokens,
         SegmentedVariant::Pill,
         SegmentedSize::Regular,
         false,
@@ -963,7 +969,7 @@ pub(super) fn failure(app: &App) -> Option<&str> {
 /// Hub que nao subiu: no lugar de qualquer tela (menos Ajustes), o motivo e onde ficam os
 /// dados.
 fn failed_card<'a>(app: &'a App, msg: &'a str) -> Element<'a, Message> {
-    let t = app.tokens;
+    let t = app.iced.tokens;
     // O padrao dos estados vazios (titulo 18, corpo 14), com o glifo na cor do erro e a pasta
     // de dados como nota: e ela que a pessoa procura para entender a falha.
     let col = column![
@@ -1014,7 +1020,7 @@ mod tests {
         let lines = status_lines(&app);
         assert_eq!(lines.title, "Hub ligado · sem dados");
         assert_eq!(lines.address.as_deref(), Some("192.168.0.12:7777"));
-        assert_eq!(lines.dot, app.tokens.warning);
+        assert_eq!(lines.dot, app.iced.tokens.warning);
 
         app.snapshot.status = Status::NoNetwork;
         app.snapshot.addresses.clear();
@@ -1026,7 +1032,7 @@ mod tests {
         let lines = status_lines(&app);
         assert_eq!(lines.title, "Hub com erro");
         assert_eq!(lines.detail.as_deref(), Some("Porta 7777 em uso"));
-        assert_eq!(lines.dot, app.tokens.expense);
+        assert_eq!(lines.dot, app.iced.tokens.expense);
 
         app.snapshot.status = Status::Starting;
         assert_eq!(status_lines(&app).title, "Iniciando…");
@@ -1177,7 +1183,7 @@ mod tests {
         app.snapshot.status = Status::Running;
         let lines = status_lines(&app);
         assert_eq!(lines.title, "Hub ligado");
-        assert_eq!(lines.dot, app.tokens.income);
+        assert_eq!(lines.dot, app.iced.tokens.income);
 
         let snap = Snapshot {
             status: Status::Running,
@@ -1186,8 +1192,8 @@ mod tests {
         let (empty, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
         let lines = status_lines(&empty);
         assert_eq!(lines.title, "Hub ligado · sem dados");
-        assert_eq!(lines.dot, empty.tokens.warning);
-        assert_ne!(lines.dot, empty.tokens.token("amber"));
+        assert_eq!(lines.dot, empty.iced.tokens.warning);
+        assert_ne!(lines.dot, empty.iced.tokens.token("amber"));
     }
 
     #[test]

@@ -7,7 +7,7 @@ roda este script. Uso, da raiz do repo:
 
 Requer Pillow (testado com 12.x).
 
-- `icon.ico` e copia de `assets/brand/hubfinance.ico` (o pacote ja traz as camadas certas).
+- `icon.ico` e copia de `assets/brand/hub-windows/hubfinance.ico` (o pacote ja traz as camadas certas).
 - `32/64/128/256/512x512.png` sao reducoes (LANCZOS) de `hubfinance-512.png`; `icon.icns` sai
   do mesmo 512.
 - `tray-{on,error,offline,off}-{light,dark}.png` (32 px): `-light` = para barra de tarefas

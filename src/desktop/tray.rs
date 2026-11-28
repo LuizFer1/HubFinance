@@ -14,8 +14,9 @@ pub const MENU_CONNECT: &str = "conectar";
 #[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 pub const MENU_COPY_ADDRESS: &str = "copiar-endereco";
 
-/// Desenho do icone da bandeja. Tres e nao um por estado: no tamanho da barra (16 px) so um
-/// ponto de cor no canto se le, e o tooltip diz o resto.
+/// Desenho do icone da bandeja. Quatro estados, cada um com desenho para barra clara e para escura
+/// (ver `icon_file`): no tamanho da barra (16 px) so um ponto de cor no canto se le, e o
+/// tooltip diz o resto.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TrayIcon {
     /// O icone do programa, sem ponto.
@@ -33,6 +34,7 @@ pub enum TrayIcon {
 /// Nome do PNG embutido por estado **e** pelo tema da barra de tarefas. A barra e do Windows e
 /// pode divergir do tema do app: um desenho escuro sobre barra escura some, por isso os dois.
 /// `None` (o sistema nao diz) vale como barra escura, o padrao do Windows.
+#[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 pub fn icon_file(kind: TrayIcon, taskbar_dark: Option<bool>) -> &'static str {
     let dark = taskbar_dark.unwrap_or(true);
     match (kind, dark) {
@@ -92,8 +94,9 @@ mod win {
 
     /// 32 px: o Windows reduz para 16 na barra; os PNG sao independentes do `build.rs`
     /// (o `winresource` so avisa quando falha, e ai `Icon::from_resource` nao acharia nada).
-    /// Gerados por `scripts/gen-icon.py` e commitados; a ordem e a de `ALL`.
-    const PNGS: [(&str, &[u8]); 8] = [
+    /// Gerados por `scripts/gen-icon.py` e commitados; o teste `pngs_cobrem_icon_file` garante que
+    /// todo nome devolvido por `icon_file` esta aqui.
+    pub(super) const PNGS: [(&str, &[u8]); 8] = [
         (
             "tray-on-dark.png",
             include_bytes!("../../assets/icon/tray-on-dark.png"),
@@ -128,8 +131,8 @@ mod win {
         ),
     ];
 
-    /// Guarda o `TrayIcon`: o icone some quando a ultima copia e descartada. As tres imagens
-    /// sao decodificadas uma vez, no `install`: trocar de estado nao le PNG de novo.
+    /// Guarda o `TrayIcon`: o icone some quando a ultima copia e descartada. As oito imagens
+    /// (4 estados x 2 temas) sao decodificadas uma vez, no `install`: trocar de estado nao le PNG de novo.
     pub struct Tray {
         icon: TrayIcon,
         icons: Vec<(&'static str, Icon)>,
@@ -152,9 +155,12 @@ mod win {
             .iter()
             .map(|(name, bytes)| decode(bytes).map(|icon| (*name, icon)))
             .collect::<Result<Vec<_>, _>>()?;
+        // Mesmo criterio do `set_icon`: o primeiro desenho ja sai no tema da barra, pois so ha
+        // nova troca quando o estado muda.
+        let first = super::icon_file(Kind::Normal, crate::desktop::appearance::taskbar_dark());
         let normal = icons
             .iter()
-            .find(|(name, _)| *name == super::icon_file(Kind::Normal, None))
+            .find(|(name, _)| *name == first)
             .map(|(_, icon)| icon.clone())
             .ok_or("icone da bandeja ausente")?;
 
@@ -309,6 +315,27 @@ mod win {
             };
             CloseClipboard();
             result
+        }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod win_tests {
+    use super::{TrayIcon, icon_file, win::PNGS};
+
+    /// Nome fora de `PNGS` faria `install` falhar ou `set_icon` devolver `false` para sempre.
+    #[test]
+    fn pngs_cobrem_icon_file() {
+        for kind in [
+            TrayIcon::Normal,
+            TrayIcon::Attention,
+            TrayIcon::Error,
+            TrayIcon::Off,
+        ] {
+            for dark in [None, Some(true), Some(false)] {
+                let name = icon_file(kind, dark);
+                assert!(PNGS.iter().any(|(n, _)| *n == name), "{name}");
+            }
         }
     }
 }

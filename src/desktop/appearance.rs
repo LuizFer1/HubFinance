@@ -30,6 +30,7 @@ pub fn taskbar_dark() -> Option<bool> {
 
 /// Fora do Windows e em teste: nunca le o registro (ver `system_dark`).
 #[cfg(any(not(windows), test))]
+#[cfg_attr(not(windows), allow(dead_code, reason = "so o codigo Windows usa"))]
 pub fn taskbar_dark() -> Option<bool> {
     None
 }

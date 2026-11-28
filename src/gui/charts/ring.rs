@@ -11,6 +11,7 @@ use super::paint;
 
 #[derive(IntoElement)]
 pub struct Ring {
+    id: ElementId,
     label: SharedString,
     fraction: f64,
     size: f32,
@@ -22,6 +23,7 @@ pub struct Ring {
 impl Ring {
     /// Espessura 11: o anel do design (Reservas) tem 104 de lado e miolo de 82.
     pub fn new(
+        id: impl Into<ElementId>,
         label: impl Into<SharedString>,
         fraction: f64,
         size: f32,
@@ -29,6 +31,7 @@ impl Ring {
         track: Hsla,
     ) -> Ring {
         Ring {
+            id: id.into(),
             label: label.into(),
             fraction,
             size,
@@ -86,7 +89,7 @@ impl RenderOnce for Ring {
         )
         .size_full();
         div()
-            .id(ElementId::Name(format!("ring-{}", self.label).into()))
+            .id(self.id)
             .role(Role::Image)
             .aria_label(self.label)
             .w(px(self.size))

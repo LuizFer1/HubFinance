@@ -249,6 +249,7 @@ impl RenderOnce for GroupedBars {
 /// Mini-barras do Negocio: uma barra por mes sobre o fundo `highlight`, em `on_highlight`.
 #[derive(IntoElement)]
 pub struct MiniBars {
+    id: ElementId,
     label: SharedString,
     /// `None` = mes que ainda nao existia (sem barra).
     months: Vec<Option<i64>>,
@@ -261,6 +262,7 @@ pub struct MiniBars {
 
 impl MiniBars {
     pub fn new(
+        id: impl Into<ElementId>,
         label: impl Into<SharedString>,
         months: Vec<Option<i64>>,
         top: i64,
@@ -268,6 +270,7 @@ impl MiniBars {
         tokens: &'static Tokens,
     ) -> Self {
         MiniBars {
+            id: id.into(),
             label: label.into(),
             months,
             top,
@@ -286,6 +289,7 @@ impl MiniBars {
 impl RenderOnce for MiniBars {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let MiniBars {
+            id,
             label,
             months,
             top,
@@ -325,7 +329,7 @@ impl RenderOnce for MiniBars {
         )
         .size_full();
         div()
-            .id(ElementId::Name(format!("mini-bars-{}", label).into()))
+            .id(id)
             .role(Role::Image)
             .aria_label(label)
             .w_full()
@@ -336,11 +340,32 @@ impl RenderOnce for MiniBars {
 
 #[cfg(test)]
 mod tests {
-    use super::hatch_dims;
+    use super::{BarTip, hatch_dims};
+    use crate::gui::components::tooltip::Line;
 
     /// Periodo perpendicular que o shader pinta, em pixels de dispositivo.
     fn period(dims: (f32, f32)) -> f32 {
         (dims.0 + dims.1) * std::f32::consts::FRAC_1_SQRT_2
+    }
+
+    #[test]
+    fn tooltip_do_mes_tem_tres_pares_e_so_sobrou_em_negrito() {
+        let tip = BarTip::month("Outubro", "R$ 1,00", "R$ 2,00", "R$ 3,00");
+        assert_eq!(tip.title, "Outubro");
+        let esperado = [
+            ("Receitas", "R$ 1,00", false),
+            ("Despesas", "R$ 2,00", false),
+            ("Sobrou", "R$ 3,00", true),
+        ];
+        assert_eq!(tip.lines.len(), 3);
+        for (line, (l, v, b)) in tip.lines.iter().zip(esperado) {
+            match line {
+                Line::Pair { label, value, bold } => {
+                    assert_eq!((label.as_ref(), value.as_ref(), *bold), (l, v, b));
+                }
+                outra => panic!("esperava par, veio {outra:?}"),
+            }
+        }
     }
 
     #[test]

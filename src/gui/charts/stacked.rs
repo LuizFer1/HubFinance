@@ -11,6 +11,7 @@ use super::{at, paint, plot_of};
 
 #[derive(IntoElement)]
 pub struct StackedArea {
+    id: ElementId,
     label: SharedString,
     /// `series[k][i]` = saldo da reserva `k` no mes `i`, de baixo para cima.
     series: Vec<Vec<i64>>,
@@ -65,6 +66,7 @@ fn dot(
 
 impl StackedArea {
     pub fn new(
+        id: impl Into<ElementId>,
         label: impl Into<SharedString>,
         series: Vec<Vec<i64>>,
         colors: Vec<Hsla>,
@@ -73,6 +75,7 @@ impl StackedArea {
         surface: Hsla,
     ) -> Self {
         StackedArea {
+            id: id.into(),
             label: label.into(),
             series,
             colors,
@@ -103,6 +106,7 @@ fn has_area(top_len: usize) -> bool {
 impl RenderOnce for StackedArea {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let StackedArea {
+            id,
             label,
             series,
             colors,
@@ -174,7 +178,7 @@ impl RenderOnce for StackedArea {
         )
         .size_full();
         div()
-            .id(ElementId::Name(format!("stacked-{}", label).into()))
+            .id(id)
             .role(Role::Image)
             .aria_label(label)
             .w_full()

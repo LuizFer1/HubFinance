@@ -10,6 +10,7 @@ use super::{at, paint};
 
 #[derive(IntoElement)]
 pub struct Donut {
+    id: ElementId,
     label: SharedString,
     values: Vec<i64>,
     colors: Vec<Hsla>,
@@ -21,6 +22,7 @@ pub struct Donut {
 impl Donut {
     /// `colors[i]` pinta `values[i]`; `empty` e o anel inteiro quando nao ha valor algum.
     pub fn new(
+        id: impl Into<ElementId>,
         label: impl Into<SharedString>,
         values: Vec<i64>,
         colors: Vec<Hsla>,
@@ -28,6 +30,7 @@ impl Donut {
         empty: Hsla,
     ) -> Donut {
         Donut {
+            id: id.into(),
             label: label.into(),
             values,
             colors,
@@ -112,7 +115,7 @@ impl RenderOnce for Donut {
         )
         .size_full();
         div()
-            .id(ElementId::Name(format!("donut-{}", self.label).into()))
+            .id(self.id)
             .role(Role::Image)
             .aria_label(self.label)
             .w(px(self.size))

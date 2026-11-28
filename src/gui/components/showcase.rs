@@ -586,13 +586,14 @@ fn charts_row(t: &'static Tokens) -> impl IntoElement {
         .gap(px(24.0))
         .child(div().w(px(260.0)).child(GroupedBars::new(
             "hist-demo",
-            "Historico: receitas e despesas por mes",
+            "Histórico: receitas e despesas por mês",
             months,
             1_600_000,
             140.0,
             t,
         )))
         .child(Donut::new(
+            "donut-demo",
             "Para onde foi",
             vec![500, 300, 150, 40, 9],
             t.chart[..5].to_vec(),
@@ -607,7 +608,8 @@ fn charts_row(t: &'static Tokens) -> impl IntoElement {
                 .bg(t.highlight)
                 .child(
                     MiniBars::new(
-                        "Despesas por mes",
+                        "minibars-demo",
+                        "Despesas por mês",
                         vec![Some(40), Some(70), None, Some(55), Some(90), Some(60)],
                         100,
                         64.0,
@@ -617,7 +619,8 @@ fn charts_row(t: &'static Tokens) -> impl IntoElement {
                 ),
         )
         .child(Ring::new(
-            "Reserva de emergencia",
+            "ring-demo",
+            "Reserva de emergência",
             0.756,
             104.0,
             t.accent,
@@ -626,7 +629,8 @@ fn charts_row(t: &'static Tokens) -> impl IntoElement {
         .child(
             div().w(px(260.0)).child(
                 StackedArea::new(
-                    "Evolucao",
+                    "stacked-demo",
+                    "Evolução",
                     vec![vec![100, 200, 300], vec![50, 100, 100]],
                     vec![t.chart[0], t.chart[2]],
                     600,

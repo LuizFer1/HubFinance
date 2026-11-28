@@ -242,7 +242,7 @@ pub fn last_sync_line(app: &App) -> String {
     }
 }
 
-/// A mensagem do clique no card, a unica que `status_card` usa.
+/// A mensagem do clique no card, a unica que o card de status da lateral usa.
 pub fn status_card_press() -> Msg {
     Msg::SelectScreen(STATUS_CARD_TARGET)
 }
@@ -641,5 +641,115 @@ mod tests {
         app.screen = Screen::Transactions;
         app.snapshot.status = Status::Failed("Porta 7777 em uso".into());
         assert!(!owns_scroll(&app));
+    }
+
+    #[test]
+    fn so_reservas_liga_o_status_mas_nao_o_dashboard() {
+        use crate::dashboard::dataset::{Dataset, RESERVES, RawRow};
+        let dir = tempfile::tempdir().unwrap();
+        let mut ds = Dataset::default();
+        ds.apply([RawRow {
+            table: RESERVES.into(),
+            id: "RP1".into(),
+            deleted_at: None,
+            seq: 1,
+            data: serde_json::json!({ "kind": "goal", "name": "X", "icon": "tag", "color": "sky" })
+                .to_string(),
+        }]);
+        let snap = Snapshot {
+            status: Status::Running,
+            dashboard: std::sync::Arc::new(ds),
+            ..Snapshot::default()
+        };
+        let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
+        app.screen = Screen::Dashboard;
+        assert_eq!(titles(&app).1, "Nada sincronizado ainda");
+        app.screen = Screen::Reserves;
+        assert_eq!(titles(&app).1, "Quanto está guardado, e para quê?");
+    }
+
+    #[test]
+    fn nav_sem_contagens_exceto_os_alertas_da_analise() {
+        use crate::advisor::{Finding, FindingKind};
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = crate::ui_model::app::tests::app_with_fixtures(dir.path());
+        // Com dois aparelhos ativos, a conta de aparelhos e a dos ativos.
+        assert_eq!(active_devices(&app), 2);
+        let finding = |severity| Finding {
+            kind: FindingKind::Pace,
+            severity,
+            title: "x".into(),
+            detail: String::new(),
+            action: None,
+            figures: Vec::new(),
+            impact_minor: 0,
+        };
+        // A Analise conta so os alertas; zero nao mostra nada.
+        app.analysis.findings = vec![finding(Severity::Attention), finding(Severity::GoodSign)];
+        assert_eq!(alert_count(&app), None);
+        app.analysis.findings = vec![
+            finding(Severity::Alert),
+            finding(Severity::Attention),
+            finding(Severity::Alert),
+        ];
+        assert_eq!(alert_count(&app), Some(2));
+    }
+
+    #[test]
+    fn card_de_status_leva_a_aparelhos_e_a_lateral_monta_em_toda_tela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = crate::ui_model::app::tests::app_with_fixtures(dir.path());
+        assert_eq!(STATUS_CARD_TARGET, Screen::Connection);
+        assert!(matches!(
+            status_card_press(),
+            Msg::SelectScreen(STATUS_CARD_TARGET)
+        ));
+        app.screen = Screen::Dashboard;
+        let _ = crate::ui_model::app::update(&mut app, status_card_press());
+        assert_eq!(app.screen, STATUS_CARD_TARGET);
+        assert_eq!(titles(&app).0, "Aparelhos");
+    }
+
+    #[test]
+    fn estados_sem_dados_escolhidos_pelo_app_e_montados_nas_tres_telas() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
+        assert_eq!(screen_arrival(&app, false), Arrival::Opening);
+        app.snapshot.status = Status::Running;
+        assert_eq!(screen_arrival(&app, false), Arrival::FirstUse);
+        // Revogado nao conta; com um ativo, o nome dele.
+        app.snapshot.devices = vec![
+            device("Pixel da Ana", None, None, false),
+            device("Velho", None, None, true),
+        ];
+        assert_eq!(
+            screen_arrival(&app, false),
+            Arrival::Waiting("Aguardando o primeiro sync de Pixel da Ana".into())
+        );
+        app.snapshot
+            .devices
+            .push(device("iPhone do Luiz", None, None, false));
+        assert_eq!(
+            screen_arrival(&app, false),
+            Arrival::Waiting("Aguardando o primeiro sync de 2 celulares".into())
+        );
+        // I1: um deles ja sincronizou (so perfil e categorias): o vazio de sempre.
+        app.snapshot.devices.push(device(
+            "Moto da Bia",
+            Some("2026-09-24T10:00:00Z"),
+            None,
+            false,
+        ));
+        assert!(any_active_synced(&app));
+        assert_eq!(screen_arrival(&app, false), Arrival::Empty);
+        // Revogado que sincronizou nao conta.
+        if let Some(d) = app.snapshot.devices.last_mut() {
+            d.revoked = true;
+        }
+        assert!(!any_active_synced(&app));
+        // Com dados: o Resumo do dono, intocado.
+        let (app, _rx, _tx) = crate::ui_model::app::tests::app_with_fixtures(dir.path());
+        assert_eq!(screen_arrival(&app, !app.dashboard.is_empty), Arrival::Data);
+        assert!(hub_has_rows(&app));
     }
 }

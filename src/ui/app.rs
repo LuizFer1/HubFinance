@@ -264,7 +264,7 @@ pub(super) mod tests {
     use crate::ui_model::app::tests::wait_prefs;
     use crate::ui_model::app::tests::{
         awaiting_conv, configured, data, drain, local_settings, msg, open_conv, phone,
-        running_with, setup, summary, view as device_view,
+        running_with, summary, view as device_view,
     };
     use crate::ui_model::connect::{self, ConnectFlow};
     use crate::ui_model::motion::{self, Scene};
@@ -977,33 +977,21 @@ pub(super) mod tests {
         let _ = super::super::shell::root(&app);
     }
 
+    /// So a montagem; o `Configure` enviado e o "Salvando" que some vivem em `ui_model::app`
+    /// (`erro_ao_gravar_fica_no_dialogo_e_no_banner_da_analise`).
     #[test]
-    fn erro_ao_gravar_fica_no_dialogo_e_no_banner_da_analise() {
+    fn erro_ao_gravar_monta_no_dialogo_e_no_banner_da_analise() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let (mut app, _rx) = assistant_app(dir.path(), local_settings(Some("m")));
         let _ = update(&mut app, Msg::ConfigureAssistant);
         let _ = update(&mut app, Msg::SetupChoice(ProviderChoice::None));
-        // "Desligado" termina no passo 1.
         let _ = update(&mut app, Msg::SetupFinish);
-        let off = Settings {
-            provider: ProviderChoice::None,
-            ..local_settings(Some("m"))
-        };
-        assert_eq!(
-            drain(&mut rx),
-            vec![Command::Assistant(AssistantCommand::Configure {
-                settings: off,
-                key: None,
-            })]
-        );
         let failed = configured(
             &app,
             None,
             Some("Não foi possível salvar a configuração do assistente."),
         );
         let _ = update(&mut app, failed);
-        // Aberto, sem "Salvando...", com o erro; a Analise mostra o mesmo erro em banner.
-        assert_eq!(setup(&app).saving, None);
         assert!(super::super::assistant_settings_view::dialog(&app).is_some());
         let _ = super::super::analysis_view::view(&app);
         let _ = super::super::shell::root(&app);

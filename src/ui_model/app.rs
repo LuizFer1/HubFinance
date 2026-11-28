@@ -86,7 +86,7 @@ pub enum PendingAction {
     /// Aparelho ja removido: so apaga as areas.
     Erase(AreaSet),
     /// "Apagar" de uma conversa da Analise. Se era a aberta, ela so some da tela
-    /// (`analysis_view::open_conversation`): nenhum `Close` nosso sai antes do prazo, porque
+    /// (`ui_model::analysis::open_conversation`): nenhum `Close` nosso sai antes do prazo, porque
     /// fechar interromperia uma resposta chegando e "Desfazer" nao a traria de volta. Outras
     /// acoes da pessoa nesse meio tempo ainda interrompem a resposta escondida, como sempre
     /// fizeram: `NewConversation` ("Conversar sobre isso"), `Open` de outra conversa e a troca
@@ -136,7 +136,7 @@ pub enum AnalysisTab {
 }
 
 /// Foto decodificada e o data URI de onde veio: so decodifica de novo quando o URI muda. A
-/// textura do toolkit mora em `IcedSide`, com a mesma chave.
+/// textura do toolkit mora no lado do toolkit, com a mesma chave.
 pub struct Avatar {
     pub uri: String,
     pub bytes: Vec<u8>,
@@ -324,7 +324,7 @@ pub enum Msg {
     ToggleHideValues,
     /// "Reduzir movimento" de Ajustes.
     ToggleReduceMotion,
-    /// Um quadro de `window::frames()`, so enquanto alguma animacao anda.
+    /// Um quadro do relogio de animacao do toolkit, so enquanto alguma animacao anda.
     Frame(Instant),
     /// "Ver todas as N" de "Próximas saídas": abre a lista inteira no card.
     ExpandUpcoming,
@@ -341,7 +341,7 @@ pub enum Msg {
     ClearFilters,
     CloseRequested,
     ForceExit,
-    /// `window::open` respondeu: a janela existe e pode ser consultada.
+    /// O toolkit abriu a janela e respondeu: a janela existe e pode ser consultada.
     WindowOpened(WindowId),
     /// O toolkit fechou a janela (`close_events`): o id morreu com ela.
     WindowClosed(WindowId),
@@ -362,8 +362,8 @@ pub enum Msg {
     SetTheme(ThemeMode),
     /// "Configurar" do assistente (Ajustes e o painel da Analise): abre o dialogo em passos.
     ConfigureAssistant,
-    /// O sistema trocou entre escuro e claro (`system::theme_changes`), ou respondeu a
-    /// consulta do boot (`system::theme`).
+    /// O sistema trocou entre escuro e claro (assinatura do toolkit), ou respondeu a
+    /// consulta do boot.
     SystemTheme(bool),
     /// "Iniciar com o Windows" de Ajustes.
     SetAutostart(bool),
@@ -1959,7 +1959,7 @@ fn local_today(offset: UtcOffset) -> String {
 
 /// Fotos de um conjunto (aparelhos ou perfis) a partir dos pares `(chave, data URI)`: reaproveita
 /// a foto quando o URI nao mudou, e so decodifica o que e novo ou trocou. A textura do toolkit
-/// e refeita em `IcedSide`, a partir destes bytes.
+/// e refeita no lado do toolkit, a partir destes bytes.
 fn sync_avatars(
     mut old: HashMap<String, Avatar>,
     wanted: Vec<(String, String)>,
@@ -4781,5 +4781,35 @@ pub(crate) mod tests {
         app.window = Some(id);
         let _ = update(&mut app, Msg::WindowClosed(id));
         assert!(app.charts_epoch != before, "janela fechada");
+    }
+
+    #[test]
+    fn erro_ao_gravar_fica_no_dialogo_e_no_banner_da_analise() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, mut rx) = assistant_app(dir.path(), local_settings(Some("m")));
+        let _ = update(&mut app, Msg::ConfigureAssistant);
+        let _ = update(&mut app, Msg::SetupChoice(ProviderChoice::None));
+        // "Desligado" termina no passo 1.
+        let _ = update(&mut app, Msg::SetupFinish);
+        let off = Settings {
+            provider: ProviderChoice::None,
+            ..local_settings(Some("m"))
+        };
+        assert_eq!(
+            drain(&mut rx),
+            vec![Command::Assistant(AssistantCommand::Configure {
+                settings: off,
+                key: None,
+            })]
+        );
+        let failed = configured(
+            &app,
+            None,
+            Some("Não foi possível salvar a configuração do assistente."),
+        );
+        let _ = update(&mut app, failed);
+        // Aberto, sem "Salvando...", com o erro.
+        assert_eq!(setup(&app).saving, None);
+        assert!(app.assistant_setup.is_some());
     }
 }

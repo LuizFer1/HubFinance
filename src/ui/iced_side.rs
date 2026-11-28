@@ -39,7 +39,8 @@ pub struct IcedSide {
     pub(super) user_avatars: HashMap<String, image::Handle>,
     /// Respostas do assistente ja interpretadas (Markdown), pelo id da mensagem. O Markdown do
     /// iced desenha a partir de itens que precisam viver fora dele; o `view` so le, e quem monta
-    /// e `State::refresh_replies`, a cada snapshot e a cada troca do olho.
+    /// e `IcedSide::sync_replies`, chamado por `State::sync`, a cada snapshot e a cada troca do
+    /// olho.
     pub(super) replies: HashMap<String, CachedReply>,
     /// `WindowId` do modelo -> id do iced. O modelo so conhece o primeiro.
     windows: HashMap<WindowId, window::Id>,
@@ -149,8 +150,8 @@ pub fn model_id(id: window::Id) -> WindowId {
 
 /// Reaproveita a textura enquanto os bytes forem os mesmos. O `Handle` NAO e identificado pelos
 /// bytes: `Handle::from_bytes` da um id novo a cada chamada, e a GPU sobe a foto de novo para
-/// cada id. Por isso o handle antigo e mantido e so refeito quando os bytes mudam. So a chave nova ou de foto
-/// trocada ganha textura; chave que saiu do conjunto perde a dela.
+/// cada id. Por isso o handle antigo e mantido e so refeito quando os bytes mudam. So a chave
+/// nova ou de foto trocada ganha textura; chave que saiu do conjunto perde a dela.
 fn sync_textures(handles: &mut HashMap<String, image::Handle>, avatars: &HashMap<String, Avatar>) {
     handles.retain(|key, _| avatars.contains_key(key));
     for (key, avatar) in avatars {

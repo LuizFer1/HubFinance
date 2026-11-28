@@ -791,9 +791,7 @@ mod tests {
     use super::*;
     use crate::advisor::Severity;
     use crate::hub::snapshot::{DeviceView, Snapshot};
-    use crate::ui_model::shell::{
-        Arrival, STATUS_CARD_TARGET, any_active_synced, hub_has_rows, titles,
-    };
+    use crate::ui_model::shell::Arrival;
     use std::net::Ipv4Addr;
 
     fn device(name: &str, push: Option<&str>, pull: Option<&str>, revoked: bool) -> DeviceView {
@@ -841,8 +839,10 @@ mod tests {
         assert_eq!(status_lines(&app).title, "Iniciando…");
     }
 
+    /// So o status e a montagem; os titulos por tela vivem em `ui_model::shell`
+    /// (`so_reservas_liga_o_status_mas_nao_o_dashboard`).
     #[test]
-    fn so_reservas_liga_o_status_mas_nao_o_dashboard() {
+    fn so_reservas_liga_o_status() {
         use crate::dashboard::dataset::{Dataset, RESERVES, RawRow};
         let dir = tempfile::tempdir().unwrap();
         let mut ds = Dataset::default();
@@ -861,10 +861,10 @@ mod tests {
         };
         let (mut app, _rx, _tx) = app_with(snap, dir.path().to_path_buf());
         assert_eq!(status_lines(&app).title, "Hub ligado");
-        app.screen = Screen::Dashboard;
-        assert_eq!(titles(&app).1, "Nada sincronizado ainda");
-        app.screen = Screen::Reserves;
-        assert_eq!(titles(&app).1, "Quanto está guardado, e para quê?");
+        for screen in [Screen::Dashboard, Screen::Reserves] {
+            app.screen = screen;
+            let _ = root(&app);
+        }
     }
 
     #[test]
@@ -908,8 +908,10 @@ mod tests {
         assert!(connect_phone_button(&app).is_none());
     }
 
+    /// So a lateral; a contagem de alertas e de aparelhos vive em `ui_model::shell`
+    /// (`nav_sem_contagens_exceto_os_alertas_da_analise`).
     #[test]
-    fn nav_sem_contagens_exceto_os_alertas_da_analise() {
+    fn nav_monta_sem_contagens_exceto_os_alertas_da_analise() {
         use crate::advisor::{Finding, FindingKind};
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
@@ -940,7 +942,6 @@ mod tests {
         );
         // Com lancamentos, reservas e dois aparelhos ativos, nenhuma contagem aparece.
         assert_eq!(app.dashboard.sidebar.transactions, 13);
-        assert_eq!(active_devices(&app), 2);
         for entry in entries.iter().filter(|e| e.screen != Screen::Analysis) {
             assert_eq!(entry.count, None, "{}", entry.label);
         }
@@ -962,27 +963,19 @@ mod tests {
             finding(Severity::Attention),
             finding(Severity::Alert),
         ];
-        assert_eq!(alert_count(&app), Some(2));
         assert_eq!(nav_entries(&app)[3].count, Some(2));
     }
 
+    /// So a montagem; o destino do card e o `update` vivem em `ui_model::shell`
+    /// (`card_de_status_leva_a_aparelhos_e_a_lateral_monta_em_toda_tela`).
     #[test]
-    fn card_de_status_leva_a_aparelhos_e_a_lateral_monta_em_toda_tela() {
+    fn lateral_monta_em_toda_tela() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
         for screen in nav_entries(&app).map(|e| e.screen) {
             app.screen = screen;
             let _ = root(&app);
         }
-        assert_eq!(STATUS_CARD_TARGET, Screen::Connection);
-        assert!(matches!(
-            status_card_press(),
-            Msg::SelectScreen(STATUS_CARD_TARGET)
-        ));
-        app.screen = Screen::Dashboard;
-        let _ = super::super::app::update(&mut app, status_card_press());
-        assert_eq!(app.screen, STATUS_CARD_TARGET);
-        assert_eq!(titles(&app).0, "Aparelhos");
     }
 
     #[test]
@@ -1052,8 +1045,10 @@ mod tests {
             let _ = root(&app);
         }
     }
+    /// So a montagem; a escolha do estado (`screen_arrival`) vive em `ui_model::shell`
+    /// (`estados_sem_dados_escolhidos_pelo_app_e_montados_nas_tres_telas`).
     #[test]
-    fn estados_sem_dados_escolhidos_pelo_app_e_montados_nas_tres_telas() {
+    fn estados_sem_dados_montam_nas_tres_telas() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, _rx, _tx) = app_with(Snapshot::default(), dir.path().to_path_buf());
         let draw = |app: &mut State| {
@@ -1063,50 +1058,32 @@ mod tests {
             }
             app.screen = Screen::Dashboard;
         };
-        assert_eq!(screen_arrival(&app, false), Arrival::Opening);
         draw(&mut app);
         app.snapshot.status = Status::Running;
-        assert_eq!(screen_arrival(&app, false), Arrival::FirstUse);
         draw(&mut app);
-        // Revogado nao conta; com um ativo, o nome dele.
         app.snapshot.devices = vec![
             device("Pixel da Ana", None, None, false),
             device("Velho", None, None, true),
         ];
-        assert_eq!(
-            screen_arrival(&app, false),
-            Arrival::Waiting("Aguardando o primeiro sync de Pixel da Ana".into())
-        );
         draw(&mut app);
         app.snapshot
             .devices
             .push(device("iPhone do Luiz", None, None, false));
-        assert_eq!(
-            screen_arrival(&app, false),
-            Arrival::Waiting("Aguardando o primeiro sync de 2 celulares".into())
-        );
+        draw(&mut app);
         // Sem rede: os cards montam com o aviso do Wi-Fi.
         app.snapshot.status = Status::NoNetwork;
         draw(&mut app);
         app.snapshot.status = Status::Running;
-        // I1: um deles ja sincronizou (so perfil e categorias): o vazio de sempre.
         app.snapshot.devices.push(device(
             "Moto da Bia",
             Some("2026-09-24T10:00:00Z"),
             None,
             false,
         ));
-        assert!(any_active_synced(&app));
-        assert_eq!(screen_arrival(&app, false), Arrival::Empty);
-        // Revogado que sincronizou nao conta.
-        if let Some(d) = app.snapshot.devices.last_mut() {
-            d.revoked = true;
-        }
-        assert!(!any_active_synced(&app));
+        draw(&mut app);
         // Com dados: o Resumo do dono, intocado.
         let (app, _rx, _tx) = super::super::app::tests::app_with_fixtures(dir.path());
-        assert_eq!(screen_arrival(&app, !app.dashboard.is_empty), Arrival::Data);
-        assert!(hub_has_rows(&app));
+        let _ = root(&app);
     }
 
     /// A lateral diz "Resumo" mesmo quando o titulo do cabecalho e "Resumo da casa" (o modelo

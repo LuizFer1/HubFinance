@@ -543,7 +543,7 @@ fn message_view<'a>(app: &'a State, m: &'a MessageView, is_last: bool) -> Elemen
 /// a mostra nunca e desenhado com "Ocultar valores" ligado.
 fn reply_body<'a>(app: &'a State, m: &'a MessageView) -> Element<'a, Msg> {
     let t = app.iced.tokens;
-    // Sem cache valido (snapshot que ainda nao passou por `refresh_replies`): o mesmo caminho
+    // Sem cache valido (snapshot que ainda nao passou por `sync_replies`): o mesmo caminho
     // do cache, em texto puro. O fonte so mascarado deixaria passar o que o Markdown remonta.
     let fallback = || -> Element<'a, Msg> {
         let r = render_reply(&m.content, app.hide_values);

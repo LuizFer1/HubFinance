@@ -7,7 +7,7 @@
 //! como `Msg::CloseRequested` (bandeja x desligar).
 
 use gpui::{
-    AnyElement, Hsla, IntoElement, ParentElement as _, Styled as _, WindowControlArea, div,
+    AnyElement, Hsla, IntoElement, ParentElement as _, Styled as _, WindowControlArea, div, img,
     prelude::*, px, svg,
 };
 
@@ -85,11 +85,9 @@ pub fn render(t: &'static Tokens, maximized: bool) -> AnyElement {
                 .text_size(px(12.0))
                 .text_color(t.muted)
                 .child(
-                    svg()
-                        .path(logo_path(t.dark))
-                        .size(px(16.0))
-                        .text_color(t.accent)
-                        .flex_none(),
+                    // img(), nao svg(): svg() e mascara de uma cor e tingiria o telhado e o
+                    // ponto com a mesma cor, quebrando a marca (spec 4.6).
+                    img(logo_path(t.dark)).size(px(16.0)).flex_none(),
                 )
                 .child("HubFinance"),
         )

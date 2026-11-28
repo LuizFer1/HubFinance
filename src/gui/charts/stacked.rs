@@ -1,9 +1,9 @@
 //! Area empilhada da "Evolucao" das reservas; o trecho do mes parcial e tracejado.
 
 use gpui::{
-    App, BorderStyle, Bounds, Corners, Edges, Hsla, IntoElement, LineCap, LineJoin, PathBuilder,
-    PathStyle, RenderOnce, Size, StrokeOptions, Styled, Window, canvas, linear_color_stop,
-    linear_gradient, px, quad,
+    App, BorderStyle, Bounds, Corners, Edges, ElementId, Hsla, IntoElement, LineCap, LineJoin,
+    PathBuilder, PathStyle, RenderOnce, Role, SharedString, Size, StrokeOptions, Styled, Window,
+    canvas, div, linear_color_stop, linear_gradient, prelude::*, px, quad,
 };
 
 use super::geometry::{self, Pt};
@@ -11,6 +11,7 @@ use super::{at, paint, plot_of};
 
 #[derive(IntoElement)]
 pub struct StackedArea {
+    label: SharedString,
     /// `series[k][i]` = saldo da reserva `k` no mes `i`, de baixo para cima.
     series: Vec<Vec<i64>>,
     colors: Vec<Hsla>,
@@ -64,6 +65,7 @@ fn dot(
 
 impl StackedArea {
     pub fn new(
+        label: impl Into<SharedString>,
         series: Vec<Vec<i64>>,
         colors: Vec<Hsla>,
         top: i64,
@@ -71,6 +73,7 @@ impl StackedArea {
         surface: Hsla,
     ) -> Self {
         StackedArea {
+            label: label.into(),
             series,
             colors,
             top,
@@ -90,6 +93,7 @@ impl StackedArea {
 impl RenderOnce for StackedArea {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let StackedArea {
+            label,
             series,
             colors,
             top,
@@ -97,7 +101,7 @@ impl RenderOnce for StackedArea {
             partial,
             surface,
         } = self;
-        canvas(
+        let layer = canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
                 let polys = geometry::stacked_polygons(&series, top, plot_of(bounds));
@@ -148,7 +152,13 @@ impl RenderOnce for StackedArea {
                 }
             },
         )
-        .w_full()
-        .h(px(height))
+        .size_full();
+        div()
+            .id(ElementId::Name(format!("stacked-{}", label).into()))
+            .role(Role::Image)
+            .aria_label(label)
+            .w_full()
+            .h(px(height))
+            .child(layer)
     }
 }

@@ -4,12 +4,12 @@
 
 use gpui::{
     App, Background, BorderStyle, Bounds, Corners, Edges, ElementId, Hsla, IntoElement,
-    ParentElement, PathBuilder, RenderOnce, SharedString, Size, Styled, Window, canvas, div,
+    ParentElement, RenderOnce, Role, SharedString, Size, Styled, Window, canvas, div,
     pattern_slash, prelude::*, px, quad, transparent_black,
 };
 
 use super::geometry::{self, Bar, Pt};
-use super::{at, paint, plot_of};
+use super::{at, plot_of};
 use crate::gui::components::tooltip::{Line, TooltipView};
 use crate::gui::theme::{Tokens, rgba};
 
@@ -100,9 +100,27 @@ fn fill_bar(
     ));
 }
 
+/// Faixas do design (`repeating-linear-gradient(-45deg, ...)`) em pixels logicos: `stripe` de
+/// cor e `gap` de vazio medidos na perpendicular. O shader do GPUI mede o periodo como
+/// `(largura + intervalo) * sen 45` em pixels de dispositivo, entao sem esta conversao as faixas
+/// saem com ~70 % do tamanho a 100 % e mais finas ainda em 150 % e 200 %. Devolve
+/// `(largura, intervalo)` para `pattern_slash`.
+pub(super) fn hatch_dims(stripe: f32, gap: f32, scale: f32) -> (f32, f32) {
+    let period = stripe + gap;
+    let total = period / std::f32::consts::FRAC_1_SQRT_2 * scale;
+    let width = total * stripe / period;
+    (width, total - width)
+}
+
+fn hatch(color: Hsla, stripe: f32, gap: f32, window: &Window) -> Background {
+    let (w, i) = hatch_dims(stripe, gap, window.scale_factor());
+    pattern_slash(color, w, i)
+}
+
 #[derive(IntoElement)]
 pub struct GroupedBars {
     id: ElementId,
+    label: SharedString,
     months: Vec<BarMonth>,
     top: i64,
     height: f32,
@@ -115,6 +133,7 @@ impl GroupedBars {
     /// sob o mesmo ancestral (Historico e mini-barras do Dashboard) dividiriam tudo sem ele.
     pub fn new(
         id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
         months: Vec<BarMonth>,
         top: i64,
         height: f32,
@@ -122,6 +141,7 @@ impl GroupedBars {
     ) -> Self {
         GroupedBars {
             id: id.into(),
+            label: label.into(),
             months,
             top,
             height,
@@ -135,7 +155,12 @@ impl RenderOnce for GroupedBars {
         let t = self.tokens;
         // Coluna sob o mouse. Fica num estado do GPUI para o canvas (que nao ve o hover) ler na
         // hora de pintar o anel; `notify` redesenha so quando a coluna muda.
-        let hover = window.use_keyed_state((self.id.clone(), "hover"), cx, |_, _| None::<usize>);
+        let hover =
+            window.use_keyed_state(
+                (self.id.clone(), "hover"),
+                cx,
+                |_, _| None::<(usize, usize)>,
+            );
         let values: Vec<Option<(i64, i64)>> = self.months.iter().map(|m| m.values).collect();
         let partial: Vec<bool> = self.months.iter().map(|m| m.partial).collect();
         let (top, income, expense) = (self.top, t.income, t.expense);
@@ -149,10 +174,12 @@ impl RenderOnce for GroupedBars {
                 let none = (0.0, transparent_black());
                 for (i, pair) in bars.iter().enumerate() {
                     let Some([inc, exp]) = pair else { continue };
-                    if hovered == Some(i) {
-                        // Anel de 2 px `surface` por dentro e 2 px `accent_400` por fora: o de
-                        // fora primeiro, o de dentro por cima, a barra por ultimo.
-                        for bar in [inc, exp] {
+                    if let Some((_, k)) = hovered.filter(|(m, _)| *m == i) {
+                        // So a barra sob o mouse leva anel (2 px `surface` por dentro, 2 px
+                        // `accent_400` por fora), como no artboard. Barra de altura 0 nao tem
+                        // o que destacar: `grown` a viraria numa pilula solta na base.
+                        let bar = [inc, exp][k];
+                        if bar.rect.h > 0.0 {
                             let outer = bar.grown(2.0 * geometry::HOVER_RING);
                             fill_bar(window, bounds, &outer, ring, none);
                             let inner = bar.grown(geometry::HOVER_RING);
@@ -164,7 +191,7 @@ impl RenderOnce for GroupedBars {
                             // Design: faixas de 5 px na cor cheia e 5 px a 40 %. A base a 40 % e
                             // as faixas cheias por cima reproduzem isso.
                             fill_bar(window, bounds, bar, color.opacity(0.4), none);
-                            fill_bar(window, bounds, bar, pattern_slash(color, 5.0, 5.0), none);
+                            fill_bar(window, bounds, bar, hatch(color, 5.0, 5.0, window), none);
                         } else {
                             fill_bar(window, bounds, bar, color, none);
                         }
@@ -174,37 +201,43 @@ impl RenderOnce for GroupedBars {
         )
         .absolute()
         .size_full();
-        // Colunas transparentes por cima: o hover e na coluna inteira (flex_1, mesma divisao em
-        // partes iguais que `slot_width`) e cada uma carrega o tooltip pronto do modelo.
+        // Uma area de hit por barra (metade esquerda = receita, direita = despesa da coluna): o
+        // anel e o tooltip seguem a barra sob o mouse, e cada uma carrega o tooltip do mes.
         let hits = self.months.into_iter().enumerate().map(|(i, m)| {
-            let state = hover.clone();
-            let col = div()
-                .id((self.id.clone(), format!("col-{i}")))
-                .flex_1()
-                .h_full()
-                .on_hover(move |entered, _, cx| {
-                    state.update(cx, |cur, cx| {
-                        let next = if *entered {
-                            Some(i)
-                        } else if *cur == Some(i) {
-                            None
-                        } else {
-                            *cur
-                        };
-                        if next != *cur {
-                            *cur = next;
-                            cx.notify();
-                        }
+            let halves = (0..2usize).map(|k| {
+                let state = hover.clone();
+                let half = div()
+                    .id((self.id.clone(), format!("col-{i}-{k}")))
+                    .flex_1()
+                    .h_full()
+                    .on_hover(move |entered, _, cx| {
+                        state.update(cx, |cur, cx| {
+                            let next = if *entered {
+                                Some((i, k))
+                            } else if *cur == Some((i, k)) {
+                                None
+                            } else {
+                                *cur
+                            };
+                            if next != *cur {
+                                *cur = next;
+                                cx.notify();
+                            }
+                        });
                     });
-                });
-            match (m.values, m.tip) {
-                (Some(_), Some(tip)) => col.tooltip(move |_, cx| {
-                    TooltipView::rows(tip.title.clone(), tip.lines.clone(), t).build(cx)
-                }),
-                _ => col,
-            }
+                match (m.values, m.tip.clone()) {
+                    (Some(_), Some(tip)) => half.tooltip(move |_, cx| {
+                        TooltipView::rows(tip.title.clone(), tip.lines.clone(), t).build(cx)
+                    }),
+                    _ => half,
+                }
+            });
+            div().flex_1().h_full().flex().children(halves)
         });
         div()
+            .id(self.id.clone())
+            .role(Role::Image)
+            .aria_label(self.label)
             .relative()
             .w_full()
             .h(px(self.height))
@@ -216,24 +249,30 @@ impl RenderOnce for GroupedBars {
 /// Mini-barras do Negocio: uma barra por mes sobre o fundo `highlight`, em `on_highlight`.
 #[derive(IntoElement)]
 pub struct MiniBars {
+    label: SharedString,
     /// `None` = mes que ainda nao existia (sem barra).
     months: Vec<Option<i64>>,
     top: i64,
     height: f32,
     /// Indice do mes em andamento (hachurado), se houver.
     partial: Option<usize>,
-    average: bool,
     tokens: &'static Tokens,
 }
 
 impl MiniBars {
-    pub fn new(months: Vec<Option<i64>>, top: i64, height: f32, tokens: &'static Tokens) -> Self {
+    pub fn new(
+        label: impl Into<SharedString>,
+        months: Vec<Option<i64>>,
+        top: i64,
+        height: f32,
+        tokens: &'static Tokens,
+    ) -> Self {
         MiniBars {
+            label: label.into(),
             months,
             top,
             height,
             partial: None,
-            average: false,
             tokens,
         }
     }
@@ -242,26 +281,20 @@ impl MiniBars {
         self.partial = index;
         self
     }
-
-    /// Linha tracejada na media dos meses que existem.
-    pub fn average(mut self, on: bool) -> Self {
-        self.average = on;
-        self
-    }
 }
 
 impl RenderOnce for MiniBars {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let MiniBars {
+            label,
             months,
             top,
             height,
             partial,
-            average,
             tokens: t,
         } = self;
         let ink = t.on_highlight;
-        canvas(
+        let layer = canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
                 let plot = plot_of(bounds);
@@ -269,13 +302,14 @@ impl RenderOnce for MiniBars {
                 for (i, bar) in bars.iter().enumerate() {
                     let Some(bar) = bar else { continue };
                     if partial == Some(i) {
-                        // Hachurado 4/7 px, sem fundo: o mes ainda vai mudar.
+                        // Main: faixas 4/3 (periodo 7 px) na cor cheia, sem fundo, com a mesma
+                        // borda interna de 1 px das barras fechadas: o mes ainda vai mudar.
                         fill_bar(
                             window,
                             bounds,
                             bar,
-                            pattern_slash(ink.opacity(0.62), 4.0, 3.0),
-                            (0.0, transparent_black()),
+                            hatch(ink, 4.0, 3.0, window),
+                            (1.0, rgba(0, 0, 0, 0.25)),
                         );
                     } else {
                         fill_bar(
@@ -287,25 +321,42 @@ impl RenderOnce for MiniBars {
                         );
                     }
                 }
-                if let (true, Some(avg)) = (average, geometry::average(&months)) {
-                    let y = plot.y + plot.h - geometry::scale_height(avg, top, plot.h);
-                    let mut b = PathBuilder::stroke(px(1.0)).dash_array(&[px(4.0), px(3.0)]);
-                    let right = Pt {
-                        x: plot.x + plot.w,
-                        y,
-                    };
-                    b.add_polygon(
-                        &[
-                            at(bounds.origin, Pt { x: plot.x, y }),
-                            at(bounds.origin, right),
-                        ],
-                        false,
-                    );
-                    paint(window, b, ink.opacity(0.5));
-                }
             },
         )
-        .w_full()
-        .h(px(height))
+        .size_full();
+        div()
+            .id(ElementId::Name(format!("mini-bars-{}", label).into()))
+            .role(Role::Image)
+            .aria_label(label)
+            .w_full()
+            .h(px(height))
+            .child(layer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hatch_dims;
+
+    /// Periodo perpendicular que o shader pinta, em pixels de dispositivo.
+    fn period(dims: (f32, f32)) -> f32 {
+        (dims.0 + dims.1) * std::f32::consts::FRAC_1_SQRT_2
+    }
+
+    #[test]
+    fn faixas_do_design_em_qualquer_escala() {
+        for scale in [1.0_f32, 1.5, 2.0] {
+            // Historico 5/5 -> periodo 10 px logicos; Negocio 4/3 -> 7 px.
+            assert!((period(hatch_dims(5.0, 5.0, scale)) - 10.0 * scale).abs() < 1e-3);
+            assert!((period(hatch_dims(4.0, 3.0, scale)) - 7.0 * scale).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn proporcao_faixa_vazio_se_mantem() {
+        let (w, i) = hatch_dims(4.0, 3.0, 1.0);
+        assert!((w / i - 4.0 / 3.0).abs() < 1e-4);
+        let (w, i) = hatch_dims(5.0, 5.0, 1.0);
+        assert!((w - i).abs() < 1e-4);
     }
 }

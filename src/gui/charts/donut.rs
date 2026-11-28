@@ -1,12 +1,16 @@
 //! Rosca de "Para onde foi": fatias em arco, total no centro (texto por cima, fora daqui).
 
-use gpui::{App, Hsla, IntoElement, PathBuilder, RenderOnce, Styled, Window, canvas, point, px};
+use gpui::{
+    App, ElementId, Hsla, IntoElement, ParentElement, PathBuilder, RenderOnce, Role, SharedString,
+    Styled, Window, canvas, div, point, prelude::*, px,
+};
 
 use super::geometry::{self, Pt, Slice};
 use super::{at, paint};
 
 #[derive(IntoElement)]
 pub struct Donut {
+    label: SharedString,
     values: Vec<i64>,
     colors: Vec<Hsla>,
     size: f32,
@@ -16,8 +20,15 @@ pub struct Donut {
 
 impl Donut {
     /// `colors[i]` pinta `values[i]`; `empty` e o anel inteiro quando nao ha valor algum.
-    pub fn new(values: Vec<i64>, colors: Vec<Hsla>, size: f32, empty: Hsla) -> Donut {
+    pub fn new(
+        label: impl Into<SharedString>,
+        values: Vec<i64>,
+        colors: Vec<Hsla>,
+        size: f32,
+        empty: Hsla,
+    ) -> Donut {
         Donut {
+            label: label.into(),
             values,
             colors,
             size,
@@ -68,7 +79,7 @@ impl RenderOnce for Donut {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let (size, thick, empty) = (self.size, self.thickness, self.empty);
         let (values, colors) = (self.values, self.colors);
-        canvas(
+        let layer = canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
                 let c = Pt {
@@ -99,7 +110,13 @@ impl RenderOnce for Donut {
                 }
             },
         )
-        .w(px(self.size))
-        .h(px(self.size))
+        .size_full();
+        div()
+            .id(ElementId::Name(format!("donut-{}", self.label).into()))
+            .role(Role::Image)
+            .aria_label(self.label)
+            .w(px(self.size))
+            .h(px(self.size))
+            .child(layer)
     }
 }

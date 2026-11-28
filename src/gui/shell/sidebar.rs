@@ -266,10 +266,15 @@ pub fn render(
         .children((0..4).map(link))
         .child(section_label(t, rail))
         .children((4..NAV_ORDER.len()).map(link));
+    // A coluna rola inteira quando a altura nao basta (960x640, 1100x640): marca e navegacao no
+    // topo, card e tema logo depois do espacador, sempre alcancaveis; sem isso o segmentado de
+    // tema saia cortado embaixo.
     div()
+        .id("sidebar")
         .w(px(if rail { RAIL_WIDTH } else { WIDTH }))
         .h_full()
         .flex_none()
+        .overflow_y_scroll()
         .flex()
         .flex_col()
         .gap(px(24.0))
@@ -278,17 +283,22 @@ pub fn render(
         .when(rail, |d| d.items_center())
         .border_r_1()
         .border_color(t.divider)
-        .child(brand(t, rail))
-        .child(nav)
-        .child(div().flex_1())
-        .child(status_card::render(
+        .child(div().flex_none().child(brand(t, rail)))
+        .child(nav.flex_none())
+        .child(div().flex_1().min_h(px(0.0)))
+        .child(div().flex_none().child(status_card::render(
             t,
             &card,
             rail,
+            app.motion.reduce(),
             state,
             &focus.card,
             &focus.details,
-        ))
-        .child(theme_switch(t, app, state, rail, focus))
+        )))
+        .child(
+            div()
+                .flex_none()
+                .child(theme_switch(t, app, state, rail, focus)),
+        )
         .into_any_element()
 }

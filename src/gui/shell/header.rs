@@ -55,6 +55,7 @@ pub fn render(
         .flex_wrap()
         .items_center()
         .justify_end()
+        .ml_auto()
         .gap(px(10.0));
     if shell::has_month_picker(app.screen) {
         if let Some(partial) = shell::header_chip(app) {

@@ -9,10 +9,11 @@ use std::sync::Arc;
 
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, Global, IntoElement, KeyDownEvent, Keystroke,
-    Render, Window, div, prelude::*, px, rgb,
+    Render, Window, div, prelude::*, px,
 };
 
-use super::effects;
+use super::theme::{self, Tokens};
+use super::{effects, fonts};
 use crate::dashboard::dataset::Dataset;
 use crate::hub::HubHandle;
 use crate::hub::snapshot::Snapshot;
@@ -26,6 +27,8 @@ pub struct HubState {
     /// Dataset fixo do modo demonstracao (so debug). Guardado para o `Arc` ser o mesmo em todo
     /// snapshot: o modelo reconstroi as telas quando o ponteiro muda.
     demo: Option<Arc<Dataset>>,
+    /// Tema efetivo ja aplicado ao `gpui-component` (`None` = nenhum ainda).
+    applied_dark: Option<bool>,
 }
 
 impl HubState {
@@ -33,6 +36,7 @@ impl HubState {
         HubState {
             app,
             demo: demo_dataset(),
+            applied_dark: None,
         }
     }
 
@@ -71,6 +75,18 @@ pub fn demo_snapshot(handle: &HubHandle) -> Option<Snapshot> {
     })
 }
 
+/// Leva o tema efetivo do modelo ao `gpui-component`, so quando muda: `Theme::change` recarrega
+/// o tema inteiro e redesenha todas as janelas, caro demais para rodar a cada tique.
+pub fn sync_theme(state: &Entity<HubState>, cx: &mut App) {
+    let hub = state.read(cx);
+    let dark = hub.app.theme.is_dark(hub.app.system_dark);
+    if hub.applied_dark == Some(dark) {
+        return;
+    }
+    theme::apply(Tokens::of(dark), cx);
+    state.update(cx, |hub, _| hub.applied_dark = Some(dark));
+}
+
 /// Passa a mensagem pelo `update` do modelo, redesenha e executa os efeitos.
 pub fn dispatch(state: &Entity<HubState>, msg: Msg, cx: &mut App) {
     let effects = state.update(cx, |hub, cx| {
@@ -79,6 +95,7 @@ pub fn dispatch(state: &Entity<HubState>, msg: Msg, cx: &mut App) {
         cx.notify();
         effects
     });
+    sync_theme(state, cx);
     for effect in effects {
         effects::run(effect, state, cx);
     }
@@ -123,12 +140,6 @@ pub fn key_press(keystroke: &Keystroke, repeat: bool) -> KeyPress {
     }
 }
 
-/// Fundo provisorio da raiz (`#131313` escuro, `#F5F5F5` claro): os tokens chegam na Tarefa 8.
-const BG_DARK: u32 = 0x131313;
-const BG_LIGHT: u32 = 0xF5F5F5;
-const FG_DARK: u32 = 0xF5F5F5;
-const FG_LIGHT: u32 = 0x131313;
-
 pub struct HubWindow {
     state: Entity<HubState>,
     focus: FocusHandle,
@@ -163,7 +174,7 @@ impl Focusable for HubWindow {
 impl Render for HubWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let app = &self.state.read(cx).app;
-        let dark = app.theme.is_dark(app.system_dark);
+        let tokens = Tokens::of(app.theme.is_dark(app.system_dark));
         let (title, subtitle) = shell::titles(app);
         let title = title.to_string();
         let state = self.state.clone();
@@ -175,8 +186,9 @@ impl Render for HubWindow {
                 dispatch_later(&state, Msg::KeyPressed(press), cx);
             })
             .size_full()
-            .bg(rgb(if dark { BG_DARK } else { BG_LIGHT }))
-            .text_color(rgb(if dark { FG_DARK } else { FG_LIGHT }))
+            .bg(tokens.bg)
+            .text_color(tokens.text)
+            .font_family(fonts::FAMILY)
             .flex()
             .flex_col()
             .items_center()

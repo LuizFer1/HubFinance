@@ -5,7 +5,9 @@
 //! desenha (`root`). As telas chegam nas tarefas seguintes.
 
 mod effects;
+mod fonts;
 mod root;
+mod theme;
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -37,6 +39,7 @@ pub fn run(
         .with_quit_mode(QuitMode::Explicit)
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
+            fonts::register(cx);
             // O estado nasce aqui, antes de qualquer janela, e o `Global` o segura a vida
             // toda: a view raiz morre com a janela, e fechar na bandeja nao pode perder o
             // "Desfazer" pendente, o tique nem os eventos da bandeja.
@@ -50,6 +53,8 @@ pub fn run(
                 ))
             });
             cx.set_global(HubGlobal(state.clone()));
+            // Antes da primeira janela: ela ja nasce no tema certo, sem piscar o padrao.
+            root::sync_theme(&state, cx);
 
             // O nucleo que ja falhou antes do boot (porta ocupada responde em milissegundos)
             // nao geraria a transicao para `Failed`: sem janela o erro ficaria escondido.

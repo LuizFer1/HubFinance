@@ -9,7 +9,7 @@ use super::ShellFocus;
 use crate::dashboard::contract::Book;
 use crate::dashboard::periods::month_label_capitalized;
 use crate::gui::components::button::IconButton;
-use crate::gui::components::month_picker::{MonthPicker, PartialChip};
+use crate::gui::components::month_picker::{MonthPicker, PartialChip, PickerSurface};
 use crate::gui::components::segmented::{Segmented, Surface};
 use crate::gui::fonts;
 use crate::gui::icons::Icon;
@@ -64,6 +64,7 @@ pub fn render(
         let shown = month_label_capitalized(app.month());
         let (prev_state, next_state) = (state.clone(), state.clone());
         let mut picker = MonthPicker::new("month", shown, shell::can_go_next_month(app), t)
+            .surface(PickerSurface::Header)
             .focus(&focus.prev, &focus.next)
             .on_next(move |_, cx| dispatch_later(&next_state, Msg::NextMonth, cx));
         if app.month_idx > 0 {

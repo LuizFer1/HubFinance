@@ -18,6 +18,16 @@ pub const DISABLED_OPACITY: f32 = 0.35;
 /// Largura minima do rotulo (design: `min-width: 118px`): sem ela o seletor muda de largura de
 /// "Maio 2026" para "Setembro 2026" e empurra o que estiver ao lado.
 pub const LABEL_MIN_WIDTH: f32 = 118.0;
+/// Largura minima do rotulo no cabecalho (design: `min-width: 124px`).
+pub const HEADER_LABEL_MIN_WIDTH: f32 = 124.0;
+
+/// Superficie do seletor: o Componentes usa `surface_2` (118 px, hover `divider`); os artboards
+/// com cabecalho usam `surface` (124 px, hover `surface_2`), igual ao botao do olho ao lado.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerSurface {
+    Inset,
+    Header,
+}
 
 /// O mês seguinte só existe se o mostrado for anterior ao corrente (`YYYY-MM` compara por
 /// string porque tem largura fixa).
@@ -34,6 +44,7 @@ pub struct MonthPicker {
     on_next: Option<Handler>,
     focus_prev: Option<FocusHandle>,
     focus_next: Option<FocusHandle>,
+    surface: PickerSurface,
     tokens: &'static Tokens,
 }
 
@@ -54,8 +65,14 @@ impl MonthPicker {
             on_next: None,
             focus_prev: None,
             focus_next: None,
+            surface: PickerSurface::Inset,
             tokens,
         }
+    }
+
+    pub fn surface(mut self, surface: PickerSurface) -> Self {
+        self.surface = surface;
+        self
     }
 
     pub fn on_prev(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
@@ -79,6 +96,10 @@ impl MonthPicker {
 impl RenderOnce for MonthPicker {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let t = self.tokens;
+        let (bg, hover, min_w) = match self.surface {
+            PickerSurface::Inset => (t.surface_2, t.divider, LABEL_MIN_WIDTH),
+            PickerSurface::Header => (t.surface, t.surface_2, HEADER_LABEL_MIN_WIDTH),
+        };
         // As setas sao o `IconButton` do design (foco, anel, cursor), com o hover `divider` e o
         // anel afastado na cor do fundo do proprio seletor (`surface_2`).
         let arrow = |suffix: &str,
@@ -88,8 +109,8 @@ impl RenderOnce for MonthPicker {
                      focus: Option<FocusHandle>| {
             let id = ElementId::Name(SharedString::from(format!("{}-{suffix}", self.id)));
             let mut b = IconButton::new(id, glyph, t)
-                .ring_gap(t.surface_2)
-                .hover_bg(t.divider)
+                .ring_gap(bg)
+                .hover_bg(hover)
                 .glyph_size(16.0)
                 .disabled_opacity(DISABLED_OPACITY)
                 .disabled(!enabled);
@@ -109,7 +130,7 @@ impl RenderOnce for MonthPicker {
             .h(px(44.0))
             .px(px(4.0))
             .rounded_full()
-            .bg(t.surface_2)
+            .bg(bg)
             .text_size(px(14.0))
             .text_color(t.text)
             .font_weight(fonts::weight(600))
@@ -120,12 +141,7 @@ impl RenderOnce for MonthPicker {
                 self.on_prev,
                 self.focus_prev,
             ))
-            .child(
-                div()
-                    .min_w(px(LABEL_MIN_WIDTH))
-                    .text_center()
-                    .child(self.label),
-            )
+            .child(div().min_w(px(min_w)).text_center().child(self.label))
             .child(arrow(
                 "next",
                 Icon::ChevronRight,

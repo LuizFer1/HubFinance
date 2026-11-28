@@ -638,6 +638,12 @@ fn blocks(events: &mut Events<'_>) -> Vec<ReplyBlock> {
                     match e {
                         Event::Start(Tag::Item) => {
                             // O marcador vem logo apos o `Start(Item)`, antes de qualquer texto.
+                            // Em lista frouxa (itens separados por linha em branco) o marcador vem
+                            // depois de `Start(Paragraph)`; consumi-lo e inocuo (so faz flush de
+                            // spans vazios) e deixa o marcador visivel.
+                            if matches!(events.peek(), Some(Event::Start(Tag::Paragraph))) {
+                                events.next();
+                            }
                             let task = match events.peek() {
                                 Some(Event::TaskListMarker(done)) => Some(*done),
                                 _ => None,
@@ -1329,6 +1335,21 @@ pub(crate) mod tests {
         assert_eq!(tasks, vec![Some(true), Some(false), None]);
         let text = blocks_text(&b).expect("sem tabela");
         assert!(text.contains("feito") && text.contains("falta"), "{text:?}");
+    }
+
+    #[test]
+    fn lista_frouxa_de_tarefas_guarda_o_estado() {
+        let b = parse_reply(
+            "- [x] a
+
+- [ ] b
+",
+        );
+        let [ReplyBlock::List { items, .. }] = b.as_slice() else {
+            panic!("{b:?}")
+        };
+        let tasks: Vec<Option<bool>> = items.iter().map(|i| i.task).collect();
+        assert_eq!(tasks, vec![Some(true), Some(false)]);
     }
 
     #[test]

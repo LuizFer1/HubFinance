@@ -25,18 +25,20 @@ pub struct ShellFocus {
 }
 
 impl ShellFocus {
+    /// Todo handle nasce com `tab_stop(true)`: no gpui o handle puro tem `tab_stop: false` e, com
+    /// `track_focus`, o `tab_stop` do div nao vale. Sem isso `focus_next/prev` pula a casca inteira.
     pub fn new<T: 'static>(cx: &mut Context<T>) -> ShellFocus {
         ShellFocus {
             nav: (0..crate::ui_model::shell::NAV_ORDER.len())
-                .map(|_| cx.focus_handle())
+                .map(|_| cx.focus_handle().tab_stop(true))
                 .collect(),
-            card: cx.focus_handle(),
-            details: cx.focus_handle(),
-            theme: (0..2).map(|_| cx.focus_handle()).collect(),
-            prev: cx.focus_handle(),
-            next: cx.focus_handle(),
-            eye: cx.focus_handle(),
-            book: (0..2).map(|_| cx.focus_handle()).collect(),
+            card: cx.focus_handle().tab_stop(true),
+            details: cx.focus_handle().tab_stop(true),
+            theme: (0..2).map(|_| cx.focus_handle().tab_stop(true)).collect(),
+            prev: cx.focus_handle().tab_stop(true),
+            next: cx.focus_handle().tab_stop(true),
+            eye: cx.focus_handle().tab_stop(true),
+            book: (0..2).map(|_| cx.focus_handle().tab_stop(true)).collect(),
         }
     }
 }
